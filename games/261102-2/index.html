@@ -143,6 +143,7 @@ function drawParts(){
 
 /* ================= DOUGH FIELD ================= */
 const G={m:new Float32Array(NN),c:new Float32Array(NN),tm:new Float32Array(NN),tc:new Float32Array(NN),strokes:0,dirty:true,cx:N/2,cy:N/2};
+let doughContact=null;
 function samp(F,x,y){
   x-=0.5;y-=0.5;const i=Math.floor(x),j=Math.floor(y),fx=x-i,fy=y-j,i1=i+1,j1=j+1;
   const ok0=i>=0&&i<N, ok1=i1>=0&&i1<N, oj0=j>=0&&j<N, oj1=j1>=0&&j1<N;
@@ -201,7 +202,7 @@ function layout(){
   if(portrait){
     const shelfH=Math.max(34,40*S);
     const side=Math.min(aR-aL-6,(aB-aT-shelfH)*0.57);
-    TR.side=side;TR.x=(W-side)/2;TR.y=aT+shelfH+6*S;
+    TR.side=side;TR.x=(W-side)/2;TR.y=Math.max(aT+shelfH+6*S,H/2-side*0.795);
     const by0=TR.y+side,bh=aB-by0;
     LY.shelf={x:aL+4,y:aT+2,sz:shelfH-6};
     const ovSz=Math.min(bh*0.62,(aR-aL)*0.42,180*S);
@@ -812,7 +813,7 @@ function handles(){
 }
 function computeInvite(){
   if(phase==='shape'){
-    if(G.strokes===0){const h=handles()[0];return{kind:'handle',h,idx:0}}
+    if(G.strokes===0){const idx=portrait?2:0,h=handles()[idx];return{kind:'handle',h,idx}}
     if(G.strokes===1){const h=handles()[1];return{kind:'handle',h,idx:1}}
     return{kind:'oven'};
   }
@@ -902,7 +903,7 @@ function onDown(e){
   const h=pick(x,y);if(!h)return;
   if(h.type==='dough'){
     act.kind='dough';act.f={x:h.gx,y:h.gy};act.off={x:h.gx-h.g.x,y:h.gy-h.g.y};act.len=0;act.dir={x:0,y:0};
-    press(h.gx,h.gy,0.07);G.dirty=true;SND.poff();const s=g2s(h.gx,h.gy);flourPuff(s.x,s.y,8,45);flourStamp(s.x,s.y);
+    press(h.gx,h.gy,0.16);G.dirty=true;doughContact={x:h.gx,y:h.gy,life:2};SND.poff();const s=g2s(h.gx,h.gy);flourPuff(s.x,s.y,8,45);flourStamp(s.x,s.y);
   }else if(h.type==='trayMetal'){SND.knock();flourPuff(x,y,4,30)}
   else if(h.type==='top'){
     const t=h.t;act.kind='top';act.t=t;const q=topScreen(t);act.ox=q.x-x;act.oy=q.y-y;t.drag=true;t.sx=q.x;t.sy=q.y;t.wasOn=t.onTray;t.og={x:t.gx,y:t.gy};t.lift=0;SND.pick();
@@ -985,6 +986,7 @@ window.addEventListener('blur',()=>{if(act)endAct(true)});
 /* ================= UPDATE ================= */
 function update(dt){
   gameTime+=dt;
+  if(doughContact){if(act&&act.kind==='dough'){doughContact.x=act.f.x;doughContact.y=act.f.y;doughContact.life=2}else if((doughContact.life-=dt)<=0)doughContact=null}
   inv=computeInvite();
   // idle demo hand: once per quiet stretch
   if(!hint&&!act&&!hintDone&&gameTime-lastInput>4.2&&inv&&(phase==='shape'||phase==='town')){startHint();hintDone=true}
@@ -1298,7 +1300,7 @@ function draw(){
         if(T.reveal>0&&terrLayer){const c=g2s(G.cx,G.cy);ctx.save();ctx.beginPath();ctx.arc(c.x,c.y,T.reveal*gs*0.85,0,TAU);ctx.clip();ctx.drawImage(terrLayer,gx,gy,gs,gs);ctx.restore()}}
       else if(terrLayer)ctx.drawImage(terrLayer,gx,gy,gs,gs);
     }
-    if(phase==='shape')drawHandles();
+    if(phase==='shape'){drawDoughContact();drawHandles()}
     if((phase==='baking'&&bakeT<1.7)||phase==='shape')tops.forEach(t=>{if(t.onTray&&!t.drag){const p=topScreen(t);const sc=TA.sc;if(t.kind==='tomato')drawTomato(p.x,p.y,TR.cell*1.25*sc);else drawOlive(p.x,p.y,TR.cell*1.1*sc)}});
     if(phase==='baking'&&bakeT>=3.2)tops.forEach(t=>{if(t.onTray){const p=topScreen(t);const sc=TA.sc;if(t.kind==='tomato')drawTomato(p.x,p.y,TR.cell*1.25*sc);else drawOlive(p.x,p.y,TR.cell*1.1*sc)}});
   }
@@ -1329,12 +1331,21 @@ function draw(){
     else{const m=clamp((k-0.6)/1.1,0,1);const e=ease(m);x=lerp(hint.a.x,hint.b.x,e);y=lerp(hint.a.y,hint.b.y,e);pr=k>0.45&&k<1.85?1:0;al=k<0.3?k/0.3:k>2.0?(2.4-k)/0.4:1}
     drawHand(x,y,pr,clamp(al,0,1))}
 }
+function drawDoughContact(){
+  if(!doughContact)return;
+  const p=g2s(doughContact.x,doughContact.y),held=act&&act.kind==='dough',u=TR.cell,r=u*(held?3.4:2.8);
+  ctx.save();ctx.translate(p.x,p.y);ctx.scale(1,0.8);ctx.globalAlpha=sstep(0,0.6,doughContact.life)*(held?1:0.75);
+  const g=ctx.createRadialGradient(-r*0.15,-r*0.2,r*0.1,0,0,r);
+  g.addColorStop(0,'rgba(105,76,39,0.48)');g.addColorStop(0.55,'rgba(142,108,63,0.30)');g.addColorStop(0.8,'rgba(255,250,229,0.75)');g.addColorStop(1,'rgba(255,250,229,0)');
+  ctx.fillStyle=g;ctx.beginPath();ctx.arc(0,0,r,0,TAU);ctx.fill();ctx.restore();
+}
 function drawHandles(){
   const hs=handles(),u=TR.cell;
   hs.forEach((h,i)=>{if(!h.ok)return;const p=g2s(h.x,h.y);const isI=inv&&inv.kind==='handle'&&inv.idx===i;const ang=Math.atan2(h.dy,h.dx);
     const pull=isI?(0.5+0.5*Math.sin(gameTime*4.2))*u*0.5:0;
     if(isI)glowRing(p.x+h.dx*u*0.6,p.y+h.dy*u*0.6,u*2.1);
     ctx.save();ctx.translate(p.x+h.dx*(u*0.5+pull),p.y+h.dy*(u*0.5+pull));ctx.rotate(ang);
+    if(doughContact&&hyp(h.x-doughContact.x,h.y-doughContact.y)<2.6){const k=sstep(0,0.6,doughContact.life)*(act&&act.kind==='dough'?1:0.4);ctx.scale(1-0.35*k,1+0.2*k)}
     shadow(u*0.25,u*0.35,u*1.0,u*1.1,0.12);
     const g=ctx.createRadialGradient(-u*0.3,-u*0.4,u*0.1,0,0,u*1.4);g.addColorStop(0,'#fffaf0');g.addColorStop(0.6,'#f0e2c4');g.addColorStop(1,'#cdb68e');
     ctx.fillStyle=g;ctx.beginPath();ctx.ellipse(0,0,u*1.05,u*1.25,0,0,TAU);ctx.fill();
