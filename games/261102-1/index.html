@@ -1,0 +1,1272 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,minimum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#000000">
+<title>するする</title>
+<style>
+html,body{margin:0;padding:0;width:100%;height:100%;background:#000;overflow:hidden;overscroll-behavior:none;
+  touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}
+canvas{position:fixed;left:0;top:0;width:100vw;height:100vh;display:block;touch-action:none;background:#000;outline:none}
+#sa{position:fixed;top:env(safe-area-inset-top,0px);bottom:env(safe-area-inset-bottom,0px);left:env(safe-area-inset-left,0px);right:env(safe-area-inset-right,0px);pointer-events:none;visibility:hidden}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="sa"></div>
+<script>
+(() => {
+'use strict';
+/* ===================== basics ===================== */
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const saEl = document.getElementById('sa');
+const TAU = Math.PI * 2;
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const lerp = (a, b, t) => a + (b - a) * t;
+const rnd = (a, b) => a + Math.random() * (b - a);
+const ease = t => t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t);
+const dist = (ax, ay, bx, by) => Math.hypot(bx - ax, by - ay);
+const sstep = (a, b, x) => ease((x - a) / (b - a));
+
+let W = 0, H = 0, DPR = 1;
+const SA = { t: 0, b: 0, l: 0, r: 0 };
+const VIEW_BOTTOM = 1000, GROUND = 930, LMAX = 345;
+const ZOOM_TOP = -720;
+const cam = { yTop: 0, yTopT: 0, scale: 1, base: 1, g: 1, cx: 0 };
+
+function viewH() { return Math.max(100, H - SA.t - SA.b - 8); }
+function scaleFor(yTop) { return Math.min(viewH() / (VIEW_BOTTOM - yTop), (W - SA.l - SA.r) / 420); }
+function updCam() {
+  cam.scale = scaleFor(cam.yTop);
+  cam.base = scaleFor(0);
+  cam.g = clamp(cam.base / cam.scale, 1, 1.6);
+  cam.cx = SA.l + (W - SA.l - SA.r) / 2;
+}
+function oy() { return SA.t + 4 + (viewH() - (VIEW_BOTTOM - cam.yTop) * cam.scale); }
+function w2s(x, y) { return [cam.cx + x * cam.scale, oy() + (y - cam.yTop) * cam.scale]; }
+function s2w(sx, sy) { return [(sx - cam.cx) / cam.scale, (sy - oy()) / cam.scale + cam.yTop]; }
+function halfW() { return (W - SA.l - SA.r) / 2 / cam.scale; }
+function halfWFor(yTop) { return (W - SA.l - SA.r) / 2 / scaleFor(yTop); }
+// ground cluster magnification (keeps loops large after the sky opens)
+function gx(x) { return x * cam.g; }
+function gy(y) { return GROUND - (GROUND - y) * cam.g; }
+
+function resize() {
+  W = window.innerWidth; H = window.innerHeight;
+  DPR = Math.min(2, window.devicePixelRatio || 1);
+  cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+  cv.style.width = W + 'px'; cv.style.height = H + 'px';
+  const r = saEl.getBoundingClientRect();
+  SA.t = r.top || 0; SA.l = r.left || 0; SA.b = Math.max(0, H - (r.bottom || H)); SA.r = Math.max(0, W - (r.right || W));
+  updCam();
+}
+
+/* ===================== audio (Web Audio synth) ===================== */
+let AC = null, master = null;
+function initAudio() {
+  if (AC) { if (AC.state === 'suspended') AC.resume().catch(() => {}); return; }
+  const C = window.AudioContext || window.webkitAudioContext;
+  if (!C) return;
+  try {
+    AC = new C();
+    master = AC.createGain(); master.gain.value = 0.5;
+    const comp = AC.createDynamicsCompressor();
+    master.connect(comp); comp.connect(AC.destination);
+    const b = AC.createBuffer(1, 1, 22050); const s = AC.createBufferSource(); s.buffer = b; s.connect(AC.destination); s.start(0);
+    if (AC.state === 'suspended') AC.resume().catch(() => {});
+  } catch (e) { AC = null; }
+}
+let voices = 0;
+function tone(f0, f1, dur, type, vol, delay) {
+  if (!AC || AC.state !== 'running' || voices > 24) return;
+  const t = AC.currentTime + (delay || 0);
+  const o = AC.createOscillator(), g = AC.createGain();
+  o.type = type; o.frequency.setValueAtTime(f0, t);
+  if (f1 !== f0) o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + dur * 0.7);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol, t + 0.006);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g); g.connect(master); o.start(t); o.stop(t + dur + 0.03);
+  voices++; o.onended = () => { voices--; };
+}
+function bell(f, vol, delay, dur) {
+  dur = dur || 1.1;
+  tone(f, f, dur, 'sine', vol, delay); tone(f * 2.005, f * 2.005, dur * 0.55, 'sine', vol * 0.3, delay); tone(f * 3.01, f * 3.01, dur * 0.25, 'sine', vol * 0.12, delay);
+}
+function tremble(vol) {
+  if (!AC || AC.state !== 'running' || voices > 22) return;
+  const t = AC.currentTime;
+  const o = AC.createOscillator(), mod = AC.createGain(), env = AC.createGain(), l = AC.createOscillator(), lg = AC.createGain();
+  o.type = 'triangle'; o.frequency.setValueAtTime(170, t); o.frequency.exponentialRampToValueAtTime(150, t + 0.2);
+  mod.gain.value = 0.5; l.frequency.value = 34; lg.gain.value = 0.45; l.connect(lg); lg.connect(mod.gain);
+  env.gain.setValueAtTime(0.0001, t); env.gain.exponentialRampToValueAtTime(vol, t + 0.01); env.gain.exponentialRampToValueAtTime(0.0001, t + 0.24);
+  o.connect(mod); mod.connect(env); env.connect(master);
+  o.start(t); l.start(t); o.stop(t + 0.27); l.stop(t + 0.27);
+  voices++; o.onended = () => { voices--; };
+}
+const SND = {
+  press() { tone(260, 200, 0.08, 'sine', 0.12); },
+  release() { tone(330, 520, 0.12, 'sine', 0.09); },
+  tick(p) { const f = 520 + p * 380 + rnd(-15, 15); tone(f * 1.45, f, 0.09, 'sine', 0.1); },
+  pop() { tone(900, 1500, 0.13, 'triangle', 0.09); tone(1800, 1800, 0.06, 'sine', 0.04, 0.03); },
+  slack(p) { tone(420 - p * 120, 250 - p * 60, 0.15, 'sine', 0.05); },
+  star() { bell(1046.5, 0.16, 0); bell(1568, 0.11, 0.09); bell(2093, 0.06, 0.18, 0.9); },
+  reach() { tone(700, 760, 0.12, 'sine', 0.04); },
+  ballIn() { tone(300, 620, 0.16, 'sine', 0.12); },
+  clink() { tone(1760, 1760, 0.09, 'sine', 0.05); },
+  moon() { [523.25, 659.25, 783.99, 1046.5, 1318.5].forEach((f, i) => bell(f, 0.12, i * 0.12, 1.4)); },
+  catch() { bell(1318.5, 0.14, 0); bell(1975.5, 0.08, 0.1); },
+  bow() { tone(392, 392, 0.25, 'sine', 0.08); tone(523, 523, 0.3, 'sine', 0.08, 0.18); },
+  close() { [784, 988, 1175, 1568].forEach((f, i) => bell(f, 0.12, i * 0.07, 1.2)); },
+  lap() { [659, 784, 988, 1175, 1318, 1568].forEach((f, i) => bell(f, 0.09, i * 0.06, 0.6)); },
+  land() { tone(180, 80, 0.22, 'sine', 0.16); },
+  wiggle() { tone(700, 640, 0.05, 'sine', 0.035); },
+  retangle() { [1318, 1046, 784, 659, 523].forEach((f, i) => tone(f, f * 0.98, 0.18, 'sine', 0.07, i * 0.08)); }
+};
+
+/* ===================== world objects ===================== */
+const KNOT = { x: -85, y: 905 };
+const LOOP_BASE = [{ x: -170, r: 40 }, { x: 25, r: 58 }, { x: 165, r: 40 }];
+const loops = LOOP_BASE.map((b, i) => ({ i, bx: b.x, r: b.r, ox: 0, oy: 0, vx: 0, vy: 0, tx: 0, ty: 0, press: 0, unw: 0, wig: 0, hop: 0 }));
+let stars = [];
+const moon = { x: -35, y: 110, r: 38, wig: 0, reached: false, pop: 1, glow: 0 };
+let crossings = [];
+let bgDots = [];
+const kite1 = mkKite(1), kite2 = mkKite(2);
+
+function mkKite(type) {
+  const k = { type, x: 0, y: 0, vx: 0, vy: 0, tx: 0, ty: 0, rot: 0, rv: 0, yaw: 0, bow: 0, bowT: -1, hes: 0, jig: 0, wig: 0, vis: 0, tail: [] };
+  for (let i = 0; i < 5; i++) k.tail.push({ x: 0, y: 0, px: 0, py: 0 });
+  return k;
+}
+function resetTail(k) { for (const p of k.tail) { p.x = p.px = k.x; p.y = p.py = k.y + 20; } }
+
+const BASE_STARS = [
+  { id: 'L1', row: 1, x: -200, y: 640 }, { id: 'M1', row: 1, x: -80, y: 590 }, { id: 'R1', row: 1, x: 70, y: 625 },
+  { id: 'L2', row: 2, x: -165, y: 330 }, { id: 'R2', row: 2, x: 95, y: 300 }
+];
+function G0() { return { x: KNOT.x, y: KNOT.y - 30 }; }
+function validLayout(st, mn) {
+  const G = G0(), M = LMAX - 18;
+  const r1 = st.filter(s => s.row === 1), r2 = st.filter(s => s.row === 2);
+  for (let i = 0; i < st.length; i++) {
+    if (Math.abs(st[i].x) > 200) return false;
+    for (let j = i + 1; j < st.length; j++) if (dist(st[i].x, st[i].y, st[j].x, st[j].y) < 95) return false;
+  }
+  for (const s of r1) {
+    if (dist(G.x, G.y, s.x, s.y) > M) return false;
+    if (!r2.some(t => dist(s.x, s.y, t.x, t.y) < M)) return false;
+  }
+  for (const s of r2) if (dist(s.x, s.y, mn.x, mn.y) - (mn.r + 16) > M) return false;
+  if (dist(r2[0].x, r2[0].y, r2[1].x, r2[1].y) > M) return false;
+  return true;
+}
+function genRound() {
+  let st = null, mn = null;
+  for (let tries = 0; tries < 120; tries++) {
+    const s = BASE_STARS.map(b => ({ id: b.id, row: b.row, x: b.x + rnd(-22, 22), y: b.y + rnd(-20, 20) }));
+    const m = { x: -35 + rnd(-60, 60), y: 110 + rnd(-14, 14), r: 38 };
+    if (validLayout(s, m)) { st = s; mn = m; break; }
+  }
+  if (!st) { st = BASE_STARS.map(b => ({ id: b.id, row: b.row, x: b.x, y: b.y })); mn = { x: -35, y: 110, r: 38 }; }
+  stars = st.map(s => Object.assign(s, { r: 22, hooked: false, wig: 0, spin: 0, pop: 0, tw: rnd(0, TAU), glow: 0 }));
+  moon.x = mn.x; moon.y = mn.y; moon.r = mn.r; moon.reached = false; moon.pop = 0; moon.glow = 0; moon.wig = 0;
+  // loops overlap & size vary a little
+  loops.forEach((l, i) => { l.bx = LOOP_BASE[i].x + rnd(-8, 8); l.r = LOOP_BASE[i].r + rnd(-3, 4); l.unw = 0; });
+  // crossings in the knot
+  crossings = [];
+  const thr = [[6, 62, 135], [6, 48, 105, 175], [6, 62, 135]];
+  for (let i = 0; i < 3; i++) {
+    thr[i].forEach((t, j) => {
+      const side = i === 0 ? -1 : i === 2 ? 1 : 0.35;
+      crossings.push({ loop: i, thr: t + rnd(-3, 3), ox: side * rnd(4, 26) + rnd(-8, 8), oy: -rnd(4, 34), rx: rnd(12, 18), ry: rnd(7, 11), rot: rnd(0, Math.PI), out: 0, popped: false, grow: 0 });
+    });
+  }
+  bgDots = [];
+  for (let i = 0; i < 46; i++) bgDots.push({ x: rnd(-700, 700), y: rnd(-700, -30), s: rnd(1, 2.2), tw: rnd(0, TAU) });
+}
+
+/* ===================== game state ===================== */
+const S = {
+  phase: 'PRE', t: 0, idle: 0, anyInput: false, firstDemoDone: false, kiteDemoDone: false,
+  R: 0, T: 1, lastLoop: 1, theta: 0, thetaT: 0, targetObj: null,
+  anchors: [], hook: null, ball: null, pulses: [], unwindRate: 0, tickAcc: 0, slackAcc: 0, pulseAcc: 0,
+  mt: 0, P1: null, P2: null, k2from: null, spacing: 0, tail: 0, closeT: 0,
+  tri: null, laps: 0, landed: [false, false], rt: 0, demo: null, flash: 0, triHint: 1, stats: {}
+};
+const stat = k => { S.stats[k] = (S.stats[k] || 0) + 1; };
+
+function newRound(first) {
+  genRound();
+  S.phase = 'PRE'; S.R = 0; S.T = 1; S.theta = rnd(-0.08, 0.08); S.thetaT = S.theta; S.targetObj = null;
+  S.anchors = []; S.hook = null; S.ball = null; S.pulses = []; S.tail = 0; S.tri = null; S.laps = 0; S.landed = [false, false];
+  S.P1 = S.P2 = null; S.flash = 0;
+  cam.yTopT = 0;
+  if (first) {
+    stars.forEach(s => s.pop = 1); moon.pop = 1;
+    kite1.x = gx(KNOT.x); kite1.y = gy(KNOT.y - 30); kite1.vis = 1; resetTail(kite1);
+    kite2.vis = 0;
+  }
+}
+
+/* ===================== geometry helpers ===================== */
+function Gpt() { return { x: gx(KNOT.x), y: gy(KNOT.y - 30) }; }
+function pathPts() { const p = [Gpt()]; for (const a of S.anchors) p.push(a); return p; }
+function polyLen(p) { let L = 0; for (let i = 1; i < p.length; i++) L += dist(p[i - 1].x, p[i - 1].y, p[i].x, p[i].y); return L; }
+function lastAnchor() { return S.anchors.length ? S.anchors[S.anchors.length - 1] : Gpt(); }
+function angFrom(A, x, y) { return Math.atan2(x - A.x, -(y - A.y)); }
+function segPoint(p, s) { // point along polyline at distance s
+  for (let i = 1; i < p.length; i++) {
+    const L = dist(p[i - 1].x, p[i - 1].y, p[i].x, p[i].y);
+    if (s <= L || i === p.length - 1) { const u = L > 0 ? clamp(s / L, 0, 1) : 0; return { x: lerp(p[i - 1].x, p[i].x, u), y: lerp(p[i - 1].y, p[i].y, u), i, u, L, ex: L ? (p[i].x - p[i - 1].x) / L : 1, ey: L ? (p[i].y - p[i - 1].y) / L : 0 }; }
+    s -= L;
+  }
+  return { x: p[0].x, y: p[0].y, i: 1, u: 0, L: 0, ex: 1, ey: 0 };
+}
+function kiteFree() { return S.R - polyLen(pathPts()); }
+
+/* choose where a loop sends the kite (with snapping assist) */
+function pickTarget(li) {
+  const A = lastAnchor();
+  const cands = [];
+  for (const s of stars) {
+    if (s.hooked || s === S.hook?.star) continue;
+    const d = dist(A.x, A.y, s.x, s.y); if (d < 40) continue;
+    const a = angFrom(A, s.x, s.y); if (Math.abs(a) > 1.5) continue;
+    cands.push({ obj: s, a, d });
+  }
+  if (S.anchors.length) {
+    const d = dist(A.x, A.y, moon.x, moon.y), a = angFrom(A, moon.x, moon.y);
+    if (Math.abs(a) < 1.3) cands.push({ obj: moon, a, d: d - moon.r - 10 });
+  }
+  const inCat = c => li === 0 ? c.a < -0.12 : li === 2 ? c.a > 0.12 : Math.abs(c.a) <= 0.5;
+  let pool = cands.filter(c => inCat(c) && c.d <= LMAX + 6);
+  const reach = pool.length > 0;
+  if (!reach) pool = cands.filter(inCat);
+  if (!pool.length) return { a: li === 0 ? -0.7 : li === 2 ? 0.7 : 0, obj: null, reach: false };
+  pool.sort((p, q) => {
+    const sp = (p.obj === moon ? -1000 : 0) + (li === 1 ? Math.abs(p.a) * 300 : 0) + p.d;
+    const sq = (q.obj === moon ? -1000 : 0) + (li === 1 ? Math.abs(q.a) * 300 : 0) + q.d;
+    return sp - sq;
+  });
+  return { a: pool[0].a, obj: pool[0].obj, reach };
+}
+
+/* ===================== particles ===================== */
+const P = [], PMAX = 120;
+function burst(x, y, n, spd, life) {
+  for (let i = 0; i < n && P.length < PMAX; i++) {
+    const a = rnd(0, TAU), v = rnd(0.3, 1) * spd;
+    P.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: life || rnd(0.4, 0.8), age: 0, sh: (Math.random() * 3) | 0, sz: rnd(2.2, 4.5), rot: rnd(0, TAU) });
+  }
+}
+function updParticles(dt) {
+  for (let i = P.length - 1; i >= 0; i--) {
+    const p = P[i]; p.age += dt; if (p.age >= p.life) { P.splice(i, 1); continue; }
+    p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= Math.exp(-2.5 * dt); p.vy = p.vy * Math.exp(-2.5 * dt) + 60 * dt; p.rot += dt * 4;
+  }
+}
+
+/* ===================== pulses (tension tremble travelling on the line) ===================== */
+function emitPulse(e, li) {
+  const last = S.pulses[S.pulses.length - 1];
+  if (last && last.s < 70) { last.e += e; last.amp = Math.min(9, last.amp + e * 0.03); last.li = li; return; }
+  if (S.pulses.length >= 7) S.pulses.shift();
+  S.pulses.push({ s: 0, e, amp: Math.min(9, 3 + e * 0.03), li });
+}
+function pulsePath() {
+  const p = pathPts();
+  let ballS = -1;
+  if (S.phase === 'TRI' && S.tri) {
+    const base = polyLen(p), Sv = S.tri.S;
+    const order = S.tri.dir > 0 ? [kite1, kite2, Sv] : [kite2, kite1, Sv];
+    for (const o of order) p.push({ x: o.x, y: o.y });
+    if (S.ball && S.ball.mode === 'tri') { const per = triPerim(); ballS = base + (S.tri.dir > 0 ? S.ball.u : (per - S.ball.u) % per); }
+    return { p, ballS };
+  }
+  if (S.ball && S.ball.mode === 'line' && S.anchors.length >= 2) ballS = dist(p[0].x, p[0].y, p[1].x, p[1].y) + S.ball.s;
+  if (S.phase !== 'RETANGLE') p.push({ x: kite1.x, y: kite1.y });
+  if ((S.phase === 'TWO' || S.phase === 'CLOSE' || (S.phase === 'MOON' && S.mt > 2.5)) && kite2.vis) p.push({ x: kite2.x, y: kite2.y });
+  return { p, ballS };
+}
+function pulseDisp(s) {
+  let d = 0;
+  for (const q of S.pulses) { const x = s - q.s; if (x > -70 && x < 70) d += q.amp * Math.exp(-(x * x) / 700) * Math.sin(x * 0.28); }
+  return d * clamp((S.T - 0.25) / 0.5, 0, 1);
+}
+function updPulses(dt) {
+  if (!S.pulses.length) return;
+  const { p, ballS } = pulsePath();
+  const L = polyLen(p);
+  for (let i = S.pulses.length - 1; i >= 0; i--) {
+    const q = S.pulses[i], s0 = q.s;
+    q.s += 950 * dt;
+    if (ballS >= 0 && s0 < ballS && q.s >= ballS && S.T > 0.35) pushBall(q);
+    if (q.s > L + 80) S.pulses.splice(i, 1);
+  }
+}
+
+/* ===================== the ball ===================== */
+function spawnBall() {
+  const a = S.anchors, A = a[a.length - 2], B = a[a.length - 1];
+  const segL = dist(A.x, A.y, B.x, B.y);
+  const before = polyLen(a.slice(0, a.length - 1));
+  S.ball = { mode: 'line', s: before + segL * rnd(0.3, 0.7), v: 0, scale: 0, roll: 0, u: 0, rest: false };
+  SND.ballIn(); stat('ball');
+}
+function ballLinePos() {
+  const a = S.anchors; const sp = segPoint(a, S.ball.s);
+  const sag = segSag(sp.L); return { x: sp.x, y: sp.y + 4 * sag * sp.u * (1 - sp.u), ex: sp.ex, ey: sp.ey };
+}
+function pushBall(q) {
+  const b = S.ball; if (!b) return;
+  if (b.mode === 'line') {
+    const sp = segPoint(S.anchors, b.s);
+    const dx = q.li === 0 ? -1 : q.li === 2 ? 1 : 0, dy = q.li === 1 ? -1 : 0;
+    let dot = sp.ex * dx + sp.ey * dy; if (Math.abs(dot) < 0.15) dot = q.li === 1 ? 0 : (dot >= 0 ? 0.15 : -0.15);
+    b.v += Math.sign(dot) * Math.min(340, 120 + q.e * 1.6);
+    b.rest = false;
+  } else if (b.mode === 'tri' && S.tri) {
+    S.tri.E = Math.min(720, S.tri.E + q.e * 1.7 + 60);
+  }
+}
+function segSag(L) { return (1 - S.T) * 0.07 * L + 1.5; }
+function triPts() { const t = S.tri; return [t.S, { x: kite1.x, y: kite1.y }, { x: kite2.x, y: kite2.y }, t.S]; }
+function triPerim() { return polyLen(triPts()); }
+
+function updBall(dt) {
+  const b = S.ball; if (!b) return;
+  b.scale = Math.min(1, b.scale + dt * 3);
+  const taut = sstep(0.32, 0.75, S.T);
+  if (b.mode === 'line') {
+    const a = S.anchors; if (a.length < 2) return;
+    const L = polyLen(a);
+    const sp = segPoint(a, b.s);
+    if (taut > 0.02) b.v += 300 * sp.ey * taut * dt;
+    b.v *= Math.exp(-(0.9 + (1 - taut) * 9) * dt);
+    if (taut < 0.05 && Math.abs(b.v) < 8) b.v = 0;
+    b.s += b.v * dt; b.roll += b.v * dt / 11;
+    // stars on the way are little stops
+    let acc = 0;
+    for (let i = 1; i < a.length; i++) {
+      acc += dist(a[i - 1].x, a[i - 1].y, a[i].x, a[i].y);
+      if (i < a.length - 1 && Math.abs(b.s - acc) < 3 && Math.abs(b.v) < 30) { b.v = 0; }
+    }
+    if (b.s <= 0) { if (b.v < -40) { SND.clink(); a[0].glow = 1; } b.s = 0; b.v = Math.max(0, -b.v * 0.2); }
+    if (b.s >= L) { if (b.v > 40) { SND.clink(); a[a.length - 1].glow = 1; } b.s = L; b.v = Math.min(0, -b.v * 0.2); }
+  } else if (b.mode === 'toS') {
+    b.u += dt * 1.6;
+    const t = ease(b.u); b.x = lerp(b.fx, S.tri ? S.tri.S.x : b.tx, t); b.y = lerp(b.fy, S.tri ? S.tri.S.y : b.ty, t); b.roll += dt * 6;
+    if (b.u >= 1) { if (S.phase === 'TRI') { b.mode = 'tri'; b.u = 0; b.v = 0; } else { b.mode = 'park'; } }
+  } else if (b.mode === 'tri' && S.tri) {
+    const tri = S.tri, pts = triPts(), per = polyLen(pts);
+    if (per < 10) return;
+    b.u = ((b.u % per) + per) % per;
+    const sp = segPoint(pts, b.u);
+    const vt = tri.dir * Math.min(tri.E, 650) * taut;
+    b.v += (vt - b.v) * 2.6 * dt + 150 * sp.ey * taut * dt;
+    if (taut < 0.2) b.v *= Math.exp(-6 * dt);
+    tri.E *= Math.exp(-(0.18 + (1 - taut) * 2) * dt);
+    const du = b.v * dt;
+    b.u = (((b.u + du) % per) + per) % per; b.roll += du / 11;
+    if (Math.sign(du) === tri.dir) tri.lapAcc += Math.abs(du); else tri.lapAcc = Math.max(0, tri.lapAcc - Math.abs(du));
+    if (tri.lapAcc >= per) { tri.lapAcc -= per; onLap(); }
+  }
+}
+
+/* ===================== loops: pulling ===================== */
+let active = null; // {id, type, li|k, lastY, startX, startY, moved, gx, gy}
+
+function loopGeom(l) {
+  const r = l.r * Math.max(1, Math.min(cam.g, 1.6));
+  const bx = gx(l.bx), by = GROUND;
+  const hold = (l.i === S.lastLoop ? S.T * 22 : 0);
+  const hop = l.hop;
+  const up = -l.oy; // positive when pulled up
+  const h = Math.max(r * 0.55, 2 * r + hold + up - l.press * 10 + hop);
+  const w = r * clamp(1 + (l.oy > 0 ? l.oy / r * 0.45 : 0) - (up > 0 ? Math.min(0.4, up / (r * 6)) : 0) + l.press * 0.14, 0.5, 1.6);
+  const tx = bx + l.ox, ty = by - h;
+  return { bx, by, tx, ty, w, h, mx: (bx + tx) / 2, my: (by + ty) / 2, rot: Math.atan2(tx - bx, by - ty), r };
+}
+function hitLoop(sx, sy) {
+  let best = -1, bd = 1e9;
+  for (const l of loops) {
+    const g = loopGeom(l);
+    const [cx, cy] = w2s(g.mx, g.my);
+    const rx = Math.max(g.w * cam.scale + 16, 32), ry = Math.max(g.h / 2 * cam.scale + 16, 32);
+    const dx = (sx - cx) / rx, dy = (sy - cy) / ry, d = dx * dx + dy * dy;
+    if (d <= 1 && d < bd) { bd = d; best = l.i; }
+  }
+  return best;
+}
+function hitObj(sx, sy) {
+  const [wx, wy] = s2w(sx, sy);
+  const rr = 30 / cam.scale;
+  for (const k of [kite1, kite2]) if (k.vis > 0.5 && dist(wx, wy, k.x, k.y) < Math.max(38 * kScale(), rr)) return { type: 'kite', k };
+  if (S.ball && S.ball.scale > 0.5) { const bp = ballPos(); if (bp && dist(wx, wy, bp.x, bp.y) < Math.max(26, rr)) return { type: 'ball' }; }
+  for (const s of stars) if (dist(wx, wy, s.x, s.y) < Math.max(s.r + 12, rr)) return { type: 'star', s };
+  if (dist(wx, wy, moon.x, moon.y) < Math.max(moon.r + 10, rr)) return { type: 'moon' };
+  if (dist(wx, wy, gx(KNOT.x), gy(KNOT.y - 10)) < Math.max(40 * cam.g, rr)) return { type: 'knot' };
+  return null;
+}
+function wiggle(h) {
+  if (!h) return;
+  if (h.type === 'kite') h.k.wig = 1; else if (h.type === 'star') h.s.wig = 1; else if (h.type === 'moon') moon.wig = 1;
+  else if (h.type === 'knot') crossings.forEach(c => c.grow = 0.6); else if (h.type === 'ball' && S.ball) S.ball.wig = 1;
+  SND.wiggle(); stat('wiggle');
+}
+
+function onDown(e) {
+  e.preventDefault();
+  initAudio();
+  S.idle = 0; S.anyInput = true;
+  if (S.demo) { S.demo = null; }
+  const sx = e.clientX, sy = e.clientY;
+  if (active) { // another finger while one is busy: only tiny reactions
+    const li = hitLoop(sx, sy); if (li >= 0) loops[li].wig = 1; else wiggle(hitObj(sx, sy));
+    return;
+  }
+  const li = hitLoop(sx, sy);
+  const obj = hitObj(sx, sy);
+  if (obj && obj.type === 'kite' && (S.phase === 'TRI' || S.phase === 'LAND1') && !(S.phase === 'LAND1' && S.landed[obj.k === kite1 ? 0 : 1])) {
+    try { cv.setPointerCapture(e.pointerId); } catch (_) {}
+    const [wx, wy] = s2w(sx, sy);
+    active = { id: e.pointerId, type: 'kite', k: obj.k, offx: obj.k.x - wx, offy: obj.k.y - wy, fx: obj.k.x, fy: obj.k.y, moved: 0 };
+    obj.k.jig = 1; SND.press(); stat('kitegrab');
+    return;
+  }
+  if (li >= 0) {
+    try { cv.setPointerCapture(e.pointerId); } catch (_) {}
+    const l = loops[li];
+    active = { id: e.pointerId, type: 'loop', li, lastY: sy, startX: sx, startY: sy, moved: 0, pulled: 0 };
+    l.press = 1; l.vy += 120;
+    if (S.lastLoop !== li) { S.lastLoop = li; }
+    kite1.hes = 0.35; kite1.jig = Math.max(kite1.jig, 0.6); if (kite2.vis) kite2.jig = 0.4;
+    if (S.phase === 'PRE' && !S.hook) { const pt = pickTarget(li); S.thetaT = pt.a; S.targetObj = pt.obj; }
+    SND.press(); stat('loopdown');
+    return;
+  }
+  wiggle(obj);
+}
+function onMove(e) {
+  if (!active || e.pointerId !== active.id) return;
+  e.preventDefault();
+  S.idle = 0;
+  const sx = e.clientX, sy = e.clientY;
+  if (active.type === 'loop') {
+    const l = loops[active.li];
+    const dyS = sy - active.lastY; active.lastY = sy;
+    const dyW = dyS / cam.scale;
+    active.moved += Math.abs(dyW);
+    if (dyW < 0) applyPull(active.li, -dyW); else if (dyW > 0) applySlack(active.li, dyW);
+    // rubbery follow
+    const offY = (sy - active.startY) / cam.scale, offX = (sx - active.startX) / cam.scale;
+    const r = l.r;
+    l.ty = offY < 0 ? -2.3 * r * (1 - Math.exp(offY / (2.3 * r))) : 0.8 * r * (1 - Math.exp(-offY / (0.8 * r)));
+    l.tx = clamp(offX * 0.3, -r * 0.6, r * 0.6);
+    if (active.moved > 6) l.press = Math.max(0, l.press - 0.2);
+  } else if (active.type === 'kite') {
+    const [wx, wy] = s2w(sx, sy);
+    active.fx = wx + active.offx; active.fy = wy + active.offy; active.moved += 1;
+  }
+}
+function onUp(e) {
+  if (!active || (e && e.pointerId !== active.id)) return;
+  endActive(e && e.type === 'pointercancel');
+}
+function endActive(cancelled) {
+  const a = active; active = null; if (!a) return;
+  if (a.type === 'loop') {
+    const l = loops[a.li];
+    l.tx = 0; l.ty = 0; l.press = 0; l.vy -= 260;
+    if (!cancelled && a.moved < 7) applyTap(a.li); else SND.release();
+    kite1.jig = Math.max(kite1.jig, 0.5);
+  } else if (a.type === 'kite') {
+    releaseKite(a, cancelled);
+  }
+}
+
+function applyPull(li, amt) {
+  if (S.phase === 'RETANGLE' || S.phase === 'MOON' || S.phase === 'CLOSE') { S.T = Math.min(1, S.T + amt / 80); return; }
+  if (S.T < 1) {
+    const take = Math.min(amt, (1 - S.T) * 80); const was = S.T;
+    S.T += take / 80; amt -= take;
+    if (was < 0.95 && S.T >= 0.95) { tremble(0.08); emitPulse(40, li); }
+  }
+  if (amt <= 0) return;
+  unwind(li, amt);
+}
+function applySlack(li, amt) {
+  const was = S.T;
+  S.T = Math.max(0, S.T - amt / 90);
+  if (was > S.T) { S.slackAcc += amt; if (S.slackAcc > 26) { S.slackAcc = 0; SND.slack(1 - S.T); } stat('slack'); }
+}
+function applyTap(li) {
+  stat('tap');
+  if (S.phase === 'RETANGLE' || S.phase === 'MOON' || S.phase === 'CLOSE') { SND.release(); return; }
+  if (S.T < 0.98) { S.T = Math.min(1, S.T + 0.4); tremble(0.06); SND.release(); emitPulse(50, li); return; }
+  unwind(li, 16, true);
+  emitPulse(70, li);
+  SND.release();
+}
+
+function unwind(li, amt, isTap) {
+  const l = loops[li];
+  S.unwindRate = Math.min(1, S.unwindRate + amt / 60);
+  S.pulseAcc += amt; if (S.pulseAcc > 26) { emitPulse(S.pulseAcc, li); S.pulseAcc = 0; }
+  S.tickAcc += amt; if (S.tickAcc > 17 || isTap) { S.tickAcc = 0; SND.tick(clamp(S.T * 0.5 + Math.min(1, -l.oy / (2 * l.r)) * 0.5, 0, 1)); }
+  if (S.phase === 'PRE') {
+    const cap = polyLen(pathPts()) + LMAX + 30;
+    const before = S.R;
+    S.R = Math.min(cap, S.R + amt);
+    const got = S.R - before;
+    l.unw += got + (got < amt ? 0 : 0);
+    if (got < amt * 0.3 && S.R >= cap - 1) { kite1.jig = Math.max(kite1.jig, 0.4); S.strain = 1; }
+    for (const c of crossings) if (!c.popped && c.loop === li && l.unw >= c.thr) { c.popped = true; c.out = 0.001; SND.pop(); stat('cross'); }
+    // pulling an already used loop hard keeps the line pointed at its target
+    if (!S.hook) { const pt = pickTarget(li); S.thetaT = pt.a; S.targetObj = pt.obj; }
+  } else if (S.phase === 'TWO') {
+    S.tail += amt * 0.95;
+    l.unw += amt;
+    const k = li === 0 ? -1 : li === 2 ? 1 : 0;
+    if (k) { S.P1.x += k * amt * 0.05; S.P2.x += k * amt * 0.05; clampPair(); }
+    stat('tail');
+  } else if (S.phase === 'TRI') {
+    triPull(li, amt);
+  } else if (S.phase === 'LAND1') {
+    unland();
+  }
+}
+
+/* ===================== phase: moon / two kites ===================== */
+function startMoon() {
+  S.phase = 'MOON'; S.mt = 0; moon.reached = true; moon.glow = 1; S.flash = 1;
+  cam.yTopT = ZOOM_TOP;
+  SND.moon(); stat('moon');
+  burst(moon.x, moon.y, 26, 260, 1.0);
+  const Sl = lastAnchor();
+  const ux = moon.x - Sl.x, uy = moon.y - Sl.y, ul = Math.hypot(ux, uy) || 1;
+  const hwz = halfWFor(ZOOM_TOP) - 85;
+  const P1 = { x: moon.x + ux / ul * 110, y: moon.y - 230 };
+  P1.x = clamp(P1.x, -hwz, hwz);
+  const total = polyLen(pathPts()) + dist(Sl.x, Sl.y, P1.x, P1.y);
+  const s = clamp(520 - (total - 980) * 1.3, 170, 480);
+  const side = P1.x <= 0 ? 1 : -1;
+  const room = side > 0 ? hwz - P1.x : P1.x + hwz;
+  let th = 1.25; if (s * Math.sin(th) > room) th = Math.asin(clamp(room / s, 0.2, 0.93));
+  const P2 = { x: P1.x + side * s * Math.sin(th), y: P1.y - s * Math.cos(th) };
+  P2.y = Math.max(P2.y, ZOOM_TOP + 90);
+  S.P1 = P1; S.P2 = P2; S.spacing = dist(P1.x, P1.y, P2.x, P2.y);
+  S.k2from = { x: side * (halfWFor(ZOOM_TOP) + 90), y: ZOOM_TOP - 60 };
+  kite2.x = S.k2from.x; kite2.y = S.k2from.y; kite2.vx = kite2.vy = 0; kite2.vis = 0; resetTail(kite2);
+  S.tail = 0;
+}
+function clampPair() {
+  const hwz = halfWFor(ZOOM_TOP) - 85;
+  for (const P of [S.P1, S.P2]) { P.x = clamp(P.x, -hwz, hwz); }
+}
+function bowBoth() { kite1.bowT = 0; if (kite2.vis) kite2.bowT = 0; SND.bow(); stat('bow'); }
+
+/* ===================== phase: triangle ===================== */
+function startTri() {
+  const Sv = lastAnchor();
+  const mk = k => ({ a: angFrom(Sv, k.x, k.y), r: dist(Sv.x, Sv.y, k.x, k.y) });
+  S.tri = { S: Sv, k: [mk(kite1), mk(kite2)], dir: kite1.x < kite2.x ? 1 : -1, E: 380, lapAcc: 0 };
+  S.phase = 'TRI'; S.flash = 1;
+  if (S.ball) { const bp = ballPos(); S.ball.mode = 'toS'; S.ball.fx = bp.x; S.ball.fy = bp.y; S.ball.u = 0; }
+  else { S.ball = { mode: 'tri', u: 0, v: 0, scale: 0, roll: 0 }; }
+  SND.close(); stat('tri');
+  const pts = triPts();
+  for (let i = 0; i < 3; i++) for (let j = 0; j < 5; j++) { const u = j / 5; burst(lerp(pts[i].x, pts[i + 1].x, u), lerp(pts[i].y, pts[i + 1].y, u), 2, 120, 0.7); }
+}
+function triKitePos(i) { const t = S.tri, k = t.k[i]; return { x: t.S.x + Math.sin(k.a) * k.r, y: t.S.y - Math.cos(k.a) * k.r }; }
+function triClamp() {
+  const t = S.tri, hwz = halfW() - 75, top = cam.yTop + 70 / Math.max(0.3, cam.scale / cam.base * 1);
+  for (let i = 0; i < 2; i++) {
+    const p = triKitePos(i);
+    const nx = clamp(p.x, -hwz, hwz), ny = clamp(p.y, Math.max(ZOOM_TOP + 80, top), t.S.y - 130);
+    if (nx !== p.x || ny !== p.y) { t.k[i].a = clamp(angFrom(t.S, nx, ny), -1.3, 1.3); t.k[i].r = clamp(dist(t.S.x, t.S.y, nx, ny), 150, 1300); }
+  }
+  // keep kites apart
+  const a = triKitePos(0), b = triKitePos(1);
+  if (dist(a.x, a.y, b.x, b.y) < 130) { const i = a.x < b.x ? 0 : 1; t.k[i].a -= 0.04; t.k[1 - i].a += 0.04; }
+}
+function triValid(t) {
+  const hwz = halfWFor(ZOOM_TOP) - 80;
+  const a = triKitePos(0), b = triKitePos(1);
+  for (let i = 0; i < 2; i++) {
+    const p = i ? b : a;
+    if (Math.abs(t.k[i].a) > 1.3 || Math.abs(p.x) > hwz || p.y < ZOOM_TOP + 80 || p.y > t.S.y - 130) return false;
+  }
+  return dist(a.x, a.y, b.x, b.y) >= 140;
+}
+function triTry(fn) {
+  const t = S.tri, save = t.k.map(k => ({ a: k.a, r: k.r }));
+  fn(t);
+  if (!triValid(t)) { t.k = save; return false; }
+  return true;
+}
+function triSetPos(i, x, y) { const t = S.tri; t.k[i].a = angFrom(t.S, x, y); t.k[i].r = dist(t.S.x, t.S.y, x, y); }
+function triPull(li, amt) {
+  const t = S.tri; if (!t) return;
+  const leftIdx = triPos(0).x < triPos(1).x ? 0 : 1;
+  if (li === 0 || li === 2) {
+    const sg = li === 0 ? -1 : 1;
+    const da = sg * amt * 0.0016;
+    if (!triTry(t => { t.k[0].a += da; t.k[1].a += da; }))
+      if (!triTry(t => { t.k[0].a += da; })) triTry(t => { t.k[1].a += da; });
+    const nd = li === 0 ? (leftIdx === 0 ? 1 : -1) : (leftIdx === 0 ? -1 : 1);
+    if (nd !== t.dir) { t.dir = nd; t.lapAcc = 0; stat('dirchange'); }
+  } else {
+    // center: both kites climb; at the top they spread apart
+    const ok = triTry(() => { for (let i = 0; i < 2; i++) { const p = triKitePos(i); triSetPos(i, p.x, p.y - amt * 0.6); } });
+    if (!ok) {
+      triTry(() => { for (let i = 0; i < 2; i++) { const p = triKitePos(i); const sg = i === leftIdx ? -1 : 1; triSetPos(i, p.x + sg * amt * 0.4, Math.max(p.y, ZOOM_TOP + 82)); } });
+    }
+  }
+  stat('trishape');
+}
+function triPos(i) { return triKitePos(i); }
+function onLap() {
+  S.laps++; stat('lap'); SND.lap(); bowBoth(); S.flash = 0.7;
+  const pts = triPts();
+  for (let i = 0; i < 3; i++) burst(pts[i].x, pts[i].y, 7, 200, 0.8);
+  let n = (S.lastLoop + 1 + ((Math.random() * 2) | 0)) % 3; if (n === S.lastLoop) n = (n + 1) % 3; S.triHint = n;
+}
+
+/* ===================== landing / new cycle ===================== */
+function releaseKite(a, cancelled) {
+  const k = a.k, i = k === kite1 ? 0 : 1;
+  if (!cancelled && a.fy > gy(GROUND - 170 * cam.g)) { landKite(i); return; }
+  if (S.phase === 'TRI' && S.tri) { // keep the new shape
+    const t = S.tri; t.k[i].a = angFrom(t.S, a.fx, a.fy); t.k[i].r = dist(t.S.x, t.S.y, a.fx, a.fy); triClamp();
+    stat('kitedrag');
+  }
+}
+function landKite(i) {
+  if (S.landed[i]) return;
+  S.landed[i] = true; SND.land(); stat('land');
+  const k = i === 0 ? kite1 : kite2; k.jig = 1;
+  burst(k.x, k.y, 10, 160);
+  if (S.landed[0] && S.landed[1]) { startRetangle(); return; }
+  S.phase = 'LAND1';
+  if (S.ball) { const bp = ballPos(); S.ball.mode = 'toS'; S.ball.fx = bp.x; S.ball.fy = bp.y; S.ball.u = 0; S.ball.tx = S.tri.S.x; S.ball.ty = S.tri.S.y; }
+}
+function unland() {
+  S.landed = [false, false]; S.phase = 'TRI';
+  if (S.ball && S.ball.mode !== 'tri') { const bp = ballPos(); S.ball.mode = 'toS'; S.ball.fx = bp.x; S.ball.fy = bp.y; S.ball.u = 0; }
+  kite1.jig = kite2.jig = 1; SND.release(); stat('unland');
+}
+function landSpot(i) { const l = loops[i === 0 ? 0 : 2], g = loopGeom(l); return { x: g.tx, y: g.ty - 22 * kScale() }; }
+function startRetangle() {
+  S.phase = 'RETANGLE'; S.rt = 0; SND.retangle(); stat('retangle');
+  S.rtPath = pathPts(); S.rtLen = polyLen(S.rtPath);
+  S.ball = null; S.pulses = [];
+}
+
+/* ===================== hints ===================== */
+function hintLoop() {
+  switch (S.phase) {
+    case 'PRE': {
+      if (S.R < 40) return 1;
+      if (S.hook) return -1;
+      const opts = [0, 1, 2].map(i => ({ i, p: pickTarget(i) })).filter(o => o.p.reach && o.p.obj);
+      if (!opts.length) return 1;
+      const m = opts.find(o => o.p.obj === moon); if (m) return m.i;
+      const same = opts.find(o => o.i === S.lastLoop); if (same && S.targetObj === same.p.obj) return same.i;
+      opts.sort((a, b) => a.p.obj.y - b.p.obj.y);
+      return (opts.find(o => o.i !== S.lastLoop) || opts[0]).i;
+    }
+    case 'TWO': return 1;
+    case 'TRI': return S.laps === 0 ? S.lastLoop : S.triHint;
+    default: return -1;
+  }
+}
+function hintTargetObj() {
+  if (S.phase !== 'PRE') return null;
+  const h = hintLoop(); if (h < 0) return null;
+  return pickTarget(h).obj;
+}
+
+/* ===================== update ===================== */
+function kScale() { return clamp(cam.base / cam.scale, 1, 1.7); }
+
+function update(dt) {
+  S.t += dt; S.idle += dt;
+  // camera
+  const prevTop = cam.yTop;
+  cam.yTop += (cam.yTopT - cam.yTop) * (1 - Math.exp(-(S.phase === 'MOON' ? 1.6 : 2.2) * dt));
+  if (Math.abs(cam.yTop - cam.yTopT) < 0.5) cam.yTop = cam.yTopT;
+  updCam();
+  S.flash = Math.max(0, S.flash - dt * 1.5);
+  S.unwindRate *= Math.exp(-3 * dt);
+  S.strain = Math.max(0, (S.strain || 0) - dt * 2);
+
+  // loops springs
+  const hl = hintLoop();
+  for (const l of loops) {
+    const ax = (l.tx - l.ox) * 240 - l.vx * 13, ay = (l.ty - l.oy) * 240 - l.vy * 11;
+    l.vx += ax * dt; l.vy += ay * dt; l.ox += l.vx * dt; l.oy += l.vy * dt;
+    if (!(active && active.type === 'loop' && active.li === l.i)) l.press = Math.max(0, l.press - dt * 8);
+    l.wig = Math.max(0, l.wig - dt * 3);
+    // inviting hop on the one highlighted loop (stronger when idle)
+    let hop = 0;
+    if (l.i === hl && !active) {
+      const per = S.idle > 3 ? 1.1 : 1.8, ph = (S.t % per) / per;
+      hop = ph < 0.3 ? Math.sin(ph / 0.3 * Math.PI) * (S.idle > 3 ? 12 : 7) : 0;
+    }
+    l.hop = lerp(l.hop, hop, 1 - Math.exp(-20 * dt));
+  }
+  for (const c of crossings) {
+    if (c.out > 0 && c.out < 1) {
+      c.out = Math.min(1, c.out + dt * 2.2);
+      if (c.out >= 1) { const l = loops[c.loop], g = loopGeom(l); burst(g.bx, g.by - 10, 6, 140, 0.5); }
+    }
+    c.grow = Math.max(0, c.grow - dt * 3);
+  }
+  for (const s of stars) { s.wig = Math.max(0, s.wig - dt * 3); s.spin = Math.max(0, s.spin - dt * 2); s.glow = Math.max(0, s.glow - dt * 1.5); }
+  moon.wig = Math.max(0, moon.wig - dt * 3); moon.glow = Math.max(0, moon.glow - dt * 0.6);
+  if (S.ball && S.ball.wig) S.ball.wig = Math.max(0, S.ball.wig - dt * 3);
+
+  if (S.phase === 'PRE') updPre(dt);
+  else if (S.phase === 'MOON') updMoon(dt);
+  else if (S.phase === 'TWO') updTwo(dt);
+  else if (S.phase === 'CLOSE') updClose(dt);
+  else if (S.phase === 'TRI' || S.phase === 'LAND1') updTri(dt);
+  else if (S.phase === 'RETANGLE') updRetangle(dt);
+
+  updKite(kite1, dt);
+  if (kite2.vis > 0) updKite(kite2, dt);
+  updBall(dt);
+  updPulses(dt);
+  updParticles(dt);
+  updDemo(dt);
+}
+
+function updPre(dt) {
+  const dth = S.thetaT - S.theta;
+  S.theta += clamp(dth, -2.2 * dt, 2.2 * dt);
+  const A = lastAnchor();
+  const F = kiteFree();
+  const r = clamp(F, 0, LMAX);
+  if (S.hook) {
+    S.hook.t += dt;
+    const st = S.hook.star; st.spin = 1;
+    if (S.hook.t >= 0.34) {
+      S.anchors.push(st); st.hooked = true; S.hook = null; st.glow = 1;
+      const np = polyLen(pathPts());
+      S.R = clamp(S.R, np, np + 24);
+      SND.star(); stat('hook'); kite1.jig = 1;
+      burst(st.x, st.y, 14, 220, 0.7);
+      if (S.anchors.length >= 2 && !S.ball) spawnBall();
+      const pt = pickTarget(S.lastLoop); S.thetaT = pt.a; S.targetObj = pt.obj;
+      return;
+    }
+  }
+  if (!S.anchors.length && r < 14 && !S.hook) {
+    // stuck on the knot: struggling
+    const p = Gpt();
+    const fl = Math.sin(S.t * 9) * 0.5 + Math.sin(S.t * 14.3) * 0.5;
+    kite1.tx = p.x + 6 + fl * 3; kite1.ty = p.y - 22 - Math.max(0, Math.sin(S.t * 5.1)) * 7 - r * 1.2;
+    kite1.rotT = 0.55 + fl * 0.3;
+    return;
+  }
+  let tx = A.x + Math.sin(S.theta) * r, ty = A.y - Math.cos(S.theta) * r;
+  ty += (1 - S.T) * 30 * (r / LMAX);
+  // waiting bob
+  ty += Math.sin(S.t * 2.1) * 4; tx += Math.sin(S.t * 1.3) * 3;
+  if (S.strain) { tx += Math.sin(S.t * 50) * 2 * S.strain; }
+  const hw = halfW() - 30;
+  tx = clamp(tx, -hw, hw); ty = clamp(ty, cam.yTop + 40, GROUND - 40);
+  kite1.tx = tx; kite1.ty = ty;
+  // gaze toward the next star
+  const ho = S.idle > 0.8 ? hintTargetObj() : null;
+  let gaze = 0; if (ho) gaze = clamp((ho.x - kite1.x) / 200, -1, 1) * 0.35;
+  kite1.rotT = clamp(kite1.vx * 0.0025, -0.5, 0.5) + S.theta * 0.2 + gaze;
+  if (S.hook) return;
+  // hook detection
+  if (r > 40) {
+    const lx = tx - A.x, ly = ty - A.y, ll = Math.hypot(lx, ly) || 1;
+    for (const s of stars) {
+      if (s.hooked) continue;
+      const dx = s.x - A.x, dy = s.y - A.y;
+      if (Math.abs(Math.atan2(dx, -dy)) > 1.5) continue;
+      const along = (dx * lx + dy * ly) / ll, perp = Math.abs(dx * ly - dy * lx) / ll;
+      if (along > 40 && along < ll + 10 && perp < 34) { S.hook = { star: s, t: 0 }; SND.reach(); break; }
+    }
+    if (!S.hook && S.anchors.length && dist(tx, ty, moon.x, moon.y) < moon.r + 24) startMoon();
+  }
+}
+
+function updMoon(dt) {
+  S.mt += dt;
+  const P1 = S.P1, P2 = S.P2;
+  kite1.tx = P1.x + Math.sin(S.t * 1.7) * 4; kite1.ty = P1.y + Math.sin(S.t * 2.1) * 5;
+  kite1.rotT = clamp(kite1.vx * 0.002, -0.4, 0.4);
+  if (S.mt > 0.9) {
+    kite2.vis = 1;
+    const u = ease((S.mt - 0.9) / 1.5);
+    const f = S.k2from, cx = lerp(f.x, P2.x, 0.3), cy = Math.min(f.y, P2.y) - 120;
+    const bx = (1 - u) * (1 - u) * f.x + 2 * (1 - u) * u * cx + u * u * P2.x;
+    const by = (1 - u) * (1 - u) * f.y + 2 * (1 - u) * u * cy + u * u * P2.y;
+    kite2.tx = bx; kite2.ty = by; kite2.rotT = Math.sin(S.mt * 6) * 0.3 * (1 - u);
+    if (S.mt < 1.0) { kite2.x = bx; kite2.y = by; resetTail(kite2); }
+  }
+  if (S.mt > 2.5 && !S.caught) { S.caught = true; SND.catch(); kite2.jig = 1; kite1.jig = 1; burst(kite2.x, kite2.y, 12, 200); stat('catch'); }
+  if (S.mt > 3.0 && !S.bowed) { S.bowed = true; bowBoth(); }
+  if (S.mt > 3.6) { S.phase = 'TWO'; S.caught = false; S.bowed = false; }
+}
+function updTwo(dt) {
+  const P1 = S.P1, P2 = S.P2;
+  kite1.tx = P1.x + Math.sin(S.t * 1.7) * 4; kite1.ty = P1.y + Math.sin(S.t * 2.1) * 5;
+  kite2.tx = P2.x + Math.sin(S.t * 1.5 + 1) * 4; kite2.ty = P2.y + Math.sin(S.t * 1.9 + 2) * 5;
+  const Sl = lastAnchor();
+  const gz = S.idle > 0.8 ? clamp((Sl.x - kite2.x) / 300, -1, 1) * 0.35 : 0;
+  kite1.rotT = clamp(kite1.vx * 0.002, -0.4, 0.4);
+  kite2.rotT = clamp(kite2.vx * 0.002, -0.4, 0.4) + gz;
+  const need = dist(kite2.x, kite2.y, Sl.x, Sl.y);
+  if (S.tail >= need - 26) { S.phase = 'CLOSE'; S.closeT = 0; SND.reach(); }
+}
+function updClose(dt) {
+  S.closeT += dt;
+  const Sl = lastAnchor(); Sl.spin = 1;
+  kite1.tx = S.P1.x; kite1.ty = S.P1.y; kite2.tx = S.P2.x; kite2.ty = S.P2.y;
+  if (S.closeT > 0.4) { Sl.glow = 1; burst(Sl.x, Sl.y, 16, 240); startTri(); }
+}
+function updTri(dt) {
+  const t = S.tri; if (!t) return;
+  for (let i = 0; i < 2; i++) {
+    const k = i === 0 ? kite1 : kite2;
+    if (S.landed[i]) { const ls = landSpot(i); k.tx = ls.x; k.ty = ls.y; k.rotT = i === 0 ? -0.5 : 0.5; continue; }
+    if (active && active.type === 'kite' && active.k === k) {
+      const hw = halfW() - 30;
+      k.tx = clamp(active.fx, -hw, hw); k.ty = clamp(active.fy, cam.yTop + 40, GROUND); k.rotT = clamp(k.vx * 0.003, -0.6, 0.6);
+      continue;
+    }
+    const p = triKitePos(i);
+    let nod = 0;
+    if (S.phase === 'LAND1' || (S.laps >= 2 && S.idle > 2)) { const ph = (S.t * 0.5 + i * 0.5) % 1; nod = ph < 0.2 ? Math.sin(ph / 0.2 * Math.PI) : 0; }
+    k.tx = p.x + Math.sin(S.t * 1.6 + i * 2) * 4; k.ty = p.y + Math.sin(S.t * 2 + i) * 5 + nod * 18;
+    k.rotT = clamp(k.vx * 0.002, -0.4, 0.4) + nod * 0.5 * (i ? -1 : 1);
+  }
+  // keep triangle in view when the screen rotates
+  if (!active) triClamp();
+}
+function updRetangle(dt) {
+  S.rt += dt;
+  const t = S.rt;
+  // kite2 bows and leaves, kite1 returns to the knot
+  if (t < 0.1 && !S.rtBow) { S.rtBow = true; bowBoth(); }
+  if (t > 0.7) { kite2.tx = kite2.x + (kite2.x < 0 ? -1 : 1) * 30; kite2.ty = cam.yTop - 300; kite2.rotT = 0.4; }
+  else { const ls = landSpot(1); kite2.tx = ls.x; kite2.ty = ls.y; kite2.rotT = 0.3; }
+  const p = Gpt();
+  kite1.tx = p.x + 6; kite1.ty = p.y - 22; kite1.rotT = 0.55;
+  if (t > 0.4) { for (const s of stars) if (s.hooked) s.pop = Math.max(0, s.pop - dt * 3); moon.pop = Math.max(0, moon.pop - dt * 2.5); }
+  if (t > 0.6) cam.yTopT = 0;
+  if (t > 1.3 && !S.rtNew) {
+    S.rtNew = true;
+    const k2 = { x: kite2.x, y: kite2.y };
+    genRound();
+    stars.forEach(s => s.pop = 0); moon.pop = 0;
+    crossings.forEach(c => { c.out = 1; c.back = 1; });
+    S.R = 0; S.T = 1; S.anchors = []; S.tri = null; S.tail = 0; S.laps = 0; S.landed = [false, false];
+    kite2.x = k2.x; kite2.y = k2.y;
+  }
+  if (S.rtNew) {
+    for (const s of stars) s.pop = Math.min(1, s.pop + dt * 1.6);
+    moon.pop = Math.min(1, moon.pop + dt * 1.4);
+    for (const c of crossings) if (c.back) { c.out = Math.max(0, c.out - dt * 1.4); if (c.out <= 0) { c.back = 0; c.popped = false; } }
+  }
+  if (t > 2.8) {
+    S.phase = 'PRE'; S.rtBow = false; S.rtNew = false; kite2.vis = 0;
+    S.theta = rnd(-0.08, 0.08); S.thetaT = S.theta; S.targetObj = null; S.hook = null; S.ball = null;
+    crossings.forEach(c => { c.out = 0; c.back = 0; c.popped = false; });
+    stars.forEach(s => s.pop = 1); moon.pop = 1; S.cycles = (S.cycles || 0) + 1; stat('cycle');
+  }
+}
+
+function updKite(k, dt) {
+  const ax = (k.tx - k.x) * 50 - k.vx * 10.5, ay = (k.ty - k.y) * 50 - k.vy * 10.5;
+  k.vx += ax * dt; k.vy += ay * dt; k.x += k.vx * dt; k.y += k.vy * dt;
+  let rt = k.rotT || 0;
+  if (k.hes > 0) { rt += Math.sin(S.t * 38) * 0.22 * (k.hes / 0.35); k.hes = Math.max(0, k.hes - dt); }
+  if (k.jig > 0) { rt += Math.sin(S.t * 30) * 0.18 * k.jig; k.jig = Math.max(0, k.jig - dt * 2.2); }
+  if (k.wig > 0) { rt += Math.sin(S.t * 26) * 0.12 * k.wig; k.wig = Math.max(0, k.wig - dt * 3); }
+  k.rv += ((rt - k.rot) * 70 - k.rv * 10) * dt; k.rot += k.rv * dt;
+  const moving = Math.hypot(k.vx, k.vy);
+  const yawT = (S.idle > 0.6 && moving < 60) ? 0 : clamp(k.vx * 0.005, -1.1, 1.1);
+  k.yaw += (yawT - k.yaw) * (1 - Math.exp(-6 * dt));
+  if (k.bowT >= 0) { k.bowT += dt; k.bow = Math.sin(clamp(k.bowT / 0.9, 0, 1) * Math.PI); if (k.bowT > 0.9) { k.bowT = -1; k.bow = 0; } }
+  // tail (verlet chain)
+  const ks = kScale();
+  const seg = 11 * ks;
+  const c = Math.cos(k.rot), s = Math.sin(k.rot);
+  const ancx = k.x - s * 18 * ks, ancy = k.y + c * 18 * ks;
+  const wag = (S.unwindRate * 1.2 + (k.type === 1 && S.phase === 'PRE' && !S.anchors.length && kiteFree() < 14 ? 0.6 : 0.15));
+  let prev = { x: ancx, y: ancy };
+  for (let i = 0; i < k.tail.length; i++) {
+    const p = k.tail[i];
+    const vx = (p.x - p.px) * 0.9, vy = (p.y - p.py) * 0.9;
+    p.px = p.x; p.py = p.y;
+    p.x += vx + Math.sin(S.t * 9 + i * 0.9) * wag * 1.6 * ks; p.y += vy + 260 * dt * dt * 60 * 0.016;
+    const dx = p.x - prev.x, dy = p.y - prev.y, d = Math.hypot(dx, dy) || 1;
+    p.x = prev.x + dx / d * seg; p.y = prev.y + dy / d * seg;
+    prev = p;
+  }
+}
+
+/* ===================== hand demo ===================== */
+function updDemo(dt) {
+  if (!S.firstDemoDone && !S.anyInput && S.idle > 4 && !S.demo && S.phase === 'PRE') { S.demo = { kind: 'loop', t: 0 }; S.firstDemoDone = true; }
+  if (!S.kiteDemoDone && S.phase === 'TRI' && S.laps >= 2 && S.idle > 6 && !S.demo && !active) { S.demo = { kind: 'kite', t: 0 }; S.kiteDemoDone = true; }
+  if (S.demo) { S.demo.t += dt; if (S.demo.t > 2.6) S.demo = null; }
+}
+function demoHand() {
+  const d = S.demo; if (!d) return null;
+  const t = d.t;
+  if (d.kind === 'loop') {
+    const g = loopGeom(loops[1]);
+    const [lx, ly] = w2s(g.mx, g.my);
+    const appear = ease(t / 0.4), press = t > 0.6 && t < 2.0, up = ease((t - 0.8) / 0.9) * (t < 2.0 ? 1 : 0);
+    const fade = t > 2.1 ? 1 - ease((t - 2.1) / 0.5) : 1;
+    loops[1].ty = active ? loops[1].ty : -up * 34; // visual only, no progress
+    if (t > 2.0 && !active) loops[1].ty = 0;
+    return { x: lx + 40 * (1 - appear), y: ly + 50 * (1 - appear) - up * 34 * cam.scale, press, alpha: Math.min(appear, fade) };
+  } else {
+    const k = kite1; const [kx, ky] = w2s(k.x, k.y);
+    const appear = ease(t / 0.4), down = ease((t - 0.7) / 1.1) * (t < 2.0 ? 1 : 0);
+    const fade = t > 2.1 ? 1 - ease((t - 2.1) / 0.5) : 1;
+    return { x: kx, y: ky + down * 120, press: t > 0.5 && t < 2.0, alpha: Math.min(appear, fade) };
+  }
+}
+
+/* ===================== drawing ===================== */
+function lw(px) { return px / cam.scale; }
+function ballPos() {
+  const b = S.ball; if (!b) return null;
+  if (b.mode === 'line') return S.anchors.length >= 2 ? ballLinePos() : null;
+  if (b.mode === 'toS' || b.mode === 'park') return { x: b.x ?? b.fx, y: b.y ?? b.fy };
+  if (b.mode === 'tri' && S.tri) { const sp = segPoint(triPts(), b.u); return { x: sp.x, y: sp.y }; }
+  return null;
+}
+function drawSeg(A, B, sag, s0, pulsed) {
+  const L = dist(A.x, A.y, B.x, B.y);
+  const n = Math.max(2, Math.min(40, Math.ceil(L / 14)));
+  const nx = L ? -(B.y - A.y) / L : 0, ny = L ? (B.x - A.x) / L : 0;
+  ctx.moveTo(A.x, A.y);
+  for (let i = 1; i <= n; i++) {
+    const u = i / n;
+    let x = lerp(A.x, B.x, u), y = lerp(A.y, B.y, u) + 4 * sag * u * (1 - u);
+    if (pulsed && S.pulses.length) { const d = pulseDisp(s0 + u * L); x += nx * d; y += ny * d; }
+    ctx.lineTo(x, y);
+  }
+  return L;
+}
+function drawStar(s) {
+  const sc = ease(s.pop) * (1 + Math.sin(S.t * 2 + s.tw) * 0.04 + s.glow * 0.25);
+  if (sc <= 0.01) return;
+  ctx.save(); ctx.translate(s.x, s.y);
+  ctx.rotate(Math.sin(S.t * 30) * 0.15 * s.wig + s.spin * s.spin * 2.5);
+  ctx.scale(sc, sc);
+  ctx.lineWidth = lw(3);
+  ctx.beginPath(); ctx.arc(0, 0, s.r, 0, TAU); ctx.stroke();
+  ctx.beginPath();
+  for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, rr = i % 2 ? 5.5 : 13; ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr); }
+  ctx.closePath();
+  if (s.hooked) ctx.fill(); ctx.lineWidth = lw(2.6); ctx.stroke();
+  if (s.hooked) { ctx.lineWidth = lw(1.5); ctx.beginPath(); ctx.arc(0, 0, s.r + 5, 0, TAU); ctx.stroke(); }
+  if (s.glow > 0) { ctx.globalAlpha = s.glow; ctx.lineWidth = lw(2); ctx.beginPath(); ctx.arc(0, 0, s.r + 6 + (1 - s.glow) * 26, 0, TAU); ctx.stroke(); ctx.globalAlpha = 1; }
+  ctx.restore();
+}
+function drawMoon() {
+  const sc = ease(moon.pop); if (sc <= 0.01) return;
+  ctx.save(); ctx.translate(moon.x, moon.y); ctx.rotate(-0.45 + Math.sin(S.t * 26) * 0.1 * moon.wig); ctx.scale(sc, sc);
+  const r = moon.r, c = r * 0.62, yy = Math.sqrt(r * r - c * c / 4);
+  const al = Math.atan2(yy, c / 2);
+  const b1 = Math.atan2(-yy, -c / 2), b2 = Math.atan2(yy, -c / 2);
+  ctx.beginPath(); ctx.arc(0, 0, r, al, TAU - al, false); ctx.arc(c, 0, r, b1, b2, true); ctx.closePath();
+  if (moon.reached) ctx.fill();
+  ctx.lineWidth = lw(3.2); ctx.stroke();
+  if (moon.glow > 0) { ctx.globalAlpha = moon.glow; ctx.lineWidth = lw(2); for (let i = 0; i < 2; i++) { ctx.beginPath(); ctx.arc(0, 0, r + 10 + (1 - moon.glow) * (60 + i * 50), 0, TAU); ctx.stroke(); } ctx.globalAlpha = 1; }
+  ctx.restore();
+}
+function drawKite(k) {
+  if (k.vis <= 0) return;
+  const ks = kScale();
+  // tail
+  ctx.lineWidth = lw(1.5);
+  ctx.beginPath();
+  const c = Math.cos(k.rot), s = Math.sin(k.rot);
+  ctx.moveTo(k.x - s * 18 * ks, k.y + c * 18 * ks);
+  for (const p of k.tail) ctx.lineTo(p.x, p.y);
+  ctx.stroke();
+  for (let i = 1; i < k.tail.length; i += 1) {
+    if (i % 2 === 0) continue;
+    const p = k.tail[i], q = k.tail[i - 1];
+    const a = Math.atan2(p.y - q.y, p.x - q.x);
+    ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(a);
+    const z = 6 * ks; ctx.beginPath(); ctx.moveTo(z, 0); ctx.lineTo(-z * 0.6, -z * 0.8); ctx.lineTo(-z * 0.6, z * 0.8); ctx.closePath(); ctx.lineWidth = lw(2.2); ctx.stroke();
+    ctx.restore();
+  }
+  ctx.save(); ctx.translate(k.x, k.y); ctx.rotate(k.rot + k.bow * 0.25);
+  const wf = Math.max(0.3, Math.cos(k.yaw));
+  ctx.scale(ks * wf, ks * (1 - k.bow * 0.42));
+  if (k.bow) ctx.translate(0, k.bow * 8);
+  ctx.lineWidth = lw(3.6) / ks;
+  ctx.lineJoin = 'round';
+  if (k.type === 1) {
+    ctx.beginPath(); ctx.moveTo(0, -30); ctx.lineTo(-26, 18); ctx.lineTo(26, 18); ctx.closePath(); ctx.stroke();
+    ctx.beginPath(); ctx.arc(0, 4, 10, 0, TAU); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, -30); ctx.lineTo(0, -6); ctx.stroke();
+  } else {
+    ctx.beginPath(); ctx.arc(0, 0, 15, 0, TAU); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-15, 0); ctx.lineTo(-42, -17); ctx.lineTo(-42, 17); ctx.closePath(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(15, 0); ctx.lineTo(42, -17); ctx.lineTo(42, 17); ctx.closePath(); ctx.stroke();
+  }
+  ctx.restore();
+}
+function drawLoop(l, hl) {
+  const g = loopGeom(l);
+  ctx.save();
+  ctx.translate(g.mx + Math.sin(S.t * 30) * 2 * l.wig, g.my);
+  ctx.rotate(g.rot);
+  ctx.lineWidth = lw(l.i === 1 ? 5 : 4);
+  ctx.beginPath(); ctx.ellipse(0, 0, Math.max(1, g.w), Math.max(1, g.h / 2), 0, 0, TAU); ctx.stroke();
+  // little knot where loop meets ground
+  ctx.restore();
+  if (l.i === hl && !active && !S.demo) {
+    const ph = (S.t % 1.6) / 1.6;
+    ctx.save(); ctx.globalAlpha = (1 - ph) * 0.85; ctx.lineWidth = lw(2);
+    ctx.translate(g.mx, g.my); ctx.rotate(g.rot);
+    ctx.beginPath(); ctx.ellipse(0, 0, g.w + lw(8) + ph * lw(22), g.h / 2 + lw(8) + ph * lw(22), 0, 0, TAU); ctx.stroke();
+    ctx.restore();
+  }
+}
+function drawKnot() {
+  const K = { x: gx(KNOT.x), y: gy(KNOT.y) }, sc = cam.g;
+  ctx.lineWidth = lw(1.7);
+  // strands from knot to each loop
+  for (const l of loops) {
+    const g = loopGeom(l);
+    ctx.beginPath(); ctx.moveTo(K.x, K.y + 8 * sc);
+    const mx = (K.x + g.bx) / 2, wav = 10 * sc;
+    ctx.bezierCurveTo(mx, K.y + 20 * sc - wav, mx, GROUND + wav * 0.2, g.bx, GROUND - 1);
+    ctx.stroke();
+  }
+  // crossings (each a little loop of string)
+  for (const c of crossings) {
+    if (c.out >= 1 && !c.back) continue;
+    const l = loops[c.loop], g = loopGeom(l);
+    const o = ease(c.out);
+    const x = lerp(K.x + c.ox * sc, g.bx, o), y = lerp(K.y + c.oy * sc, GROUND - 6, o);
+    const s = (1 - o * 0.85) * (1 + c.grow * 0.15 * Math.sin(S.t * 30));
+    ctx.save(); ctx.translate(x, y); ctx.rotate(c.rot + o * 3);
+    ctx.beginPath(); ctx.ellipse(0, 0, c.rx * sc * s, c.ry * sc * s, 0, 0, TAU); ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function render() {
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+  ctx.save();
+  const o = oy();
+  ctx.setTransform(DPR * cam.scale, 0, 0, DPR * cam.scale, DPR * (cam.cx), DPR * (o - cam.yTop * cam.scale));
+  ctx.strokeStyle = '#fff'; ctx.fillStyle = '#fff'; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+
+  // far sky dots (appear when the sky opens)
+  if (cam.yTop < -5) {
+    for (const d of bgDots) { if (d.y < cam.yTop) continue; const s = lw(d.s * (0.8 + 0.2 * Math.sin(S.t * 1.5 + d.tw))); ctx.fillRect(d.x - s / 2, d.y - s / 2, s, s); }
+  }
+  // ground
+  ctx.lineWidth = lw(3);
+  const hwv = halfW() + 20;
+  ctx.beginPath(); ctx.moveTo(-hwv, GROUND); ctx.lineTo(hwv, GROUND); ctx.stroke();
+
+  drawMoon();
+  for (const s of stars) drawStar(s);
+
+  // ===== the string =====
+  ctx.lineWidth = lw(1.8);
+  const pts = pathPts();
+  ctx.beginPath();
+  let s0 = 0;
+  if (S.phase === 'RETANGLE') {
+    const keep = S.rtLen * (1 - ease(S.rt / 0.9));
+    const rp = S.rtPath; let acc = 0;
+    ctx.moveTo(rp[0].x, rp[0].y);
+    for (let i = 1; i < rp.length && acc < keep; i++) {
+      const L = dist(rp[i - 1].x, rp[i - 1].y, rp[i].x, rp[i].y);
+      const u = Math.min(1, (keep - acc) / (L || 1));
+      ctx.lineTo(lerp(rp[i - 1].x, rp[i].x, u), lerp(rp[i - 1].y, rp[i].y, u)); acc += L;
+    }
+    const p = Gpt(); ctx.moveTo(p.x, p.y); ctx.lineTo(kite1.x, kite1.y + 6);
+  } else {
+    for (let i = 1; i < pts.length; i++) {
+      const L = dist(pts[i - 1].x, pts[i - 1].y, pts[i].x, pts[i].y);
+      s0 += drawSeg(pts[i - 1], pts[i], segSag(L), s0, true);
+    }
+    const A = pts[pts.length - 1];
+    if (S.phase === 'TRI' || S.phase === 'LAND1') {
+      const t = S.tri, Sv = t.S;
+      const ord = S.tri.dir > 0 ? [kite1, kite2, Sv] : [kite2, kite1, Sv];
+      let prev = Sv;
+      for (let i = 0; i < 3; i++) {
+        const q = ord[i];
+        const landedEdge = S.phase === 'LAND1' && ((q === kite1 && S.landed[0]) || (q === kite2 && S.landed[1]) || (prev === kite1 && S.landed[0]) || (prev === kite2 && S.landed[1]));
+        if (!landedEdge) { const L = dist(prev.x, prev.y, q.x, q.y); s0 += drawSeg(prev, { x: q.x, y: q.y }, segSag(L) * 0.6, s0, true); }
+        else s0 += dist(prev.x, prev.y, q.x, q.y);
+        prev = q;
+      }
+      if (S.phase === 'LAND1') { // the landed kite's string runs down to the knot
+        const lk = S.landed[0] ? kite1 : kite2, fk = S.landed[0] ? kite2 : kite1;
+        const G = Gpt();
+        ctx.moveTo(G.x, G.y); ctx.quadraticCurveTo((G.x + lk.x) / 2, GROUND - 20, lk.x, lk.y);
+        ctx.moveTo(Sv.x, Sv.y); ctx.lineTo(fk.x, fk.y);
+      }
+    } else if (S.phase === 'PRE' && S.hook) {
+      const st = S.hook.star;
+      const L1 = dist(A.x, A.y, st.x, st.y);
+      drawSeg(A, st, 1, s0, true);
+      drawSeg(st, { x: kite1.x, y: kite1.y }, 1, s0 + L1, true);
+    } else {
+      const L = dist(A.x, A.y, kite1.x, kite1.y);
+      const sag = (S.phase === 'PRE' && !S.anchors.length && kiteFree() < 14) ? 6 : segSag(L) * 0.8;
+      s0 += drawSeg(A, { x: kite1.x, y: kite1.y + 4 }, sag, s0, true);
+      if (kite2.vis && S.phase !== 'PRE') {
+        if (S.phase !== 'MOON' || S.mt > 2.5) {
+          const grow = S.phase === 'MOON' ? ease((S.mt - 2.5) / 0.3) : 1;
+          const tx = lerp(kite1.x, kite2.x, grow), ty = lerp(kite1.y, kite2.y, grow);
+          const L2 = dist(kite1.x, kite1.y, tx, ty);
+          s0 += drawSeg({ x: kite1.x, y: kite1.y }, { x: tx, y: ty }, segSag(L2) * 0.7, s0, true);
+        }
+        if ((S.phase === 'TWO' || S.phase === 'CLOSE') && S.tail > 2) {
+          const Sl = lastAnchor();
+          const dx = Sl.x - kite2.x, dy = Sl.y - kite2.y, dl = Math.hypot(dx, dy) || 1;
+          const len = Math.min(S.tail, dl);
+          const ex = kite2.x + dx / dl * len, ey = kite2.y + dy / dl * len + (S.phase === 'CLOSE' ? 0 : 10);
+          drawSeg({ x: kite2.x, y: kite2.y }, { x: ex, y: ey }, 6 + (1 - len / dl) * 30, 0, false);
+          ctx.moveTo(ex + lw(5), ey); ctx.arc(ex, ey, lw(5), 0, TAU);
+        }
+      }
+    }
+  }
+  ctx.stroke();
+  // wrap around the star being hooked
+  if (S.hook) {
+    const st = S.hook.star, u = clamp(S.hook.t / 0.34, 0, 1);
+    ctx.lineWidth = lw(2); ctx.beginPath(); ctx.arc(st.x, st.y, st.r + 5, -Math.PI / 2, -Math.PI / 2 + u * TAU); ctx.stroke();
+  }
+  // knot + loops
+  drawKnot();
+  const hl = hintLoop();
+  for (const l of loops) drawLoop(l, hl);
+
+  // ball
+  if (S.ball) {
+    const bp = ballPos();
+    if (bp) {
+      const r = 11 * kScale() * ease(S.ball.scale) * (1 + (S.ball.wig || 0) * 0.2 * Math.sin(S.t * 30));
+      ctx.save(); ctx.translate(bp.x, bp.y - r * 0.7); ctx.rotate(S.ball.roll);
+      ctx.beginPath(); ctx.arc(0, 0, r, 0, TAU); ctx.fill();
+      ctx.strokeStyle = '#000'; ctx.lineWidth = lw(2.2); ctx.beginPath(); ctx.moveTo(-r * 0.55, 0); ctx.lineTo(r * 0.55, 0); ctx.stroke();
+      ctx.restore();
+    }
+  }
+  // kites
+  drawKite(kite2);
+  drawKite(kite1);
+  // landing glow on the remaining kite (LAND1 hint)
+  if (S.phase === 'LAND1') {
+    const fk = S.landed[0] ? kite2 : kite1, ph = (S.t % 1.4) / 1.4;
+    ctx.save(); ctx.globalAlpha = (1 - ph) * 0.8; ctx.lineWidth = lw(2); ctx.beginPath(); ctx.arc(fk.x, fk.y, (40 + ph * 30) * kScale(), 0, TAU); ctx.stroke(); ctx.restore();
+  }
+  // particles
+  for (const p of P) {
+    const a = 1 - p.age / p.life, z = lw(p.sz) * (0.5 + a * 0.5);
+    ctx.globalAlpha = Math.min(1, a * 1.4);
+    ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot);
+    if (p.sh === 0) ctx.fillRect(-z / 2, -z / 2, z, z);
+    else if (p.sh === 1) { ctx.beginPath(); ctx.arc(0, 0, z * 0.55, 0, TAU); ctx.fill(); }
+    else { ctx.beginPath(); ctx.moveTo(0, -z * 0.7); ctx.lineTo(z * 0.6, z * 0.5); ctx.lineTo(-z * 0.6, z * 0.5); ctx.closePath(); ctx.fill(); }
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+
+  // flash ring on big moments (screen space, white line only)
+  if (S.flash > 0) {
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0); ctx.strokeStyle = '#fff'; ctx.globalAlpha = S.flash * 0.6; ctx.lineWidth = 3;
+    const m = 6 + (1 - S.flash) * 10; ctx.strokeRect(SA.l + m, SA.t + m, W - SA.l - SA.r - 2 * m, H - SA.t - SA.b - 2 * m); ctx.globalAlpha = 1;
+  }
+  // hand demo
+  const hd = demoHand();
+  if (hd && hd.alpha > 0) {
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.globalAlpha = hd.alpha; ctx.strokeStyle = '#fff'; ctx.fillStyle = '#000'; ctx.lineWidth = 3.5; ctx.lineJoin = 'round';
+    const x = hd.x, y = hd.y, z = hd.press ? 0.92 : 1;
+    ctx.save(); ctx.translate(x, y); ctx.scale(z, z); ctx.rotate(-0.25);
+    ctx.beginPath(); ctx.rect(-5, 0, 11, 30); ctx.fill(); ctx.stroke();            // finger
+    ctx.beginPath(); ctx.rect(-14, 26, 32, 30); ctx.fill(); ctx.stroke();          // palm
+    ctx.beginPath(); ctx.rect(-26, 32, 12, 9); ctx.fill(); ctx.stroke();           // thumb
+    ctx.restore();
+    if (hd.press) { ctx.beginPath(); ctx.arc(x, y, 14, 0, TAU); ctx.stroke(); }
+    ctx.globalAlpha = 1;
+  }
+}
+
+/* ===================== loop / lifecycle ===================== */
+let raf = 0, lastT = 0, running = false;
+function frame(now) {
+  raf = 0;
+  if (!running) return;
+  let dt = (now - lastT) / 1000; lastT = now;
+  if (!(dt > 0)) dt = 0.016;
+  dt = Math.min(dt, 1 / 30);
+  try { update(dt); render(); } catch (err) { console.warn(err); }
+  raf = requestAnimationFrame(frame);
+}
+function start() { if (running) return; running = true; lastT = performance.now(); raf = requestAnimationFrame(frame); }
+function stop() { running = false; if (raf) cancelAnimationFrame(raf); raf = 0; }
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { endActive(true); stop(); if (AC && AC.state === 'running') AC.suspend().catch(() => {}); }
+  else { if (AC && AC.state === 'suspended' && S.anyInput) AC.resume().catch(() => {}); start(); }
+});
+window.addEventListener('blur', () => endActive(true));
+window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', () => setTimeout(resize, 120));
+cv.addEventListener('pointerdown', onDown, { passive: false });
+cv.addEventListener('pointermove', onMove, { passive: false });
+cv.addEventListener('pointerup', onUp, { passive: false });
+cv.addEventListener('pointercancel', onUp, { passive: false });
+cv.addEventListener('lostpointercapture', onUp);
+['contextmenu', 'selectstart', 'dragstart', 'gesturestart', 'gesturechange', 'dblclick'].forEach(ev => document.addEventListener(ev, e => e.preventDefault(), { passive: false }));
+document.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
+document.addEventListener('touchstart', e => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
+
+resize();
+newRound(true);
+start();
+
+// test/inspection hook (read-only helpers, no network)
+window.__ss = {
+  S, loops, moon, kite1, kite2, cam,
+  get stars() { return stars; },
+  loopScreen(i) { const g = loopGeom(loops[i]); return w2s(g.mx, g.my); },
+  loopTopScreen(i) { const g = loopGeom(loops[i]); return w2s(g.tx, g.ty + g.r * 0.4); },
+  kiteScreen(n) { const k = n === 2 ? kite2 : kite1; return w2s(k.x, k.y); },
+  starScreen(id) { const s = stars.find(q => q.id === id); return s ? w2s(s.x, s.y) : null; },
+  ballScreen() { const b = ballPos(); return b ? w2s(b.x, b.y) : null; },
+  hint: () => hintLoop(),
+  pick: i => { const p = pickTarget(i); return { a: p.a, id: p.obj ? (p.obj === moon ? 'moon' : p.obj.id) : null, reach: p.reach }; },
+  free: () => kiteFree(), active: () => active, particles: () => P.length,
+  perim: () => S.tri ? triPerim() : 0
+};
+})();
+</script>
+</body>
+</html>
