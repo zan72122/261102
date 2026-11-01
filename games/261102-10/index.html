@@ -92,6 +92,8 @@ function doLayout() {
     const dx = Math.max(L.R * 1.2, L.tray.w * 0.25);
     L.st = { bell: { x: cx - dx, y: ay + ah * 0.68 }, drum: { x: cx + dx, y: ay + ah * 0.68 } };
   }
+  // 縦画面では最初の一枚を中央で差し出し、貼った後は手前に補充する。
+  if (L.portrait && !S.stickerPlaced) L.st.bell = { x: ax + aw * 0.5, y: ay + ah * 0.5 };
 }
 const X = x => L.ox + x * L.cell;
 const Y = y => L.oy + y * L.cell;
@@ -146,7 +148,7 @@ const S = {
   parts: [], flyers: [], arrivals: [], lastInput: 0, demo: null, demoShown: false, demoKeys: {},
   star: null, starAt: -1, combo: 0, lastRingT: -9, totalSteps: 0, press: { bell: -9, drum: -9 },
   stageK: 0, concert: null, memory: null, memMode: 'mem', replay: null, resetT: 0, everTouched: false,
-  firstInputT: -1
+  firstInputT: -1, stickerPlaced: false
 };
 const peng = { look: 0, tilt: 0, stompT: 9, stompSide: 1, stompAmp: 0.4, hopT: 9, pointT: -9, pointX: 0, pointY: 0, danceT: 9, danceKind: 0, danceDir: 1, wobT: 9, beatT: 9 };
 const objs = KINDS.map(kind => ({
@@ -400,6 +402,7 @@ function ring(inst, src) {
 }
 function applySticker(inst, o) {
   if (o.arrived || o.entering) return;
+  if (!S.stickerPlaced) { S.stickerPlaced = true; doLayout(); }
   const prev = o.inst;
   o.inst = inst; o.badgeT = 0; o.lastT = S.t;
   const sx = X(o.x), sy = Y(o.y);
