@@ -1282,7 +1282,7 @@ function collideBall(b){
    if(s.up&&ST.park&&b!==PBALL) continue;
    if(b===PBALL&&li===0&&!s.frame) continue;
    if(s.k==='boat'&&MP[b.mat].dens>2) continue;
-   if(b.ghost&&!s.frame) continue;
+   if((b.ghost||b.inBox)&&!s.frame) continue;
    if(b.mode==='drag'&&!s.ds&&!(s.k==='park'&&!s.o)){ if(b.mode==='drag'&&(s.k==='blk'||s.k==='ptile')&&(DRAG.fs||0)<260&&b.vx*b.vx+b.vy*b.vy<122500){ const q=closest(s.ax,s.ay,s.bx,s.by,b.x,b.y); if(hyp(b.x-q.x,b.y-q.y)<r&&(s.k==='blk'||b.pw)) wear(b,s.o); } continue; }
    const minx=Math.min(s.ax,s.bx)-r, maxx=Math.max(s.ax,s.bx)+r; if(b.x<minx||b.x>maxx) continue;
    const miny=Math.min(s.ay,s.by)-r, maxy=Math.max(s.ay,s.by)+r; if(b.y<miny||b.y>maxy) continue;
@@ -1347,6 +1347,7 @@ function stepBall(b,dt){
  const mp=MP[b.mat];
  if(b.mode==='held'){ const p=magTip(); b.x=lerp(b.x,p.x,.35); b.y=lerp(b.y,p.y+b.r*.92,.35); b.vx=b.vy=0; return; }
  if(b.stuck&&b.mode==='drag'){ b.stuck=null; b.unstuckT=now; }
+ if(b===BALL&&b.mode==='free'&&!b.ghost&&insideSolid(b)) unstick(b);
  if(b.stuck){ const s=stuckSeg(b); if(s){const t=b.stuck.t, n=upN(s); b.x=lerp(s.ax,s.bx,t)+n.x*b.r; b.y=lerp(s.ay,s.by,t)+n.y*b.r; b.vx=b.vy=0; b.onRamp=.1; b.contact=.08; return;} b.stuck=null; }
  if(b.mode==='drag'){
   const tx=DRAG.wx, ty=DRAG.wy; let vx=(tx-b.x)*26, vy=(ty-b.y)*26; const sp=hyp(vx,vy); if(sp>2600){vx*=2600/sp;vy*=2600/sp;}
@@ -1365,6 +1366,7 @@ function stepBall(b,dt){
   if(b.mat==='iron') magPull(b,dt);
  }
  b.x+=b.vx*dt; b.y+=b.vy*dt;
+ b.inBox=b===BALL&&b.mode==='drag'&&insideSolid(b,true); // 箱の中からは指で引き出せる
  collideBall(b);
  if(b.ghost){ const g=b.ghost; g.el+=dt;
   if(g.el>g.T*.5&&b.vy>0&&hyp(b.x-g.x,b.y-g.y)<b.r*1.7&&freeSpot(b)){ b.ghost=null; b.aimT={x:g.x,y:g.y,until:now+.8}; }
@@ -1420,20 +1422,25 @@ function overlapAny(b){ for(const arr of [SEGS,DYN]) for(const s of arr){ if(s.u
   if(s.k==='boat'&&MP[b.mat].dens>2) continue;
   const q=closest(s.ax,s.ay,s.bx,s.by,b.x,b.y); if(hyp(b.x-q.x,b.y-q.y)<b.r-2) return true; } return false; }
 /* 閉じた箱の中 (棚・ガレージ・柱の中・ブロックの中) */
-function insideSolid(b){
+function insideSolid(b,noBlocks){
  if(b===PBALL||ST.park) return false; const l=L, x=b.x, y=b.y, c=l.cab;
  if(x>c.x&&x<c.x+c.w&&y>c.y&&y<c.y+c.h) return true;
  const g=l.garage; if(!ST.gateOpen&&x>g.x0&&x<g.x1&&y>g.y0&&y<g.y1) return true;
  if(x<l.pil.x1&&y>c.y+c.h-2&&y<l.door.y0-6) return true;
- for(const m of MATS){ const k=l.blocks[m]; if(x>k.x&&x<k.x+k.w&&y>k.y&&y<k.y+k.h) return true; }
+ if(!noBlocks) for(const m of MATS){ const k=l.blocks[m]; if(x>k.x&&x<k.x+k.w&&y>k.y&&y<k.y+k.h) return true; }
  return false;
 }
+/* 2点のあいだに固い壁 (ドラッグでも通れない線分) があるか: 空いた場所さがしで壁の向こうへ飛ばないように */
+function wallBetween(ax,ay,bx,by){ const dx=bx-ax, dy=by-ay;
+ for(const arr of [SEGS,DYN]) for(const s of arr){ if((s.up&&ST.park)||!s.ds) continue; const ex=s.bx-s.ax, ey=s.by-s.ay, den=dx*ey-dy*ex; if(Math.abs(den)<1e-9) continue;
+  const t=((s.ax-ax)*ey-(s.ay-ay)*ex)/den, u=((s.ax-ax)*dy-(s.ay-ay)*dx)/den; if(t>0&&t<=1&&u>=0&&u<=1) return true; }
+ return false; }
 function freeSpot(b){ return b.x>=b.r+1&&b.x<=L.W-b.r-1&&b.y>=b.r+1&&b.y<=L.H-b.r&&!overlapAny(b)&&!insideSolid(b); }
 function unstick(b){
  if(b===PBALL){ if(!overlapAny(b)) return; const y0=b.y; for(let d=4;d<=b.r*4;d+=4){ b.y=y0-d; if(!overlapAny(b)) return; } b.y=y0; return; }
  if(freeSpot(b)) return;
- const x0=b.x, y0=b.y, D=[[0,-1],[0,1],[-1,0],[1,0],[-.7,-.7],[.7,-.7],[-.7,.7],[.7,.7]];
- for(let d=4;d<=b.r*6;d+=4) for(const v of D){ b.x=x0+v[0]*d; b.y=y0+v[1]*d; if(freeSpot(b)) return; }
+ const x0=b.x, y0=b.y, D=[[0,-1],[0,1],[-1,0],[1,0],[-.7,-.7],[.7,-.7],[-.7,.7],[.7,.7]], inBox=insideSolid(b,true);
+ for(let d=4;d<=b.r*6;d+=4) for(const v of D){ b.x=x0+v[0]*d; b.y=y0+v[1]*d; if(freeSpot(b)&&(inBox||!wallBetween(x0,y0,b.x,b.y))) return; }
  b.x=x0; b.y=y0; placeAtStart(b,false);
 }
 /* 落ちた玉・天井より上へ出た玉はスタートへ戻す */
@@ -1738,7 +1745,7 @@ function onDown(e){
   const b=h.b;
   if(b===BALL&&ST.park&&PBALL){ PARK.close(); }
   DRAG.fromHeld=b.mode==='held';
-  b.ghost=null; b.aimT=null; b.pTap=null;
+  b.aimT=null; b.pTap=null;   // 跳んでいる途中 (ghost) は、動かし始めたときに切れる
   DRAG.id=e.pointerId; DRAG.b=b; DRAG.sx=e.clientX; DRAG.sy=e.clientY; DRAG.t0=now; DRAG.path=0;
   DRAG.ox=b.x-p.x; DRAG.oy=b.y-p.y; DRAG.wx=b.x; DRAG.wy=b.y; DRAG.hist=[{x:p.x,y:p.y,t:now}];
   DRAG.moved=false; DRAG.hist0={x:b.x,y:b.y};
@@ -1853,6 +1860,7 @@ function tapBall(b){
  if(b===PBALL){ const v=ballisticT(b.x,b.y,t.x,t.y,base); b.vx=v.vx; b.vy=v.vy; b.pTap={x:t.x,y:t.y,until:now+v.T+.25}; b.aimT={x:t.x,y:t.y,until:now+v.T+.6}; return; }
  if(dist<b.r*.7){ if(h.id==='hi'||h.id==='lo'){ b.vx*=.2; return; } b.vy=-420; b.vx*=.2; return; }   // もうそこにいる: その場で跳ねる (光のくぼみでは動かさない)
  // 途中にぶつからない弧を探す (低い→高い)。なければ手前を通りぬける跳び
+ if(insideSolid(b)){ launchTo(b,t,Math.max(base-60,b.r+10)); return; }
  const lo=Math.min(b.y,t.y)-22, cands=[base,lo,base-90,base-180,base-300,b.r+10];
  for(const ap of cands){ const a=Math.max(ap,b.r+10); const v=ballisticT(b.x,b.y,t.x,t.y,a); if(arcClear(b,v,t)){ b.vx=v.vx; b.vy=v.vy; b.ghost=null; b.aimT={x:t.x,y:t.y,until:now+v.T+.6}; return; } }
  launchTo(b,t,Math.max(base-60,b.r+10));
