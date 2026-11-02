@@ -188,9 +188,9 @@ function layout(){
  A.route[0]={x:A.window.x,y:A.window.y};
  A.oven={x:X0+SW*LY.oven,y:GY+17*U};
  A.mouth={x:A.oven.x,y:A.oven.y-7*U};
- A.gear={x:A.oven.x+13.5*U,y:A.oven.y-10*U};
+ A.gear={x:A.oven.x+(PORT?14.5:16)*U,y:A.oven.y-13*U};
  A.shelf={x:X0+SW*LY.shelf,y:GY+18*U};
- A.man={x:X0+SW*LY.man,y:GY+21*U};
+ A.man={x:X0+SW*LY.man,y:GY+25.5*U};
  A.dough=P(LY.dough); RD=LY.rD*U;
  A.houses=LY.houses.map(h=>({x:X0+SW*h[0],y:GY-1.5*U,w:h[1],h:h[2],rh:h[3]}));
  A.ppl=LY.ppl.map(f=>({x:X0+SW*f,y:Y0+SH*LY.pplY}));
@@ -312,10 +312,12 @@ function genSprites(){
  SP.bakDoor=mkSprite(fillS([],g,door,10,-13,18,0,1.0,CORAL,.3,.55,.8,.8,1.1));
  SP.sign=mkSprite(fillS([],g,(x,y)=>sdPoly(x,y,starPoly(14,-17,2.4,1.1,5)),11,-20,17,-14,.55,GOLD,.6,.9,.4,.6,.9));
  /* --- 窯 --- */
- const mouth=(x,y)=>sdEll(x,y,0,-4,5.6,6.8);
- SP.ovDome=mkSprite(fillS([],g,(x,y)=>Math.max(sdEll(x,y,0,-4,12,13),y+4,-mouth(x,y)+.3),-12,-17,12,-4,1.1,CORAL,.42,.75,1.2,.8,1.15));
- SP.ovBase=mkSprite(fillS([],g,(x,y)=>sdBox(x,y,0,-2,13.5,2),-13.5,-4,13.5,0,1.1,GOLD,.3,.5,.8));
- SP.ovPipe=mkSprite(fillS([],g,(x,y)=>sdBox(x,y,6,-18.5,1.4,2.6),4,-21.5,8,-15.5,.9,CORAL,.45,.6,.6));
+ const mouth=(x,y)=>sdEll(x,y,0,-4,4.8,5.8);
+ const od=fillS([],g,(x,y)=>Math.max(sdEll(x,y,0,-4,10.5,12),y+4,-mouth(x,y)+.2),-10.5,-16,10.5,-4,1.05,CORAL,.4,.78,1.1,.8,1.15);
+ for(let i=0;i<=16;i++){const a=Math.PI+i/16*Math.PI;od.push([Math.cos(a)*5.6,-4+Math.sin(a)*6.7,1.05,.9,GOLD]);}
+ SP.ovDome=mkSprite(od);
+ SP.ovBase=mkSprite(fillS([],g,(x,y)=>sdBox(x,y,0,-2,12.5,2),-12.5,-4,12.5,0,1.1,GOLD,.3,.5,.8));
+ SP.ovPipe=mkSprite(fillS([],g,(x,y)=>sdBox(x,y,4.5,-17.5,1.5,2.8),2.8,-20.5,6.2,-14.5,.9,CORAL,.45,.65,.6));
  const gr=[]; for(let i=0;i<40;i++){const a=i/40*TAU;for(const r of [3.1,3.75,4.4])gr.push([Math.cos(a)*r,Math.sin(a)*r,1,r>4?.95:.7,GOLD]);}
  for(let k=0;k<6;k++){const a=k/6*TAU;for(let j=0;j<3;j++)for(let q=-1;q<=1;q++){const ca=Math.cos(a),sa=Math.sin(a),r=5+j*.6,o=q*.62;gr.push([ca*r-sa*o,sa*r+ca*o,1.05,.95,GOLD]);}}
  for(let i=0;i<8;i++){const a=i/8*TAU;gr.push([Math.cos(a)*.9,Math.sin(a)*.9,1,.95,CORAL]);}
@@ -340,9 +342,10 @@ function genSprites(){
   SP.imp[k]=mkSprite(fillS([],g,SH[k],-1.15,-1.15,1.15,1.15,.2,GOLD,.16,.34,.14,.7,1),.24);
  }
  /* いちご（単位半径1） */
- const sb=fillS([],g,(x,y)=>sdPoly(x,y,[[-.9,-.4],[.9,-.4],[0,1.05]])-.2,-1.2,-.7,1.2,1.3,.13,CORAL,.85,1,.12,.85,1.15);
- [[-.35,0],[.32,-.05],[0,.35],[-.15,.65],[.25,.4],[-.5,-.25],[.5,-.3]].forEach(p=>sb.push([p[0],p[1],1,.95,GOLD]));
- [[-.3,-.7],[0,-.78],[.3,-.7],[0,-.95]].forEach(p=>sb.push([p[0],p[1],.95,.85,GOLD]));
+ const sb=fillS([],g,(x,y)=>Math.min(sdCircle(x,y,-.3,-.05,.55),sdCircle(x,y,.3,-.05,.55),sdPoly(x,y,[[-.82,.05],[.82,.05],[0,1.0]])-.12),-1.2,-.7,1.2,1.2,.12,CORAL,.85,1,.12,.85,1.15);
+ [[-.35,.05],[.32,0],[0,.35],[-.12,.68],[.25,.42],[-.5,-.22],[.5,-.25],[0,-.2]].forEach(p=>sb.push([p[0],p[1],.95,.95,GOLD]));
+ for(let k=-2;k<=2;k++){const a=-Math.PI/2+k*.42;for(let j=1;j<=3;j++)sb.push([Math.cos(a)*j*.17,-.5+Math.sin(a)*j*.17,.9,.9,GOLD]);}
+ for(let j=0;j<3;j++)sb.push([.04*j,-.78-j*.1,.8,.85,GOLD]);
  SP.berry=mkSprite(sb,.45);
  /* 星砂糖（小さなきらめき）単位 */
  const sp1=[[0,0,1.25,1,GOLD]]; for(let k=0;k<4;k++){const a=k/4*TAU;sp1.push([Math.cos(a)*.75,Math.sin(a)*.75,.8,.85,GOLD]);sp1.push([Math.cos(a)*1.4,Math.sin(a)*1.4,.55,.55,GOLD]);}
@@ -582,8 +585,8 @@ function makeTpl(sh,pts,R0){
   const cx=P0.x+ax*cl/2, cy=P0.y+ay*cl/2, Hd=clamp(cl*.2,R0*.28,R0*.85);
   const mbx=cx+ax*cl*.04, mby=cy+ay*cl*.04, tx=mbx-nx*cl*.42, ty=mby-ny*cl*.42, sx=mbx+ax*cl*.3-nx*cl*.06, sy=mby+ay*cl*.3-ny*cl*.06;
   return (a,v,w)=>{
-   if(w<.17){const p=a*.95, q=(1-p)*(v+1)/2; TX=mbx+(tx-mbx)*p+(sx-mbx)*q; TY=mby+(ty-mby)*p+(sy-mby)*q; return;}
-   const x=(a-.5)*cl*.98, dep=Hd*Math.pow(Math.max(0,1-Math.pow(2*a-1,2)),.6), y=(v+1)/2*dep;
+   if(w<.17){const p=a*.95, q=(1-p)*((w*53.7)%1); TX=mbx+(tx-mbx)*p+(sx-mbx)*q; TY=mby+(ty-mby)*p+(sy-mby)*q; return;}
+   const x=(a-.5)*cl*.98, dep=Hd*Math.pow(Math.max(0,1-Math.pow(2*a-1,2)),.6), y=((w*13.7)%1)*dep;
    TX=cx+ax*x+nx*y; TY=cy+ay*x+ny*y;
   };
  }
@@ -591,11 +594,11 @@ function makeTpl(sh,pts,R0){
   let mx=0,my=0; for(const p of pts){mx+=p.x;my+=p.y;} mx/=pts.length; my/=pts.length; mx=lerp(mx,D.cx,.3); my=lerp(my,D.cy-R0*.15,.3);
   let rm=0; for(const p of pts)rm+=hyp(p.x-mx,p.y-my); rm=clamp(rm/pts.length,R0*.75,R0*1.7); D.rm=rm;
   const th0=Math.atan2(P0.y-my,P0.x-mx), sg=(D.an&&D.an.net<0)?-1:1;
-  return (a,v)=>{const ang=th0+sg*a*TAU*.97, rad=rm*Math.sqrt(.05+.95*(v+1)/2); TX=mx+Math.cos(ang)*rad; TY=my+Math.sin(ang)*rad;};
+  return (a,v,w)=>{const ang=th0+sg*a*TAU*.985, rad=rm*Math.sqrt(.02+.98*((w*7.31)%1)); TX=mx+Math.cos(ang)*rad; TY=my+Math.sin(ang)*rad;};
  }
  let Q=simplify(pts,Math.max(10,R0*.16)); if(Q.length<4)Q=canonZig(P0,P1,R0); D.boltQ=Q;
  const cq=cumOf(Q), lq=cq[cq.length-1]||1;
- return (a,v)=>{polyAt(Q,cq,a*lq); const th=R0*(.2*(1-a)+.07); TX=QX+QNX*v*th; TY=QY+QNY*v*th;};
+ return (a,v,w)=>{polyAt(Q,cq,a*lq); const th=R0*(.2*(1-a)+.07), vv=((w*9.13)%1)*2-1; TX=QX+QNX*vv*th; TY=QY+QNY*vv*th;};
 }
 function buildPD(){
  const R0=D.R, P=D.path; if(P.length<2)return null;
@@ -647,12 +650,12 @@ function updateDough(dt){
   D.pk[i]=lerp(D.pk[i],hl*(INV.cur&&INV.cur.kind==='dough'?1:0),.2);
   if(D.dent>.01){const dx=tx-fx, dy=ty-fy, d=hyp(dx,dy); if(d<rd&&d>.01){const push=(rd-d)*.85*D.dent; tx+=dx/d*push; ty+=dy/d*push;}}
   if(pd){
-   const r=D.rk[i], m=sat((pd.fs*1.12-r)*5);
+   const r=D.rk[i], m=sat((pd.fs*1.25-r)*6);
    if(m>0){
-    const u=sat(r/Math.max(.02,pd.fs*1.12)), a=1-u;
+    const u=sat(r/Math.max(.02,pd.fs*1.25)), a=1-u;
     polyAt(pd.pts,pd.cum,a*pd.len); const th=pd.thick*(1-.55*a);
     let x=QX+QNX*D.vv[i]*th, y=QY+QNY*D.vv[i]*th;
-    if(pd.tpl){pd.tpl(a,D.vv[i],D.w[i]); x=lerp(x,TX,pd.cf*.92); y=lerp(y,TY,pd.cf*.92);}
+    if(pd.tpl){pd.tpl(1-r,D.vv[i],D.w[i]); x=lerp(x,TX,pd.cf*.97); y=lerp(y,TY,pd.cf*.97);}
     tx=lerp(tx,x,m); ty=lerp(ty,y,m);
    }
   }
@@ -666,7 +669,8 @@ function updateDough(dt){
 /* vv（横方向の位置）を毎回の掴みで決める */
 function setLateral(){
  const n=D.n, gx=D.G.x-D.cx, gy=D.G.y-D.cy; let l=hyp(gx,gy); let px=1,py=0; if(l>1){px=-gy/l;py=gx/l;}
- for(let i=0;i<n;i++){D.vv[i]=clamp((D.hx[i]*px+D.hy[i]*py)/1.1,-1,1);}
+ const pr=new Float32Array(n), id=new Array(n); for(let i=0;i<n;i++){pr[i]=D.hx[i]*px+D.hy[i]*py; id[i]=i;}
+ id.sort((a,b)=>pr[a]-pr[b]); for(let k=0;k<n;k++)D.vv[id[k]]=(k+.5)/n*2-1;
 }
 function drawDough(){
  LAYER=5;
@@ -972,7 +976,7 @@ function updateOven(dt){
  OV.glow=lerp(OV.glow,OV.bake?1:(OV.on?.25:0),1-Math.exp(-dt*3));
  if(OV.bake){
   const b=OV.bake; b.t+=dt*(.75+OV.gs*.1);
-  if(R()<dt*8){if(SPK.length<SCAP)SPK.push({x:A.oven.x+6*U+rr(-1,1)*U,y:A.oven.y-21*U,vx:rr(-1,1)*U,vy:-U*rr(4,7),t:0,life:rr(.8,1.4),c:R()<.5?GOLD:CORAL,s:rr(.8,1.3),g:-U,lay:2});}
+  if(R()<dt*8){if(SPK.length<SCAP)SPK.push({x:A.oven.x+4.5*U+rr(-1,1)*U,y:A.oven.y-20.5*U,vx:rr(-1,1)*U,vy:-U*rr(4,7),t:0,life:rr(.8,1.4),c:R()<.5?GOLD:CORAL,s:rr(.8,1.3),g:-U,lay:2});}
   if(b.t>=b.dur){
    OV.bake=null; const breads=b.recipe.map(r=>Object.assign({},r));
    breads.forEach((br,i)=>{placeBread(br,i*.25);});
@@ -1067,7 +1071,7 @@ function startDawn(){
 function startMorning(){
  PH='morning'; PT=0; SND.open(); manAct('wave');
  K.moon=null;K.bolt=null;K.boats.length=0;K.dock=null; OV.on=false;OV.gsT=0;OV.items.length=0;OV.bake=null;
- MOR.deliv=0; MOR.close=0;
+ MOR.deliv=0; MOR.close=0; BER.forEach(b=>{b.st='hidden';b.res=null;});
  PPL.forEach((p,i)=>{p.st='in';p.wt=-i*.35;p.got=0;p.hold=null;p.jt=9;const t=A.ppl[i];p.y=t.y;p.x=i===2?X0+SW+14*U:X0-14*U-(i===1?16*U:0);p.sx=p.x;});
  D.n=0;
 }
@@ -1337,7 +1341,7 @@ function drawSky(){
   let p=ornPos(o); const sw=Math.sin(T*1.3+o.slot*2)*.12;
   if(o.rise<1){const f=easeOut(o.rise); p={x:lerp(o.from.x,p.x,f),y:lerp(o.from.y,p.y,f)-Math.sin(f*Math.PI)*8*U};}
   const am=PH==='night'?1:.55+.45*(1-MORN);
-  drawSprite(SP.orn[o.type],p.x,p.y,U*(1+(o.wob||0)*.2),am,sw);
+  drawSprite(SP.orn[o.type],p.x,p.y,U*(1.3+(o.wob||0)*.25),am,sw);
   if(o.rise<1)for(let k=0;k<3;k++)dot(p.x+rr(-2,2)*U,p.y+rr(1,5)*U,DS,GOLD,.6);
   o.wob=Math.max(0,(o.wob||0)-.03);
  }
