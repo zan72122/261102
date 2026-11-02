@@ -31,7 +31,9 @@ padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-
    月+稲妻 = 窓の反射で隠れ航路 → 長い舟で ほしのみつ
    3つの星座がつながる → 夜空と町がくるりと回って朝 → パンを人へ配る → お礼の星飾り → 次の夜の舟で回収し飾りパン
 */
-const cv=document.getElementById('c'), ctx=cv.getContext('2d',{alpha:false});
+const cv=document.getElementById('c'), ctx=cv.getContext('2d',{alpha:false}), ctx0=ctx;
+/* 動かない建物（家・パン屋・窯・棚の枠）は別の絵に一度だけ描いて使い回す（点の数を減らす） */
+const SC=document.createElement('canvas'), sctx=SC.getContext('2d'); let SCkey='', LAYV=0, CACHED=false;
 const TAU=Math.PI*2;
 const clamp=(v,a,b)=>v<a?a:v>b?b:v, lerp=(a,b,t)=>a+(b-a)*t, sat=v=>v<0?0:v>1?1:v;
 const smooth=t=>{t=sat(t);return t*t*(3-2*t);};
@@ -165,7 +167,7 @@ const LT={
   route:[[.5,.4],[.9,.37],[.955,.22],[.9,.065]],
   gy:.5, bak:.5, oven:.18, shelf:.82, man:.5, dough:[.5,.815], rD:19, ppl:[.19,.5,.81], pplY:.95,
   houses:[[.03,24,17,11],[.97,24,19,11]], stars:[.02,.46]},
- land:{udiv:[172,100], moon:[.2,.14], sugar:[.8,.13], bolt:[.25,.31], dock:[.64,.09], sun:[.5,.12],
+ land:{udiv:[172,100], moon:[.2,.14], sugar:[.8,.13], bolt:[.25,.31], dock:[.64,.09], sun:[.69,.11],
   orn:[[.38,.11],[.68,.3],[.1,.16]], rare:[[.3,.18],[.76,.27]],
   route:[[.5,.35],[.86,.39],[.985,.25],[.95,.06]],
   gy:.46, bak:.5, oven:.25, shelf:.75, man:.5, dough:[.5,.855], rD:16, ppl:[.3,.5,.7], pplY:.96,
@@ -185,7 +187,7 @@ function layout(){
  X0=sa.l; Y0=sa.t; SW=W-sa.l-sa.r; SH=H-sa.t-sa.b;
  PORT=SH>SW*1.12; LY=PORT?LT.port:LT.land;
  U=Math.min(SW/LY.udiv[0],SH/LY.udiv[1]); MD=Math.min(SW,SH); DS=U*.33;
- GY=Y0+SH*LY.gy;
+ GY=Y0+SH*LY.gy; LAYV++;
  ['moon','sugar','bolt','dock','sun'].forEach(k=>{A[k]=P(LY[k]);});
  A.orn=LY.orn.map(P); A.rare=LY.rare.map(P); A.route=LY.route.map(P);
  A.bak={x:X0+SW*LY.bak,y:GY};
@@ -241,7 +243,8 @@ function dot(x,y,r,c,a){
  const o=b.n*3; b.a[o]=x; b.a[o+1]=y; b.a[o+2]=r; b.n++;
 }
 let DOTCOUNT=0, RCUT=1.15;
-function flushLayer(l){
+function flushLayer(l,cx){
+ const ctx=cx||ctx0;
  for(let c=0;c<2;c++){
   ctx.fillStyle=PAL[c];
   for(let k=0;k<8;k++){
@@ -1350,7 +1353,7 @@ function gesturePath(g){
 function startDemo(){
  const c=INV.cur;
  if(c.kind==='dough')INV.demo={kind:'dough',t:0,dur:2.6,path:gesturePath(c.g),g:c.g,key:c.key};
- else INV.demo={kind:'bread',t:0,dur:2.4,br:c.br,pi:c.pi,key:c.key,from:breadHome(c.br)};
+ else INV.demo={kind:'bread',t:0,dur:2.8,br:c.br,pi:c.pi,key:c.key,from:breadHome(c.br)};
 }
 function cancelDemo(){
  const d=INV.demo; if(!d)return;
@@ -1383,7 +1386,7 @@ function updInvite(dt){
  } else {
   const b=d.br, from=d.from, tp=PPL[d.pi]; const to={x:tp.x,y:tp.y-12*U};
   if(d.t<.5){const u=easeOut(d.t/.5); d.hx=from.x+(1-u)*U*10; d.hy=from.y+(1-u)*U*12; d.press=0;}
-  else if(d.t<1.8){const u=easeIO(sat((d.t-.6)/1.1))*.62; d.hx=lerp(from.x,to.x,u); d.hy=lerp(from.y,to.y,u); d.press=1; b.ghost={x:d.hx,y:d.hy-3*U};}
+  else if(d.t<2.3){const u=easeIO(sat((d.t-.6)/1.1))*.62; d.hx=lerp(from.x,to.x,u); d.hy=lerp(from.y,to.y,u); d.press=1; b.ghost={x:d.hx,y:d.hy-3*U};}
   else {b.ghost=null; d.press=0; d.hy-=dt*U*6;}
  }
  if(d.t>=d.dur){if(d.br)d.br.ghost=null; INV.done[d.key]=1; INV.demo=null;}
@@ -1469,14 +1472,15 @@ function drawCons(){
 function drawTown(){
  LAYER=2; const nt=1-MORN;
  A.houses.forEach((h,i)=>{const sp=HOUSE_SP[i]; if(!sp)return; const wb=(h.wob||0); const r=wb?Math.sin(T*25)*.015*wb:0;
-  drawSprite(sp.wall,h.x,h.y,U,1,r); drawSprite(sp.win,h.x,h.y,U,.5+.5*nt,r,.15); drawSprite(sp.roof,h.x,h.y,U,1,r);
+  const live=!CACHED||wb>0;
+  if(live)drawSprite(sp.wall,h.x,h.y,U,1,r); drawSprite(sp.win,h.x,h.y,U,.5+.5*nt,r,.15); if(live)drawSprite(sp.roof,h.x,h.y,U,1,r);
   const l=LIT.h[i]||0; if(l>.02)drawSprite(sp.roof,h.x,h.y,U,l*.75,r,.6,false,GOLD);
   h.wob=Math.max(0,wb-FDT*2.4);});
  const b=A.bak, bw=(b.wob||0), br=bw?Math.sin(T*25)*.012*bw:0; b.wob=Math.max(0,bw-FDT*2.4);
- drawSprite(SP.bakWall,b.x,b.y,U,1,br);
- drawSprite(SP.bakRoof,b.x,b.y,U,1,br);
+ const bl=!CACHED||bw>0;
+ if(bl){drawSprite(SP.bakWall,b.x,b.y,U,1,br); drawSprite(SP.bakRoof,b.x,b.y,U,1,br);}
  if(LIT.bak>.02)drawSprite(SP.bakRoof,b.x,b.y,U,LIT.bak*.75,br,.6,false,GOLD);
- drawSprite(SP.bakChim,b.x,b.y,U,1,br);
+ if(bl)drawSprite(SP.bakChim,b.x,b.y,U,1,br);
  drawSprite(SP.bakWin,b.x,b.y,U,.75+.25*Math.sin(T*1.3),br);
  drawSprite(SP.bakDoor,b.x+OPEN*6.5*U,b.y,U,1-OPEN*.45,br);
  drawSprite(SP.sign,b.x,b.y,U,.35+OPEN*.65,br,OPEN?.3:0);
@@ -1492,7 +1496,7 @@ function drawTown(){
 }
 function drawOven(){
  LAYER=3; const o=A.oven, tw=OV.twitch?Math.sin(T*40)*U*.9*OV.twitch:0;
- drawSprite(SP.ovBase,o.x,o.y,U,1); drawSprite(SP.ovDome,o.x+tw*.3,o.y,U,1); drawSprite(SP.ovPipe,o.x,o.y,U,1);
+ if(!CACHED){drawSprite(SP.ovBase,o.x,o.y,U,1); drawSprite(SP.ovDome,o.x,o.y,U,1); drawSprite(SP.ovPipe,o.x,o.y,U,1);}
  const m=A.mouth;
  if(OV.glow>.05){const n=OV.bake?40:5; for(let k=0;k<n;k++){const a=R()*Math.PI, r=R(); dot(m.x+Math.cos(a)*r*5*U,m.y+3*U-Math.sin(a)*r*5.5*U,DS*rr(.8,1.5),R()<.7?CORAL:GOLD,OV.glow*rr(.45,1));}}
  LAYER=4;
@@ -1511,7 +1515,7 @@ function drawOven(){
 }
 function drawShelf(){
  LAYER=3; const s=A.shelf, wb=(s.wob||0); s.wob=Math.max(0,wb-FDT*2.4);
- drawSprite(SP.shelf,s.x,s.y,U,1,wb?Math.sin(T*25)*.01*wb:0);
+ if(!CACHED||wb>0)drawSprite(SP.shelf,s.x,s.y,U,1,wb?Math.sin(T*25)*.01*wb:0);
  SHELF.forEach((sl,i)=>{const p=slotPos(i);
   if(!sl.bread||(DRAG&&DRAG.br===sl.bread)){LAYER=3; drawSprite(SP.imp[sl.imp]||SP.imp.star,p.x,p.y,3.6*U,sl.imp!=='star'?1.5:1,0,.2); return;}
   const q=breadXY(sl.bread); drawBread(sl.bread,q.x,q.y,breadSize(sl.bread),q.a,INV.cur&&INV.cur.br===sl.bread?.6+.4*Math.sin(T*6):0);});
@@ -1613,7 +1617,7 @@ function onDown(e){
  lastInput=T;
  /* お手本が見せているもの（引いている生地・運ばれるパン）に触れたら、そのまま続きを自分で */
  const dm=INV.demo; let gb=null;
- if(dm&&dm.kind==='bread'&&dm.br.ghost&&hyp(x-dm.br.ghost.x,y-dm.br.ghost.y)<Math.max(breadSize(dm.br)*1.6,8*U))gb=dm.br;
+ if(dm&&dm.kind==='bread'&&dm.br.ghost&&hyp(x-dm.br.ghost.x,y-dm.br.ghost.y)<Math.max(breadSize(dm.br)*1.8,10*U))gb=dm.br;
  if(dm&&dm.kind==='dough'&&D.ghost&&(D.st==='held'||D.st==='pull')&&dm.hx!==undefined&&hyp(x-dm.hx,y-dm.hy)<10*U){
   INV.done[dm.key]=1; INV.demo=null; D.ghost=false;
   PTR={id:e.pointerId,kind:'dough',x,y}; try{cv.setPointerCapture(e.pointerId);}catch(_){}
@@ -1668,16 +1672,36 @@ function update(dt){
  updateCons(dt); updateBoats(dt); updateOven(dt); updateRoute(dt); updLight(dt); updateChain(dt);
  updFlyers(dt); updSparks(dt); updMan(dt); updInvite(dt); updBreadAnims(dt);
 }
+function staticKey(){return cv.width+'|'+cv.height+'|'+LAYV+'|'+A.houses.map(h=>(h.wob||0)>0?1:0).join('')+((A.bak.wob||0)>0?1:0)+((A.shelf.wob||0)>0?1:0);}
+function buildStatic(){
+ if(SC.width!==cv.width||SC.height!==cv.height){SC.width=cv.width; SC.height=cv.height;}
+ sctx.setTransform(1,0,0,1,0,0); sctx.clearRect(0,0,SC.width,SC.height); sctx.setTransform(DPR,0,0,DPR,0,0);
+ const dc=DOTCOUNT, tr=TR; TR=null;
+ LAYER=2;
+ A.houses.forEach((h,i)=>{const sp=HOUSE_SP[i]; if(!sp||(h.wob||0)>0)return; drawSprite(sp.wall,h.x,h.y,U,1); drawSprite(sp.roof,h.x,h.y,U,1);});
+ const b=A.bak; if(!((b.wob||0)>0)){drawSprite(SP.bakWall,b.x,b.y,U,1); drawSprite(SP.bakRoof,b.x,b.y,U,1); drawSprite(SP.bakChim,b.x,b.y,U,1);}
+ LAYER=3; const o=A.oven;
+ drawSprite(SP.ovBase,o.x,o.y,U,1); drawSprite(SP.ovDome,o.x,o.y,U,1); drawSprite(SP.ovPipe,o.x,o.y,U,1);
+ if(!((A.shelf.wob||0)>0))drawSprite(SP.shelf,A.shelf.x,A.shelf.y,U,1);
+ flushLayer(2,sctx); flushLayer(3,sctx);
+ DOTCOUNT=dc; TR=tr;
+}
 function render(){
  ctx.setTransform(DPR,0,0,DPR,0,0); ctx.globalAlpha=1; ctx.fillStyle=BG; ctx.fillRect(0,0,W,H);
  DOTCOUNT=0;
  if(PH==='dawn'&&(SPIN||SPINK!==1))setTR(W/2,H*.46,SPIN,SPINK); else TR=null;
  WTR=TR;
+ /* 夜あけの回転中だけは すべて その場で描く */
+ CACHED=!WTR;
+ if(CACHED){const k=staticKey(); if(k!==SCkey){buildStatic(); SCkey=k;}}
  drawSky(); drawCons(); drawTown(); drawOven(); drawShelf(); drawBerries(); drawMan(); PPL.forEach(drawPerson); drawBoats();
  TR=null;
  if(PH==='night'||PH==='dawn')drawDoughAll();
  drawFlyers(); drawSparksT(); drawPreview(); drawDrag(); drawHand();
- for(let l=0;l<NLAY;l++)flushLayer(l);
+ for(let l=0;l<NLAY;l++){
+  if(l===2&&CACHED){ctx.globalAlpha=1; ctx.drawImage(SC,0,0,W,H);}
+  flushLayer(l);
+ }
 }
 function drawDoughAll(){
  if(PH==='dawn'){const a=1-sat(PT/.7); if(a<=0)return; LAYER=5; for(let i=0;i<D.n;i++)dot(D.x[i],D.y[i]-PT*U*20,D.s[i]*DS,D.c[i],a*.8); return;}
@@ -1733,7 +1757,7 @@ window.__sb={
   hist:JSON.parse(JSON.stringify(HIST)),fl:FL.length,spk:SPK.length,dots:DOTCOUNT,dpr:DPR,W,H,U,
   demoGhost:INV.demo&&INV.demo.br&&INV.demo.br.ghost?{x:INV.demo.br.ghost.x,y:INV.demo.br.ghost.y}:null,
   demoHand:INV.demo&&INV.demo.hx!==undefined?{x:INV.demo.hx,y:INV.demo.hy,t:INV.demo.t,g:INV.demo.g||null}:null,
-  imps:SHELF.map(s=>s.imp),ages:{route:RT.age,rare:RARE.age,berry:BER.map(b=>b.age)}};},
+  imps:SHELF.map(s=>s.imp),boltBox:K.bolt?(()=>{const b=K.bolt,d=b.sp.d;let y0=1e9,y1=-1e9,x0=1e9,x1=-1e9;for(let i=0;i<b.sp.n;i++){const x=d[i*6]*U,y=d[i*6+1]*U;if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y;}return {w:x1-x0,h:y1-y0,n:b.sp.n};})():null,ages:{route:RT.age,rare:RARE.age,berry:BER.map(b=>b.age)}};},
  anchors(){return {dough:{x:D.cx,y:D.cy,r:D.R},rare:A.rare,ppl:A.ppl.map((p,i)=>({x:PPL[i].x,y:PPL[i].y})),moon:A.moon,sugar:A.sugar,bolt:A.bolt,gear:A.gear,window:A.window,
   orn:SKYORN.filter(o=>!o.got).map(o=>({type:o.type,...ornPos(o)})),routeEnd:A.route[A.route.length-1]};},
  breads(){const out=[]; SHELF.forEach((s,i)=>{if(s.bread){const p=breadXY(s.bread);out.push({k:'s',i,x:p.x,y:p.y,kind:s.bread.shape+':'+s.bread.base});}});
