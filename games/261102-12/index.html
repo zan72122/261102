@@ -108,7 +108,7 @@ const TPL = {
     roofSlots: [[52, 74], [348, 74], [98, 40], [302, 40]],
     lanterns: [[42, 114], [92, 122], [308, 122], [358, 114]],
     medals: [[86, 398], [314, 398]],
-    cartS: .82, roofS: .78,
+    cartS: .82, roofS: .88,
   },
   L: {
     id: 'L', VW: 800, VH: 520, cx: 228, ground: 420,
@@ -584,16 +584,16 @@ function drawHat(kind, hc, K, st) {
   const tilt = st.hatTilt || 0;
   if (kind === 'helmet') {
     ctx.save(); ctx.translate(0, hc); ctx.rotate(tilt); ctx.translate(0, -hc);
-    Ef(0, hc - 8, 38, 8, C.verm);
-    bp(); ctx.moveTo(-29, hc - 9); ctx.quadraticCurveTo(-30, hc - 40, 0, hc - 41); ctx.quadraticCurveTo(30, hc - 40, 29, hc - 9); ctx.closePath(); fs(C.verm);
-    seg(0, hc - 40, 0, hc - 14);
-    bp(); ctx.moveTo(-9, hc - 33); ctx.lineTo(9, hc - 33); ctx.lineTo(9, hc - 20); ctx.quadraticCurveTo(0, hc - 13, -9, hc - 20); ctx.closePath(); fs(C.yel);
-    star5(0, hc - 25, 4.5, C.verm);
+    Ef(0, hc - 15, 37, 7.5, C.verm);
+    bp(); ctx.moveTo(-28, hc - 16); ctx.quadraticCurveTo(-29, hc - 46, 0, hc - 47); ctx.quadraticCurveTo(29, hc - 46, 28, hc - 16); ctx.closePath(); fs(C.verm);
+    seg(0, hc - 46, 0, hc - 20);
+    bp(); ctx.moveTo(-9, hc - 40); ctx.lineTo(9, hc - 40); ctx.lineTo(9, hc - 27); ctx.quadraticCurveTo(0, hc - 20, -9, hc - 27); ctx.closePath(); fs(C.yel);
+    star5(0, hc - 32, 4.5, C.verm);
     ctx.restore();
   } else if (kind === 'cap') {
-    bp(); ctx.moveTo(-27, hc - 10); ctx.quadraticCurveTo(-27, hc - 38, 0, hc - 38); ctx.quadraticCurveTo(27, hc - 38, 27, hc - 10); ctx.closePath(); fs(C.pink);
-    Ef(0, hc - 10, 31, 6, C.pinkD);
-    Cf(0, hc - 25, 5.5, C.teal);
+    bp(); ctx.moveTo(-27, hc - 13); ctx.quadraticCurveTo(-27, hc - 41, 0, hc - 41); ctx.quadraticCurveTo(27, hc - 41, 27, hc - 13); ctx.closePath(); fs(C.pink);
+    Ef(0, hc - 13, 31, 6, C.pinkD);
+    Cf(0, hc - 28, 5.5, C.teal);
   } else if (kind === 'chef') {
     blob([[-15, hc - 44, 12], [0, hc - 50, 14], [15, hc - 44, 12]], C.white);
     Rf(-21, hc - 40, 42, 20, 4, C.white);
@@ -928,8 +928,8 @@ function drawSign(st, rk, sync) {
   Rf(s.x - s.w * .3 - 4, by - 4, 9, T.awn.y0 - by + 10, 2, C.vermD); Rf(s.x + s.w * .3 - 5, by - 4, 9, T.awn.y0 - by + 10, 2, C.vermD);
   const lit = tw.signLit;
   if (lit) {
-    const pul = .3 + .12 * Math.sin(G.T * 3);
-    ctx.save(); ctx.globalAlpha = pul; Eo(s.x, s.y, s.w * .78, s.h * 1.15, C.glow); ctx.restore();
+    const pul = .2 + .08 * Math.sin(G.T * 3);
+    ctx.save(); ctx.globalAlpha = pul; Eo(s.x, s.y, s.w * .64, s.h * .95, C.yel); ctx.restore();
     ctx.save(); ctx.strokeStyle = C.yel; ctx.lineWidth = 4;
     for (let i = 0; i < 10; i++) { const a = i / 10 * TAU + .3; seg(s.x + Math.cos(a) * s.w * .6, s.y + Math.sin(a) * s.h * .85, s.x + Math.cos(a) * s.w * .68, s.y + Math.sin(a) * s.h * .98); }
     ctx.restore();
@@ -1143,7 +1143,7 @@ function paintBG(st, night) {
   const cols = [C.tealL, C.pinkL, '#ffe7a0', '#9fd8ef', C.teal, C.pink];
   if (th.kind === 'town') {
     for (let x = x0 - 20; x < x1 + 60;) { const w = 64 + r() * 40; const top = base - 150 - r() * 150; building(x + w / 2, top, w - 6, base, cols[Math.floor(r() * cols.length)], night, r); x += w; }
-    if (!night) { ctx.save(); ctx.globalAlpha = .9; blob([[x0 + 60, y0 + 70, 18], [x0 + 85, y0 + 62, 22], [x0 + 110, y0 + 72, 16]], C.white); ctx.restore(); }
+    if (!night) blob([[x0 + 60, y0 + 70, 18], [x0 + 85, y0 + 62, 22], [x0 + 110, y0 + 72, 16]], C.white);
   } else if (th.kind === 'harbor') {
     const sy = base - 170;
     bp(); ctx.rect(x0, sy, x1 - x0, base - sy + 10); fs(night ? '#145c69' : C.teal);
@@ -1298,7 +1298,7 @@ function custPos(c) {
   if (c.ov) {
     const o = c.ov, u = clamp((G.T - o.t0) / o.dur, 0, 1), e = o.ease ? o.ease(u) : u;
     const a = o.a(), b = o.b();
-    return { x: lerp(a.x, b.x, e), y: lerp(a.y, b.y, e) - Math.sin(u * Math.PI) * (o.h || 0), u };
+    return { x: lerp(a.x, b.x, e), y: lerp(a.y, b.y, e) - Math.sin(u * Math.PI) * (o.h || 0), u, s: lerp(o.sA || 1, o.sB || 1, e) };
   }
   let x = sp[0], y = sp[1];
   if (c.state === 'enter') {
@@ -1319,8 +1319,9 @@ function custPos(c) {
 const custS = () => L.t.custS;
 function custHands(c) { const p = custPos(c), s = custS(); return { x: p.x, y: p.y - (c.kind === 'robot' ? 84 : 88) * s }; }
 function custHead(c) { const p = custPos(c), s = custS(); return { x: p.x, y: p.y + (HEADY[c.kind] || -129) * s }; }
-function shopHead() { const T = L.t; return { x: T.shop.x, y: T.shop.y - 122 - (G.shop.up || 0) }; }
-function shopFeet() { const T = L.t; return { x: T.shop.x, y: T.shop.y + 40 - (G.shop.up || 0) }; }
+function shopBaseY() { const T = L.t; return lerp(T.shop.y, T.counter.y0 - 76, G.shop.onCounter || 0); }
+function shopHead() { const T = L.t; return { x: T.shop.x, y: shopBaseY() - 122 - (G.shop.up || 0) }; }
+function shopFeet() { const T = L.t; return { x: T.shop.x, y: shopBaseY() + 62 - (G.shop.up || 0) }; }
 function flyerPos(f) {
   const a = f.from(), dt = G.T - f.t0;
   if (dt < (f.sq || 0)) return { x: a.x, y: a.y, u: 0, sq: dt / f.sq };
@@ -1362,7 +1363,7 @@ function custState(c) {
   return st;
 }
 function drawCustomer(c) {
-  const p = custPos(c), s = custS();
+  const p = custPos(c), s = custS() * (p.s || 1);
   if (p.y < L.vy0 - 260 || p.y > L.vy1 + 260) return;
   drawChar(c.kind, p.x, p.y, s, custState(c));
 }
@@ -1475,6 +1476,10 @@ function drawShopAt(where) {
   if (where === 'next') {
     const pt = G.T - (sh.popT || -9); s = pt < .5 ? Math.max(.02, eBack(clamp(pt / .5, 0, 1))) : 1;
     st.expr = 'happy'; st.hands = 'up'; st.up = 0; st.lean = 0;
+  } else if (sh.onCounter > 0 && sh.out <= 0) {
+    const oc = sh.onCounter;
+    y = shopBaseY() - Math.sin(clamp(oc, 0, 1) * Math.PI) * 30;
+    st.showLegs = true; st.hands = 'up'; st.lean = 0;
   } else if (sh.out > 0) {
     const fx = T.tray.x - (L.portrait ? 112 : 128), fy = T.ground + (L.portrait ? 14 : 4);
     const e = sh.out, hop = Math.sin(e * Math.PI) * 60;
@@ -1489,7 +1494,7 @@ function drawWorld(st, main) {
   const sync = st.syncT > 0 && G.T - st.syncT < 1.2 ? (G.T - st.syncT) / 1.2 : 0;
   drawRoofThings(st);
   drawCrowd(st);
-  const out = main && (G.shop.out > 0);
+  const out = main && (G.shop.out > 0 || G.shop.onCounter > .02);
   if (st.fold.disc > 0) {
     if (st.fold.disc >= 1) {
       const g = coinGeom();
@@ -1544,13 +1549,13 @@ function drawMover(m) {
 // =====================================================================
 //  ゲームの状態
 // =====================================================================
-const NEED_LANTERNS = 4;
+const NEED_LANTERNS = 4, CARP_ROWS = 2;
 const G = {
   T: 0, frame: 0, st: null, next: null,
   cust: [null, null, null], extra: [], flyers: [], panels: [], movers: [],
   tray: null, trayClaimed: false, payWait: 0,
   shop: { up: 0, lean: 0, leanT: -9, leanDur: 1, tilt: 0, expr: 'idle', lookP: null, look: null, lookUntil: 0, shoes: false, hands: 'counter', squash: 0, legsUp: false,
-    blinkT: 1.5, wig: -9, jumpT: -9, jumpH: 0, jumpDur: .56, out: 0, into: 0, popT: -9 },
+    blinkT: 1.5, wig: -9, jumpT: -9, jumpH: 0, jumpDur: .56, out: 0, into: 0, popT: -9, onCounter: 0 },
   cine: false, guide: null, lastInput: 0, demo: null, demoN: 0,
   disc: [0, 0, 0, 0, 0, 0], log: [], scripts: [], tweens: [], errors: [],
   memory: { streets: [] }, spawnAt: [-1, -1, -1], nextId: 1,
@@ -1614,6 +1619,8 @@ function makeStreet(idx, prev) {
   };
   st.shelf[0].stack.push('cake'); st.shelf[1].stack.push('juice');
   for (const k of st.best) st.shelf[SLOT_OF[k]].stack.push(k);
+  // 前回と逆の育ち方を試せるよう、前回あとに売った方（靴/ドーナツ）も最初の棚に置く
+  if (st.prefer && !st.best.includes(st.prefer)) st.shelf[SLOT_OF[st.prefer]].stack.push(st.prefer);
   return st;
 }
 const lanternCount = st => st.lanterns.reduce((n, l) => n + (l ? 1 : 0), 0);
@@ -1714,21 +1721,35 @@ function baseSpec() {
   const nF = G.cust.filter(c => c && c.base && c.kind === 'fire').length, nR = G.cust.filter(c => c && c.base && c.kind === 'robot').length;
   let fire;
   if (nF && !nR) fire = false; else if (nR && !nF) fire = true;
-  else fire = have('candy') + have('donut') <= have('shoes') + have('cookie');
-  if (rnd() < .22) fire = !fire;
+  else { fire = have('candy') + have('donut') <= have('shoes') + have('cookie'); if (rnd() < .3) fire = !fire; }
+  const tw = st.town;
+  if (tw.nightOn) {
+    // 夜市を仕上げるのに足りない列（屋上か道か）を育てる客を呼ぶ
+    const needRoof = tw.roofs.length < CARP_ROWS, needCart = tw.carts.length < CARP_ROWS;
+    if (needRoof && !needCart) fire = false; else if (needCart && !needRoof) fire = true;
+  }
   return fire ? { kind: 'fire', order: ['cake'], base: true } : { kind: 'robot', order: ['juice'], base: true };
 }
 function carpSpec() {
   const order = avail('cookie') > 0 ? ['cookie', 'cake'] : ['cake', 'juice'];
   return { kind: 'carp', order, from: G.st.town.roadOpen ? 'road' : 'bottom' };
 }
+// 最初の通りでは、靴とドーナツは棚に2つそろうと欲しがる客が来る（連続交換で品物が育つ）
+function demandNeed(k) { const st = G.st; return (st.idx === 0 && (k === 'shoes' || k === 'donut') && !st.did[k]) ? 2 : 1; }
 function pickNext() {
   const st = G.st, tw = st.town;
   if (st.carpPending && !st.carpSpawned) return carpSpec();
   const ks = tw.roadOpen ? ['candy', 'shoes', 'cookie', 'donut'] : ['donut', 'candy', 'shoes', 'cookie'];
-  for (const k of ks) if (avail(k) > 0) { const s = demandSpec(k); if (s) return s; }
+  for (const k of ks) if (avail(k) >= demandNeed(k)) { const s = demandSpec(k); if (s) return s; }
+  // 新しい品物を作っている間は、その品物を欲しがる客のために場所を空けておく
+  if (['candy', 'shoes', 'donut', 'cookie'].some(k => (st.transit[k] || 0) > 0) && G.cust.some(Boolean)) return null;
   const nBase = G.cust.filter(c => c && c.base).length;
-  if (tw.nightOn && (nBase >= 1 || rnd() < .5)) return nightSpec(false);
+  if (tw.nightOn) {
+    const needRows = tw.roofs.length < CARP_ROWS || tw.carts.length < CARP_ROWS;
+    const lanIn = lanternCount(st) + (st.lanternFly || 0) + G.cust.filter(c => c && c.night).length;
+    if (nBase < (needRows ? 2 : 1) && (needRows || lanIn >= NEED_LANTERNS || rnd() < .4)) return baseSpec();
+    return nightSpec(false);
+  }
   if (nBase >= 2) return null;
   return baseSpec();
 }
@@ -1751,9 +1772,11 @@ function seedCustomers(st) {
     return;
   }
   const b = st.best;
-  spawnCust(0, demandSpec(b[0]) || { kind: 'fire', order: ['cake'], base: true });
+  const first = st.prefer && st.shelf[SLOT_OF[st.prefer]].stack.length ? st.prefer : b[0];
+  spawnCust(0, demandSpec(first) || { kind: 'fire', order: ['cake'], base: true });
   spawnCust(1, rnd() < .5 ? { kind: 'fire', order: ['cake'], base: true } : { kind: 'robot', order: ['juice'], base: true });
-  if (b[1]) { const s2 = demandSpec(b[1]); if (s2) spawnCust(2, s2); }
+  const second = b.find(k => k && k !== first);
+  if (second) { const s2 = demandSpec(second); if (s2) spawnCust(2, s2); }
   G.cust.forEach((c, i) => { if (c) c.t0 = G.T + i * .35; });
 }
 // ---------------------------------------------------------------- 売る
@@ -1878,21 +1901,27 @@ function* shelfScript(res) {
   const st = G.st;
   let fromFn = () => trayPos();
   if (res === 'shoes') {
-    const tf = { kind: 'shoes', from: () => trayPos(), to: () => shopFeet(), t0: G.T, dur: .38, size: 54, size2: 46, arc: 40 };
+    // 店主がカウンターに飛び乗って試し履き（ばねで跳ねる）
+    G.shop.expr = 'wow'; G.shop.leanT = -9;
+    tween(G.shop, 'onCounter', 1, .35, eOut); SFX.jump();
+    yield .35;
+    const tf = { kind: 'shoes', from: () => trayPos(), to: () => shopFeet(), t0: G.T, dur: .36, size: 54, size2: 40, arc: 30 };
     G.tray = null; G.trayClaimed = false;
     G.flyers.push(tf); SFX.toss('shoes');
-    yield .38;
+    yield .36;
     rmFlyer(tf);
-    G.shop.shoes = true; G.shop.expr = 'wow'; G.shop.leanT = -9;
+    G.shop.shoes = true;
     for (let k = 0; k < 3; k++) {
-      G.shop.jumpT = G.T; G.shop.jumpH = 66 + k * 28; G.shop.jumpDur = .58; SFX.boing(k);
-      yield .58;
-      const f = shopFeet(); burst(f.x, f.y + 34, 4, [C.white, C.cream], 'puff', 80, 6);
+      G.shop.jumpT = G.T; G.shop.jumpH = (L.portrait ? 36 : 44) + k * 16; G.shop.jumpDur = .52; SFX.boing(k);
+      yield .52;
+      const f = shopFeet(); burst(f.x, f.y + 6, 4, [C.white, C.cream], 'puff', 80, 6);
     }
     G.shop.expr = 'happy';
-    yield .25;
+    yield .2;
     G.shop.shoes = false;
-    fromFn = () => shopFeet();
+    const pf = shopFeet();
+    fromFn = () => pf;
+    tween(G.shop, 'onCounter', 0, .35, eIO);
   } else { G.tray = null; G.trayClaimed = false; }
   const si = SLOT_OF[res];
   const fl = { kind: res, from: fromFn, to: () => slotP(si), t0: G.T, dur: .5, size: 54, size2: L.t.itemSize, arc: 70 };
@@ -1920,16 +1949,17 @@ function* delivScript(c) {
   c.sqT = G.T;
   yield .22;
   const side = custPos(c).x < L.t.sign.x ? -1 : 1;
-  const roofP = () => { const t = L.t; return { x: t.sign.x + side * (t.sign.w / 2 + 34), y: t.awn.y0 - 4 }; };
+  const roofP = () => { const t = L.t; return { x: t.sign.x + side * (t.sign.w / 2 + 30), y: t.awn.y0 - 2 }; };
+  const rs = () => L.portrait ? .55 : .78;   // 屋根の上は遠くに見えるよう小さく
   const p0 = custPos(c);
   if (G.cust[c.spot] === c) G.cust[c.spot] = null;
   G.extra.push(c);
   for (const k of c.resv.slice()) unreserve(c, k);
   c.state = 'jump';
-  c.ov = { a: () => p0, b: roofP, t0: G.T, dur: .75, h: 150, ease: eIO };
+  c.ov = { a: () => p0, b: roofP, t0: G.T, dur: .75, h: L.portrait ? 70 : 130, ease: eIO, sA: 1, sB: rs() };
   SFX.jump();
   yield .75;
-  c.ov = { a: roofP, b: roofP, t0: G.T, dur: .001 };
+  c.ov = { a: roofP, b: roofP, t0: G.T, dur: .001, sA: rs(), sB: rs() };
   c.sqT = G.T; c.pose = 'cheer'; c.expr = 'happy';
   if (!tw.signLit) { tw.signLit = true; tw.signT = G.T; SFX.signOn(); startNight(); }
   else { st.signWig = G.T; SFX.signBlink(); }
@@ -1939,21 +1969,27 @@ function* delivScript(c) {
   run(payScript('button', () => ({ x: rp.x, y: rp.y - 60 }), null, { fall: true }), 'deal');
   yield .5;
   const ri = nextFree(tw.roofs, L.t.roofSlots.length);
+  let dir = side;
   if (ri >= 0) {
-    const rsP = () => { const r = L.t.roofSlots[ri]; return { x: r[0], y: r[1] - 2 }; };
-    c.ov = { a: roofP, b: rsP, t0: G.T, dur: .65, h: 90, ease: eIO }; SFX.jump();
-    yield .65;
-    c.ov = { a: rsP, b: rsP, t0: G.T, dur: .001 };
+    // 屋上へ跳ねて、屋上の屋台が開く（屋上列が育つ）
+    const rsP = () => { const r = L.t.roofSlots[ri]; return { x: r[0], y: r[1] + 4 }; };
+    const s2 = rs() * .85;
+    c.ov = { a: roofP, b: rsP, t0: G.T, dur: .6, h: L.portrait ? 40 : 80, ease: eIO, sA: rs(), sB: s2 }; SFX.jump();
+    yield .6;
+    c.ov = { a: rsP, b: rsP, t0: G.T, dur: .001, sA: s2, sB: s2 };
+    c.sqT = G.T;
     tw.roofs.push({ slot: ri, t0: G.T, col: [C.pink, C.teal, C.yel, C.verm][ri % 4] });
     if (!tw.first) tw.first = 'roof';
     addCrowd('roof', ri);
     SFX.pop();
     const r = L.t.roofSlots[ri]; burst(r[0], r[1] - 30, 10, [C.yel, C.pink, C.white], 'star', 200, 6);
-    yield .45;
+    dir = r[0] < L.t.cx ? -1 : 1;
+    yield .4;
   }
-  const p2 = custPos(c), exitP = { x: p2.x < L.t.cx ? L.vx0 - 90 : L.vx1 + 90, y: p2.y - 140 };
-  c.ov = { a: () => p2, b: () => exitP, t0: G.T, dur: .85, h: 80 }; SFX.jump();
-  yield .85;
+  const p2 = custPos(c), s3 = p2.s || 1;
+  const exitP = { x: dir < 0 ? L.vx0 - 70 : L.vx1 + 70, y: Math.min(p2.y - 60, L.vy0 - 40) };
+  c.ov = { a: () => p2, b: () => exitP, t0: G.T, dur: .75, h: 50, sA: s3, sB: s3 * .8 }; SFX.jump();
+  yield .75;
   c.state = 'gone';
 }
 function startNight() {
@@ -2033,7 +2069,8 @@ function* lanternScript(col) {
 }
 function checkCarp() {
   const st = G.st, tw = st.town;
-  if (!st.carpPending && !st.carpSpawned && tw.nightOn && tw.roadOpen && lanternCount(st) >= NEED_LANTERNS) st.carpPending = true;
+  if (!st.carpPending && !st.carpSpawned && tw.nightOn && tw.roadOpen && lanternCount(st) >= NEED_LANTERNS &&
+    tw.roofs.length >= CARP_ROWS && tw.carts.length >= CARP_ROWS) st.carpPending = true;
 }
 // ---------------------------------------------------------------- 最大の転換：屋台模型 → 店がコインに → コインの中の次の通り
 function* coinScript() {
@@ -2102,7 +2139,7 @@ function commitNext() {
   G.st = ns; G.next = null; G.zoom = 0;
   G.cust = [null, null, null]; G.extra = []; G.flyers = []; G.movers = []; G.panels = [];
   G.tray = null; G.trayClaimed = false; G.payWait = 0; G.spawnAt = [-1, -1, -1];
-  const sh = G.shop; sh.out = 0; sh.into = 0; sh.shoes = false; sh.up = 0; sh.jumpT = -9; sh.leanT = -9;
+  const sh = G.shop; sh.out = 0; sh.into = 0; sh.shoes = false; sh.up = 0; sh.jumpT = -9; sh.leanT = -9; sh.onCounter = 0;
   G.scripts = G.scripts.filter(s => s.tag === 'coin');
   for (let i = G.tweens.length - 1; i >= 0; i--) if (G.tweens[i].o === G) G.tweens.splice(i, 1);
   BGC.key = '';
@@ -2138,7 +2175,8 @@ function shopUpdate() {
 function guideScore(kind, c) {
   const st = G.st;
   if (c.kind === 'carp') return 95;
-  if (st.idx > 0 && st.sales.length === 0 && st.best[0] === kind) return 120;
+  if (st.idx > 0 && st.sales.length === 0 && st.prefer === kind) return 125;
+  if (st.idx > 0 && st.sales.length === 0 && st.best.includes(kind)) return 120;
   if (!G.disc[0] && kind === 'cake' && c.kind === 'fire') return 100;
   if (!G.disc[1] && kind === 'juice' && c.kind === 'robot') return 90;
   if (kind === 'candy' && !st.did.candy) return 86;
@@ -2167,7 +2205,9 @@ function computeGuide() {
   return best;
 }
 function demoUpdate() {
-  if (G.cine || !G.guide) { G.demo = null; return; }
+  if (G.cine || !G.guide) { G.demo = null; G.lastInput = G.T; return; }
+  // 演出が動いている間は「放置」と数えない
+  if (!G.demo && (dealCount() > 0 || G.tray || G.flyers.length || G.movers.length)) G.lastInput = G.T;
   const d = G.demo;
   if (d) {
     const u = G.T - d.t0;
