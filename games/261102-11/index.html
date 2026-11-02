@@ -3062,7 +3062,12 @@ function movePointer(p, x, y) {
       if (hitDough(x, y) && Math.hypot(x - p.lastDent[0], y - p.lastDent[1]) > L.dough.r * 0.32) { pressDough(x, y, false); p.lastDent = [x, y]; }
       break;
     case 'free':
-      if (G.phase === 'play' && hairHit(x, y, Math.max(L.S * 0.35, 18))) startGrab(p, x, y, true);
+      if (G.phase === 'play' && hairHit(x, y, Math.max(L.S * 0.35, 18))) {
+        startGrab(p, x, y, true);
+        // 髪の外から払い始めても、髪に入る前の動きも一部数える（寛容な判定）
+        const pre = x - p.x0, gb = HR.grab;
+        if (gb) gb.xs = x - Math.sign(pre) * Math.min(Math.abs(pre), L.cutDist * 0.6);
+      }
       break;
   }
   p.lx = x; p.ly = y;
