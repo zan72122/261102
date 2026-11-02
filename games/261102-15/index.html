@@ -1,0 +1,1575 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="robots" content="noindex,nofollow">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#4a2e1c">
+<title>ぽんっ！はねる機関車と積み木の橋まつり</title>
+<style>
+html,body{margin:0;padding:0;width:100%;height:100%;background:#4a2e1c;overflow:hidden;
+  touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;
+  overscroll-behavior:none;-webkit-tap-highlight-color:transparent;position:fixed;inset:0}
+canvas{position:fixed;left:0;top:0;display:block;touch-action:none;background:#4a2e1c}
+#sa{position:fixed;left:0;top:0;width:0;height:0;visibility:hidden;pointer-events:none;
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="sa"></div>
+<script>
+(() => {
+'use strict';
+// ============================================================
+//  ぽんっ！はねる機関車と積み木の橋まつり
+//  ride_rail / blocks3d / no_animal_princess
+//  机の上の積み木の町。機関車をタップ→跳ぶ→着地の振動で仕掛けが動く。
+// ============================================================
+const cv = document.getElementById('c');
+let ctx = cv.getContext('2d');
+function ctxSwap(c) { ctx = c; }
+const saEl = document.getElementById('sa');
+
+// ---------- 小さな数学 ----------
+const PI = Math.PI, TAU = PI * 2;
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const lerp = (a, b, t) => a + (b - a) * t;
+const ease = t => t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t);
+const easeIn = t => t <= 0 ? 0 : t >= 1 ? 1 : t * t;
+const easeOut = t => t <= 0 ? 0 : t >= 1 ? 1 : 1 - (1 - t) * (1 - t);
+const backOut = t => { if (t <= 0) return 0; if (t >= 1) return 1; const c = 1.9; t -= 1; return 1 + (c + 1) * t * t * t + c * t * t; };
+const I3 = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+function mm(a, b) {
+  return [
+    a[0]*b[0]+a[1]*b[3]+a[2]*b[6], a[0]*b[1]+a[1]*b[4]+a[2]*b[7], a[0]*b[2]+a[1]*b[5]+a[2]*b[8],
+    a[3]*b[0]+a[4]*b[3]+a[5]*b[6], a[3]*b[1]+a[4]*b[4]+a[5]*b[7], a[3]*b[2]+a[4]*b[5]+a[5]*b[8],
+    a[6]*b[0]+a[7]*b[3]+a[8]*b[6], a[6]*b[1]+a[7]*b[4]+a[8]*b[7], a[6]*b[2]+a[7]*b[5]+a[8]*b[8]];
+}
+const rX = a => { const c = Math.cos(a), s = Math.sin(a); return [1,0,0, 0,c,-s, 0,s,c]; };
+const rY = a => { const c = Math.cos(a), s = Math.sin(a); return [c,0,s, 0,1,0, -s,0,c]; };
+const rZ = a => { const c = Math.cos(a), s = Math.sin(a); return [c,-s,0, s,c,0, 0,0,1]; };
+const ap = (m, x, y, z) => [m[0]*x+m[1]*y+m[2]*z, m[3]*x+m[4]*y+m[5]*z, m[6]*x+m[7]*y+m[8]*z];
+// 進行方向ベクトルから姿勢行列（列: 前, 左, 上）
+function frameFrom(tx, ty, tz) {
+  const l = Math.hypot(tx, ty, tz) || 1; tx /= l; ty /= l; tz /= l;
+  let sx = -ty, sy = tx; const sl = Math.hypot(sx, sy) || 1; sx /= sl; sy /= sl;
+  const ux = -tz * sy, uy = tz * sx, uz = tx * sy - ty * sx;
+  return [tx, sx, ux, ty, sy, uy, tz, 0, uz];
+}
+let seed = (Date.now() ^ 0x5bd1e995) >>> 0;
+function rnd() { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; }
+
+// ---------- 色 ----------
+const COL = {
+  red: '#d9442f', redD: '#a8301f', blue: '#2f6fd1', blueD: '#22509a', yel: '#f3c331', grn: '#3f9e4a', grnD: '#2e7a39',
+  wood: '#c98d52', woodL: '#d9a066', woodD: '#9b6334', desk1: '#b97a42', desk2: '#a96c38', desk3: '#c4884c',
+  white: '#f3ece0', black: '#2b2422', skin: '#f0c49a', rail: '#7b8590', tie: '#8c5a2e', cream: '#f7e2b6',
+  pink: '#ef8fa6', orange: '#ee8a2c', purple: '#8a5cc7', gray: '#9aa3ad', roof: '#5c87c9', brown: '#7a4a24'
+};
+const rgbCache = {};
+function hexRgb(h) {
+  let c = rgbCache[h]; if (c) return c;
+  c = [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+  rgbCache[h] = c; return c;
+}
+const shadeCache = new Map();
+function shade(h, k) {
+  const q = Math.round(k * 40);
+  const key = h + q;
+  let s = shadeCache.get(key);
+  if (!s) {
+    const c = hexRgb(h), kk = q / 40;
+    s = 'rgb(' + Math.min(255, c[0] * kk | 0) + ',' + Math.min(255, c[1] * kk | 0) + ',' + Math.min(255, c[2] * kk | 0) + ')';
+    shadeCache.set(key, s);
+  }
+  return s;
+}
+
+// ---------- カメラ（角度固定・画角だけ変える） ----------
+const cam = { d0: Math.SQRT1_2, d1: Math.SQRT1_2, r0: Math.SQRT1_2, r1: -Math.SQRT1_2, cp: 0.79, sp: 0.62,
+  scale: 30, cx: 0, cy: 0, ox: 0, oy: 0, Vx: 0, Vy: 0, Vz: 0, tScale: 30, tcx: 0, tcy: 0, fromScale: 30, fromCx: 0, fromCy: 0, tw: 1, twDur: 1 };
+const LIGHT = (() => { const x = 0.32, y = 0.58, z = 1, l = Math.hypot(x, y, z); return [x / l, y / l, z / l]; })();
+function setYaw(deg, pitchDeg) {
+  const a = deg * PI / 180, p = pitchDeg * PI / 180;
+  cam.d0 = Math.cos(a); cam.d1 = Math.sin(a);
+  cam.r0 = cam.d1; cam.r1 = -cam.d0;
+  cam.sp = Math.sin(p); cam.cp = Math.cos(p);
+  cam.Vx = cam.d0 * cam.cp; cam.Vy = cam.d1 * cam.cp; cam.Vz = cam.sp;
+}
+// 世界→画面（CSSピクセル）
+function pu(x, y) { return x * cam.r0 + y * cam.r1; }
+function pv(x, y, z) { return (x * cam.d0 + y * cam.d1) * cam.sp - z * cam.cp; }
+function P(x, y, z) { return [cam.ox + (pu(x, y) - cam.cx) * cam.scale, cam.oy + (pv(x, y, z) - cam.cy) * cam.scale]; }
+const depthOf = (x, y, z) => x * cam.Vx + y * cam.Vy + z * cam.Vz;
+
+// ---------- メッシュ ----------
+function boxMesh() {
+  const v = [];
+  for (let i = 0; i < 8; i++) v.push([(i & 1) ? 0.5 : -0.5, (i & 2) ? 0.5 : -0.5, (i & 4) ? 0.5 : -0.5]);
+  const f = [
+    { i: [0, 2, 6, 4], n: [-1, 0, 0] }, { i: [1, 5, 7, 3], n: [1, 0, 0] },
+    { i: [0, 4, 5, 1], n: [0, -1, 0] }, { i: [2, 3, 7, 6], n: [0, 1, 0] },
+    { i: [0, 1, 3, 2], n: [0, 0, -1] }, { i: [4, 6, 7, 5], n: [0, 0, 1] }];
+  return { v, f };
+}
+// y軸方向に伸びるn角柱（車輪など）
+function prismMesh(n) {
+  const v = [];
+  for (let i = 0; i < n; i++) { const a = (i + 0.5) / n * TAU; v.push([Math.cos(a) * 0.5, -0.5, Math.sin(a) * 0.5]); }
+  for (let i = 0; i < n; i++) { const a = (i + 0.5) / n * TAU; v.push([Math.cos(a) * 0.5, 0.5, Math.sin(a) * 0.5]); }
+  const f = [];
+  const capA = [], capB = [];
+  for (let i = 0; i < n; i++) { capA.push(n - 1 - i); capB.push(n + i); }
+  f.push({ i: capA, n: [0, -1, 0] }, { i: capB, n: [0, 1, 0] });
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n, a = (i + 1) / n * TAU;
+    f.push({ i: [i, j, n + j, n + i], n: [Math.cos(a), 0, Math.sin(a)] });
+  }
+  return { v, f };
+}
+// 屋根（三角柱：x方向に伸びる）
+function roofMesh() {
+  const v = [[-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [-0.5, 0.5, -0.5], [0.5, 0.5, -0.5], [-0.5, 0, 0.5], [0.5, 0, 0.5]];
+  const s = 1 / Math.SQRT2;
+  const f = [
+    { i: [0, 4, 5, 1], n: [0, -s, s] }, { i: [2, 3, 5, 4], n: [0, s, s] },
+    { i: [0, 2, 4], n: [-1, 0, 0] }, { i: [1, 5, 3], n: [1, 0, 0] }, { i: [0, 1, 3, 2], n: [0, 0, -1] }];
+  return { v, f };
+}
+const M_BOX = boxMesh(), M_OCT = prismMesh(8), M_HEX = prismMesh(6), M_CYL = prismMesh(12), M_ROOF = roofMesh();
+
+// ---------- 描画リスト ----------
+const items = []; let nItems = 0;
+const shadowPts = []; // 影の凸包リスト
+function pushItem() {
+  let it = items[nItems];
+  if (!it) { it = {}; items[nItems] = it; }
+  nItems++; return it;
+}
+// 箱（中心・寸法・回転・色）
+function mesh(M, x, y, z, sx, sy, sz, rot, col, opt) {
+  const it = pushItem();
+  it.k = 0; it.M = M; it.x = x; it.y = y; it.z = z; it.sx = sx; it.sy = sy; it.sz = sz;
+  it.rot = rot || I3; it.col = col; it.d = depthOf(x, y, z) + (opt && opt.bias || 0);
+  it.sh = !(opt && opt.noShadow); it.cols = opt && opt.cols || null;
+  return it;
+}
+const box = (x, y, z, sx, sy, sz, rot, col, opt) => mesh(M_BOX, x, y, z, sx, sy, sz, rot, col, opt);
+function custom(d, fn) { const it = pushItem(); it.k = 1; it.d = d; it.fn = fn; return it; }
+
+const tv = []; for (let i = 0; i < 32; i++) tv.push([0, 0, 0]);
+const tp = []; for (let i = 0; i < 32; i++) tp.push([0, 0]);
+function transformItem(it) {
+  const m = it.rot, V = it.M.v;
+  for (let i = 0; i < V.length; i++) {
+    const lx = V[i][0] * it.sx, ly = V[i][1] * it.sy, lz = V[i][2] * it.sz;
+    const w = tv[i];
+    w[0] = m[0]*lx + m[1]*ly + m[2]*lz + it.x;
+    w[1] = m[3]*lx + m[4]*ly + m[5]*lz + it.y;
+    w[2] = m[6]*lx + m[7]*ly + m[8]*lz + it.z;
+  }
+  return V.length;
+}
+function drawMeshItem(it) {
+  const n = transformItem(it), m = it.rot;
+  for (let i = 0; i < n; i++) { const p = P(tv[i][0], tv[i][1], tv[i][2]); tp[i][0] = p[0]; tp[i][1] = p[1]; }
+  const F = it.M.f;
+  for (let fi = 0; fi < F.length; fi++) {
+    const f = F[fi], ln = f.n;
+    const nx = m[0]*ln[0] + m[1]*ln[1] + m[2]*ln[2];
+    const ny = m[3]*ln[0] + m[4]*ln[1] + m[5]*ln[2];
+    const nz = m[6]*ln[0] + m[7]*ln[1] + m[8]*ln[2];
+    if (nx * cam.Vx + ny * cam.Vy + nz * cam.Vz <= 0.002) continue;
+    const lit = nx * LIGHT[0] + ny * LIGHT[1] + nz * LIGHT[2];
+    const k = 0.56 + 0.46 * Math.max(0, lit);
+    const c = shade(it.cols ? (it.cols[fi] || it.col) : it.col, k);
+    ctx.fillStyle = c; ctx.strokeStyle = c;
+    ctx.beginPath();
+    const ix = f.i;
+    ctx.moveTo(tp[ix[0]][0], tp[ix[0]][1]);
+    for (let j = 1; j < ix.length; j++) ctx.lineTo(tp[ix[j]][0], tp[ix[j]][1]);
+    ctx.closePath(); ctx.fill(); if (it.sx * cam.scale > 14 && it.sy * cam.scale > 14) ctx.stroke();
+  }
+}
+// 影：机の上（z=0）へ光源方向に投影して凸包
+const hullBuf = [];
+function addShadow(it) {
+  const n = transformItem(it);
+  const pts = hullBuf; pts.length = 0;
+  for (let i = 0; i < n; i++) {
+    const w = tv[i]; const z = Math.max(0, w[2]);
+    const p = P(w[0] - LIGHT[0] * z / LIGHT[2], w[1] - LIGHT[1] * z / LIGHT[2], 0);
+    pts.push(p);
+  }
+  pts.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lo = [], up = [];
+  for (const p of pts) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+  for (let i = pts.length - 1; i >= 0; i--) { const p = pts[i]; while (up.length >= 2 && cr(up[up.length - 2], up[up.length - 1], p) <= 0) up.pop(); up.push(p); }
+  lo.pop(); up.pop();
+  const h = lo.concat(up);
+  if (h.length < 3) return;
+  ctx.moveTo(h[0][0], h[0][1]);
+  for (let i = 1; i < h.length; i++) ctx.lineTo(h[i][0], h[i][1]);
+  ctx.closePath();
+}
+function flush() {
+  // 影
+  ctx.beginPath();
+  for (let i = 0; i < nItems; i++) { const it = items[i]; if (it.k === 0 && it.sh && it.z < 6) addShadow(it); }
+  ctx.fillStyle = 'rgba(60,30,10,0.30)'; ctx.fill('nonzero');
+  // 奥から手前へ
+  const arr = items.slice(0, nItems);
+  arr.sort((a, b) => a.d - b.d);
+  ctx.lineWidth = 0.7; ctx.lineJoin = 'round';
+  for (let i = 0; i < arr.length; i++) { const it = arr[i]; if (it.k === 0) drawMeshItem(it); else it.fn(); }
+  nItems = 0;
+}
+
+// ============================================================
+//  線路（辺のグラフ）
+// ============================================================
+function arcPts(cx, cy, r, a0, a1, n, z) {
+  const o = [];
+  for (let i = 0; i <= n; i++) { const a = lerp(a0, a1, i / n) * PI / 180; o.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r, z || 0]); }
+  return o;
+}
+// 制御点→細かい折れ線（Catmull-Rom）
+function smoothPath(ctrl, step) {
+  const pts = [];
+  const g = i => ctrl[clamp(i, 0, ctrl.length - 1)];
+  for (let i = 0; i < ctrl.length - 1; i++) {
+    const p0 = g(i - 1), p1 = g(i), p2 = g(i + 1), p3 = g(i + 2);
+    const len = Math.hypot(p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2]);
+    const n = Math.max(1, Math.ceil(len / step));
+    for (let k = 0; k < n; k++) {
+      const t = k / n, t2 = t * t, t3 = t2 * t;
+      const q = [0, 0, 0];
+      for (let c = 0; c < 3; c++)
+        q[c] = 0.5 * ((2 * p1[c]) + (-p0[c] + p2[c]) * t + (2 * p0[c] - 5 * p1[c] + 4 * p2[c] - p3[c]) * t2 + (-p0[c] + 3 * p1[c] - 3 * p2[c] + p3[c]) * t3);
+      pts.push(q);
+    }
+  }
+  pts.push(ctrl[ctrl.length - 1].slice());
+  return pts;
+}
+function linePath(ctrl, step) { // 直線と円弧の連結（そのまま細分）
+  const pts = [];
+  for (let i = 0; i < ctrl.length - 1; i++) {
+    const a = ctrl[i], b = ctrl[i + 1];
+    const n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]) / step));
+    for (let k = 0; k < n; k++) pts.push([lerp(a[0], b[0], k / n), lerp(a[1], b[1], k / n), lerp(a[2], b[2], k / n)]);
+  }
+  pts.push(ctrl[ctrl.length - 1].slice());
+  return pts;
+}
+function makeEdge(id, pts) {
+  const s = [0];
+  for (let i = 1; i < pts.length; i++) s.push(s[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1], pts[i][2] - pts[i - 1][2]));
+  return { id, pts, s, len: s[s.length - 1] };
+}
+function edgeAt(e, d, out) {
+  d = clamp(d, 0, e.len);
+  let lo = 0, hi = e.s.length - 1;
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; if (e.s[m] <= d) lo = m; else hi = m; }
+  const a = e.pts[lo], b = e.pts[hi], seg = (e.s[hi] - e.s[lo]) || 1, t = (d - e.s[lo]) / seg;
+  out.x = lerp(a[0], b[0], t); out.y = lerp(a[1], b[1], t); out.z = lerp(a[2], b[2], t);
+  out.tx = b[0] - a[0]; out.ty = b[1] - a[1]; out.tz = b[2] - a[2];
+  return out;
+}
+function nearestS(e, x, y) {
+  let best = 1e9, bs = 0;
+  for (let i = 0; i < e.pts.length; i++) { const p = e.pts[i]; const dd = (p[0] - x) ** 2 + (p[1] - y) ** 2; if (dd < best) { best = dd; bs = e.s[i]; } }
+  return bs;
+}
+
+// 主要な点
+const J2 = [5, -1.0, 0], J1 = [-5, -1.0, 0];
+const BS1 = [5, -0.2, 0], BS2 = [5, 1.5, 0];
+const RS1 = [0.4, 3, 0], RS2 = [-3.2, 3, 0];
+const UP_Y = -6.0, UP_Z = 2.0;
+const BR0 = -3.4, BR1 = -1.7;        // 橋（x範囲）
+const LF0 = -1.7, LF1 = 1.3;         // 昇降機の屋上レール
+const ST0 = 1.3, ST1 = 3.9;          // 屋上駅
+const TT = [4.8, UP_Y, UP_Z];        // 回転台
+const RED_PAD = [-5, 0.5, 0], BLUE_PAD = [1.6, -3, 0], ST_PAD = [2.5, UP_Y, UP_Z];
+const LOW_ST = [2.2, 3, 0];          // 下の駅
+const WHEEL_PAD = [7.6, -6.9, UP_Z];
+
+const E = {};
+function buildBaseEdges() {
+  E.L1a = makeEdge('L1a', linePath([J2, BS1], 0.1));
+  E.Lbs = makeEdge('Lbs', linePath([BS1, BS2], 0.1));
+  E.L1b = makeEdge('L1b', linePath([BS2].concat(arcPts(3.7, 1.7, 1.3, 0, 90, 10)).concat([RS1]), 0.1));
+  E.Lrs = makeEdge('Lrs', linePath([RS1, RS2], 0.1));
+  E.L1c = makeEdge('L1c', linePath([RS2].concat(arcPts(-3.7, 1.7, 1.3, 90, 180, 10)).concat([J1]), 0.1));
+  E.L2 = makeEdge('L2', linePath([J1].concat(arcPts(-3.7, -1.7, 1.3, 180, 270, 10)).concat(arcPts(3.7, -1.7, 1.3, 270, 360, 10)).concat([J2]), 0.1));
+  E.U1 = makeEdge('U1', smoothPath([J1, [-5.02, -2.2, 0.15], [-5.0, -3.6, 0.8], [-4.7, -5.1, 1.6], [-3.9, -5.9, 1.97], [BR0, UP_Y, UP_Z], [BR1, UP_Y, UP_Z], [LF1, UP_Y, UP_Z], [ST1, UP_Y, UP_Z], TT], 0.1));
+  E.U2a = makeEdge('U2a', smoothPath([TT, [5.6, -5.6, 1.9], [5.8, -4.5, 1.3], [5.45, -2.8, 0.5], [5.08, -1.7, 0.08], J2], 0.1));
+  E.U2b = makeEdge('U2b', smoothPath([TT, [5.8, -6.6, 2], [7.2, -7.0, 2], [8.4, -6.0, 1.85], [8.0, -4.0, 1.3], [6.6, -3.0, 0.7], [5.4, -2.2, 0.15], [5.05, -1.6, 0.02], J2], 0.1));
+}
+buildBaseEdges();
+// 自作の支線（前の周で最後に倒れた積み木から）
+function buildSpur(sp) {
+  const hill = sp.dir === 'b';
+  if (sp.color === 'blue') {
+    const ctrl = hill
+      ? [BS1, [6.0, -0.35, 0.15], [7.2, 0.2, 0.6], [7.25, 1.1, 0.65], [6.0, 1.75, 0.15], BS2]
+      : [BS1, [5.9, -0.2, 0], [6.7, 0.35, 0], [6.7, 0.95, 0], [5.9, 1.6, 0], BS2];
+    E.Sbs = makeEdge('Sbs', smoothPath(ctrl, 0.1));
+    sp.edge = 'Sbs'; sp.house = hill ? [8.3, 0.7] : [7.7, 0.6];
+  } else {
+    const ctrl = hill
+      ? [RS1, [0.0, 3.8, 0.15], [-0.9, 5.2, 0.6], [-2.1, 5.2, 0.65], [-2.9, 3.8, 0.15], RS2]
+      : [RS1, [0.05, 3.7, 0], [-0.8, 4.6, 0], [-2.0, 4.6, 0], [-2.85, 3.7, 0], RS2];
+    E.Srs = makeEdge('Srs', smoothPath(ctrl, 0.1));
+    sp.edge = 'Srs'; sp.house = hill ? [-1.5, 6.0] : [-1.3, 5.5];
+  }
+  const e = E[sp.edge];
+  sp.mid = e.len / 2;
+  const q = edgeAt(e, sp.mid, {});
+  sp.midPt = [q.x, q.y, q.z];
+}
+
+// ============================================================
+//  状態
+// ============================================================
+const G = {
+  t: 0, cycle: 1, order: [], redT: -1, blueT: -1, redDone: false, blueDone: false, redDir: 'a', blueDir: 'a',
+  connected: false, connT: -1, tt: false, ttT: -1, ttAng: 0, windV: 0, windAng: 0, gearMesh: false,
+  bridgeLow: 0, liftUp: 0, bucketLoad: 0, parkOpen: 0, parkT: -1, wheelAng: 0, wheelV: 0, wheelBoost: 0, cupsAng: 0,
+  cake: false, cakeT: -1, delivered: false, passengers: 'wait', boardT: -1, alightT: -1,
+  spur: null, spurT: -1, memory: [], resetT: -1, rebuildRed: -1, rebuildBlue: -1, redHop: -1, blueHop: -1, hopLv: 0,
+  bellT: -1, bakerT: -1, cartGo: 0, deliverT: -1, custHappyT: -1, spurClackT: -1, wheelCheerT: -1, saluteT: -1, eyesBigT: -1,
+  forceTunnel: false, firstJump: false, events: [], log: []
+};
+function at(delay, fn) { G.events.push({ t: G.t + delay, fn }); }
+function runEvents() {
+  for (let i = G.events.length - 1; i >= 0; i--) { const e = G.events[i]; if (G.t >= e.t) { G.events.splice(i, 1); e.fn(); } }
+}
+// つつくと小さく揺れる物
+const pokes = {};
+function wob(id) { const p = pokes[id]; if (!p) return 0; const a = G.t - p; if (a > 0.6) return 0; return Math.sin(a * 30) * 0.08 * (1 - a / 0.6); }
+
+// ============================================================
+//  机と下段の線路（地面レイヤー）
+// ============================================================
+const DESK = { x0: -9, x1: 10.8, y0: -11, y1: 8.2 };
+function poly(pts, fill) {
+  ctx.beginPath();
+  for (let i = 0; i < pts.length; i++) { const p = P(pts[i][0], pts[i][1], pts[i][2] || 0); if (i) ctx.lineTo(p[0], p[1]); else ctx.moveTo(p[0], p[1]); }
+  ctx.closePath(); ctx.fillStyle = fill; ctx.fill();
+}
+function drawDesk() {
+  const { x0, x1, y0, y1 } = DESK, T = 0.7;
+  // 机の側面（厚み）
+  const frontY = cam.d1 > 0 ? y1 : y0, frontX = cam.d0 > 0 ? x1 : x0;
+  poly([[x0, frontY, 0], [x1, frontY, 0], [x1, frontY, -T], [x0, frontY, -T]], shade(COL.desk2, 0.8));
+  poly([[frontX, y0, 0], [frontX, y1, 0], [frontX, y1, -T], [frontX, y0, -T]], shade(COL.desk2, 0.66));
+  poly([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], COL.desk1);
+  // 木目：幾何的な色帯
+  const bands = [[-10.2, 0.9, COL.desk2], [-8.1, 0.5, COL.desk3], [-6.6, 1.1, COL.desk2], [-4.1, 0.4, COL.desk3], [-2.6, 0.8, COL.desk2],
+    [-0.4, 0.5, COL.desk3], [1.4, 1.0, COL.desk2], [3.6, 0.45, COL.desk3], [5.2, 0.9, COL.desk2], [7.0, 0.5, COL.desk3]];
+  for (const b of bands) {
+    const ya = b[0], h = b[1];
+    poly([[x0, ya], [x0 + 6, ya + 0.15], [x1 - 5, ya + 0.15], [x1, ya + 0.05], [x1, ya + h], [x1 - 5, ya + h + 0.1], [x0 + 6, ya + h + 0.1], [x0, ya + h]], b[2]);
+  }
+  // 節（ひし形）
+  for (const k of [[-6.5, -8.5], [3.0, 5.6], [8.4, -2.4], [-7.6, 5.9]]) poly([[k[0] - 0.8, k[1]], [k[0], k[1] - 0.3], [k[0] + 0.8, k[1]], [k[0], k[1] + 0.3]], COL.woodD);
+}
+function drawRailFlat(e, from, to) {
+  // 枕木
+  const q = {};
+  for (let d = from + 0.15; d < to; d += 0.42) {
+    edgeAt(e, d, q);
+    const l = Math.hypot(q.tx, q.ty) || 1, nx = -q.ty / l * 0.36, ny = q.tx / l * 0.36, fx = q.tx / l * 0.1, fy = q.ty / l * 0.1;
+    poly([[q.x + nx - fx, q.y + ny - fy, q.z], [q.x + nx + fx, q.y + ny + fy, q.z], [q.x - nx + fx, q.y - ny + fy, q.z], [q.x - nx - fx, q.y - ny - fy, q.z]], COL.tie);
+  }
+  // レール2本
+  for (const side of [-0.22, 0.22]) {
+    ctx.beginPath();
+    for (let d = from, i = 0; d <= to + 0.001; d += 0.2, i++) {
+      edgeAt(e, Math.min(d, to), q);
+      const l = Math.hypot(q.tx, q.ty) || 1;
+      const p = P(q.x - q.ty / l * side, q.y + q.tx / l * side, q.z + 0.04);
+      if (i) ctx.lineTo(p[0], p[1]); else ctx.moveTo(p[0], p[1]);
+    }
+    ctx.strokeStyle = '#6f7882'; ctx.lineWidth = Math.max(1.5, cam.scale * 0.07); ctx.stroke();
+  }
+}
+function drawGround() {
+  drawDesk();
+  for (const id of ['L1a', 'Lbs', 'L1b', 'Lrs', 'L1c', 'L2']) drawRailFlat(E[id], 0, E[id].len);
+  // 下段の分岐の始まり（地面部分）
+  drawRailFlat(E.U1, 0, 1.2);
+  drawRailFlat(E.U2a, E.U2a.len - 1.0, E.U2a.len);
+  if (G.parkOpen > 0.5) drawRailFlat(E.U2b, E.U2b.len - 0.9, E.U2b.len);
+}
+
+// 高架の線路（箱を連ねる）
+function elevated(e, from, to, col) {
+  const q = {}, step = 0.5;
+  for (let d = from; d < to - 0.01; d += step) {
+    const d1 = Math.min(to, d + step);
+    edgeAt(e, (d + d1) / 2, q);
+    if (q.z < 0.1) continue;
+    const R = frameFrom(q.tx, q.ty, q.tz);
+    box(q.x, q.y, q.z - 0.1, d1 - d + 0.04, 0.95, 0.2, R, col || COL.woodL, { cols: [null, null, null, null, null, COL.woodL] });
+    // レールを上面に描く
+    const it = custom(depthOf(q.x, q.y, q.z) + 0.02, () => {
+      const qa = edgeAt(e, d, {}), qb = edgeAt(e, d1, {});
+      ctx.strokeStyle = '#6f7882'; ctx.lineWidth = Math.max(1.5, cam.scale * 0.07);
+      for (const side of [-0.22, 0.22]) {
+        const l = Math.hypot(qa.tx, qa.ty) || 1;
+        const a = P(qa.x - qa.ty / l * side, qa.y + qa.tx / l * side, qa.z + 0.03), b = P(qb.x - qb.ty / l * side, qb.y + qb.tx / l * side, qb.z + 0.03);
+        ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+      }
+    });
+  }
+  // 支柱
+  for (let d = from + 0.6; d < to; d += 1.6) {
+    edgeAt(e, d, q);
+    if (q.z < 0.45) continue;
+    box(q.x, q.y, (q.z - 0.2) / 2, 0.3, 0.3, q.z - 0.2, null, COL.yel);
+  }
+}
+function edgeRangeX(e, xa, xb) { // 屋上の直線でx範囲に相当するsを探す
+  return [nearestS(e, xa, UP_Y), nearestS(e, xb, UP_Y)];
+}
+const U1_BR = edgeRangeX(E.U1, BR0, LF1);
+
+// ============================================================
+//  人（言葉なしで表情と動作）
+// ============================================================
+function person(x, y, z, face, o) {
+  o = o || {};
+  const jump = o.jump || 0;
+  z += jump;
+  const R = rZ(face);
+  const f = [Math.cos(face), Math.sin(face)], s = [-Math.sin(face), Math.cos(face)];
+  const bias = o.bias || 0;
+  if (!o.noLegs) box(x, y, z + 0.15, 0.22, 0.28, 0.3, R, COL.black, { bias });
+  box(x, y, z + 0.46, 0.3, 0.36, 0.34, R, o.body || COL.blue, { bias });
+  const hz = z + 0.8;
+  box(x, y, hz, 0.3, 0.3, 0.3, R, COL.skin, { bias: bias + 0.01 });
+  if (o.hat) {
+    const hs = o.hatTall ? 0.26 : 0.1, lift = o.hatPop || 0;
+    box(x, y, hz + 0.15 + hs / 2 + lift, 0.32, 0.32, hs, R, o.hat, { bias: bias + 0.02 });
+    if (!o.hatTall) box(x + f[0] * 0.12, y + f[1] * 0.12, hz + 0.16 + lift, 0.18, 0.3, 0.04, R, o.hat, { bias: bias + 0.02 });
+  }
+  // 腕： a=0 下げる, 1=前へ, 2.6=頭へ
+  const arm = (side, a, wave) => {
+    const sx = x + s[0] * 0.22 * side, sy = y + s[1] * 0.22 * side, sz = z + 0.6;
+    const Ra = mm(R, mm(rY(-a), rX(side * (wave || 0))));
+    const c = ap(Ra, 0, 0, -0.15);
+    box(sx + c[0], sy + c[1], sz + c[2], 0.11, 0.11, 0.3, Ra, o.body || COL.blue, { bias: bias + 0.005 });
+  };
+  arm(1, o.armR || 0, o.waveR || 0);
+  arm(-1, o.armL || 0, o.waveL || 0);
+  // 目
+  const fx = x + f[0] * 0.152, fy = y + f[1] * 0.152;
+  const vis = f[0] * cam.Vx + f[1] * cam.Vy;
+  if (vis > 0.08) custom(depthOf(fx, fy, hz) + bias + 0.05, () => {
+    const c = P(fx, fy, hz + 0.02), a = P(fx + s[0] * 0.07, fy + s[1] * 0.07, hz + 0.02);
+    const ex = a[0] - c[0], ey = a[1] - c[1];
+    const big = o.big || 0, r = cam.scale * (0.035 + big * 0.03);
+    let lx = 0, ly = 0;
+    if (o.look) { const t = P(o.look[0], o.look[1], o.look[2] || 0); const dx = t[0] - c[0], dy = t[1] - c[1], l = Math.hypot(dx, dy) || 1; lx = dx / l; ly = dy / l; }
+    for (const k of [-1, 1]) {
+      const px = c[0] + ex * k, py = c[1] + ey * k;
+      if (o.squint) { ctx.strokeStyle = COL.black; ctx.lineWidth = Math.max(1, r * 0.6); ctx.beginPath(); ctx.moveTo(px - r, py); ctx.lineTo(px + r, py); ctx.stroke(); continue; }
+      if (big > 0.05) { ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(px, py, r * 1.25, 0, TAU); ctx.fill(); }
+      ctx.fillStyle = COL.black; ctx.beginPath();
+      ctx.arc(px + lx * r * 0.45, py + ly * r * 0.45, r * (big > 0.05 ? 0.65 : 1), 0, TAU); ctx.fill();
+    }
+    if (o.smile) { ctx.strokeStyle = COL.black; ctx.lineWidth = Math.max(1, r * 0.5); ctx.beginPath(); ctx.arc(c[0], c[1] + r * 1.4, r * 1.1, 0.2, PI - 0.2); ctx.stroke(); }
+    if (o.mouthO) { ctx.fillStyle = COL.black; ctx.beginPath(); ctx.arc(c[0], c[1] + r * 2.1, r * 0.75, 0, TAU); ctx.fill(); }
+  });
+}
+
+// ============================================================
+//  赤い仕掛け：台・塔・シーソー・風車・橋
+// ============================================================
+const RT = [-6.2, 0.5];            // 赤い塔の土台
+const SEE = [-6.25, -2.0];         // シーソー支点（y方向の板）
+const WM = [-6.75, -4.3, 3.0];      // 風車ハブ
+const WINCH = [BR0, UP_Y - 0.55, 2.45];
+const BS = 0.55;                   // 積み木の大きさ
+// 赤い塔の積み木の位置（redT からの関数）
+function redBlocks(out) {
+  const t = G.redT, dir = G.redDir === 'a' ? 1 : -1;
+  for (let i = 0; i < 4; i++) {
+    const h = (i + 0.5) * BS;
+    let x = RT[0], y = RT[1], z = h, R = I3;
+    if (t >= 0) {
+      const a = easeIn(clamp(t / 0.6, 0, 1)) * PI / 2 * 0.98;
+      // 土台の-y側の辺を軸に回転
+      const py = RT[1] - BS / 2;
+      y = py + (RT[1] - py) * Math.cos(a) - h * Math.sin(a);
+      z = (RT[1] - py) * Math.sin(a) + h * Math.cos(a);
+      R = rX(a);
+      if (t > 0.6) {
+        const k = backOut(clamp((t - 0.6) / 0.35, 0, 1));
+        const rx = RT[0] + dir * 0.13 * i * i * 0.5 + (i === 3 ? 0 : 0), ry = RT[1] - BS / 2 - h;
+        const rz = i === 3 ? 0.42 : BS / 2;
+        x = lerp(x, rx, k); y = lerp(y, ry, k); z = lerp(z, rz, k);
+        R = mm(rZ(dir * 0.22 * i * k), rX(PI / 2));
+      }
+      // 再タップでぴょこ
+      if (G.redHop >= 0) { const ht = G.t - G.redHop - i * 0.07; if (ht > 0 && ht < 0.4) z += Math.sin(ht / 0.4 * PI) * 0.35; }
+    }
+    if (G.rebuildRed >= 0) { const rt = G.t - G.rebuildRed - (i * 0.15); x = RT[0]; y = RT[1]; R = I3; z = h + Math.max(0, 1 - easeIn(clamp(rt / 0.45, 0, 1))) * 4; if (rt < 0) z = 99; }
+    out.push([x, y, z, R]);
+  }
+  return out;
+}
+function seesawTilt() { // + : A端(塔側,+y)が上
+  if (G.redT < 0) return 0.32;
+  const t = G.redT;
+  if (t < 0.6) return 0.32;
+  return lerp(0.32, -0.32, easeOut(clamp((t - 0.6) / 0.15, 0, 1)));
+}
+function flyBlock() { // シーソーで飛ぶ黄色い積み木
+  const tilt = seesawTilt();
+  const bx = SEE[0], by = SEE[1] - 0.95, bz = 0.42 - Math.sin(tilt) * 0.95 + 0.2;
+  const t = G.redT;
+  if (t < 0.75 || G.redT < 0) return [bx, by, bz, 0];
+  const hit = [WM[0] + 0.45, WM[1] + 0.85, WM[2] - 0.9];
+  if (t < 1.5) { const k = (t - 0.75) / 0.75; return [lerp(bx, hit[0], k), lerp(by, hit[1], k), lerp(bz, hit[2], k) + Math.sin(k * PI) * 1.6, k * 7]; }
+  const k = clamp((t - 1.5) / 0.45, 0, 1);
+  return [hit[0] + 0.3 * k, hit[1] + 0.5 * k, lerp(hit[2], 0.2, easeIn(k)), 7 + k * 3];
+}
+function drawRed() {
+  // 台
+  padDraw(RED_PAD, COL.red, G.redDone);
+  const bl = redBlocks([]);
+  for (let i = 0; i < 4; i++) {
+    const b = bl[i]; if (b[2] > 50) continue;
+    if (G.spur && G.spur.color === 'red' && G.spurT >= 0 && G.rebuildRed >= 0 && false) continue;
+    box(b[0] + wob('red') * (i + 1) * 0.3, b[1], b[2], BS, BS, BS, b[3], i % 2 ? COL.red : COL.redD);
+  }
+  // シーソー
+  const tilt = seesawTilt();
+  box(SEE[0], SEE[1], 0.2, 0.5, 0.3, 0.4, null, COL.grnD);
+  box(SEE[0], SEE[1], 0.42, 0.5, 2.3, 0.1, rX(tilt), COL.wood);
+  const fb = flyBlock();
+  box(fb[0], fb[1], fb[2], 0.4, 0.4, 0.4, mm(rX(fb[3]), rZ(fb[3] * 0.5)), COL.yel);
+  // 風車
+  box(WM[0] - 0.1, WM[1], 1.4, 0.8, 0.8, 2.8, null, COL.grn);
+  mesh(M_ROOF, WM[0] - 0.1, WM[1], 3.1, 0.9, 0.95, 0.5, rZ(PI / 2), COL.red);
+  mesh(M_CYL, WM[0] + 0.38, WM[1], WM[2], 0.3, 0.2, 0.3, rZ(PI / 2), COL.yel);
+  for (let k = 0; k < 4; k++) {
+    const a = G.windAng + k * PI / 2 + wob('wind');
+    const Rb = rX(a);
+    const c = ap(Rb, 0, 0, 0.75);
+    box(WM[0] + 0.52, WM[1] + c[1], WM[2] + c[2], 0.08, 0.36, 1.3, Rb, k % 2 ? COL.white : COL.yel);
+  }
+  // ベルト：風車→巻き上げ機
+  const n = 12, belt = (G.windAng * 0.25) % 1;
+  for (let i = 0; i < n; i++) {
+    const k = (i + belt) / n;
+    box(lerp(WM[0] + 0.3, WINCH[0], k), lerp(WM[1] - 0.2, WINCH[1], k), lerp(WM[2] - 0.2, WINCH[2] + 0.3, k), 0.14, 0.14, 0.14, null, i % 2 ? COL.black : COL.gray, { noShadow: true });
+  }
+  // 巻き上げ機と歯車1
+  box(WINCH[0], WINCH[1], WINCH[2] - 1.1, 0.35, 0.35, 2.3, null, COL.yel);
+  mesh(M_HEX, WINCH[0], WINCH[1], WINCH[2] + 0.3, 0.6, 0.3, 0.6, mm(rZ(PI / 2), rY(G.windAng)), COL.red);
+  shaft(WINCH[0], -2.05, WINCH[1], 2.45, G.windAng);
+  gear(-2.05, WINCH[1], 2.45, G.windAng, COL.red);
+  // 橋（BR0を支点に跳ね上がる）
+  const ang = (1 - G.bridgeLow) * 1.25;
+  const Rb = rY(-ang), L = BR1 - BR0;
+  const c = ap(Rb, L / 2, 0, -0.1);
+  box(BR0 + c[0], UP_Y + c[1], UP_Z + c[2], L, 0.95, 0.2, Rb, COL.woodL, { cols: [null, null, null, null, null, COL.woodL] });
+  const r1 = ap(Rb, L / 2, -0.22, 0.01), r2 = ap(Rb, L / 2, 0.22, 0.01);
+  box(BR0 + r1[0], UP_Y + r1[1], UP_Z + r1[2], L, 0.07, 0.06, Rb, COL.rail, { noShadow: true, bias: 0.03 });
+  box(BR0 + r2[0], UP_Y + r2[1], UP_Z + r2[2], L, 0.07, 0.06, Rb, COL.rail, { noShadow: true, bias: 0.03 });
+  // 橋の欄干（赤い積み木）
+  for (const yy of [-0.5, 0.5]) { const q = ap(Rb, L * 0.5, yy, 0.12); box(BR0 + q[0], UP_Y + q[1], UP_Z + q[2], L * 0.9, 0.08, 0.16, Rb, COL.red); }
+  // 橋の土台の柱
+  box(BR0 - 0.1, UP_Y, UP_Z / 2 - 0.1, 0.5, 1.0, UP_Z - 0.2, null, COL.red);
+}
+function shaft(xa, xb, y, z, ang) {
+  const n = Math.max(1, Math.round(Math.abs(xb - xa) / 0.35));
+  for (let i = 0; i < n; i++) {
+    const x = lerp(xa, xb, (i + 0.5) / n);
+    box(x, y, z, Math.abs(xb - xa) / n, 0.12, 0.12, rX(ang + i * 0.4), i % 2 ? COL.gray : COL.white, { noShadow: true });
+  }
+}
+function gear(x, y, z, ang, col) {
+  mesh(M_OCT, x, y, z, 0.62, 0.16, 0.62, mm(rZ(PI / 2), rY(ang)), col);
+  for (let k = 0; k < 4; k++) {
+    const Rt = rX(ang + k * PI / 4);
+    box(x, y, z, 0.12, 0.8, 0.12, Rt, col, { noShadow: true });
+  }
+}
+
+// ============================================================
+//  青い仕掛け：台・塔・バケツ・昇降機（屋上レール）
+// ============================================================
+const BT = [2.6, -4.05];
+const BUCKET = [0.55, -4.25];
+const PUL1 = [0.55, -4.25, 4.1], PUL2 = [-0.2, UP_Y, 4.1];
+function bucketZ() { return lerp(2.3, 0.45, G.liftUp); }
+function liftZ() { return lerp(0.75, UP_Z, G.liftUp); }
+function blueBlocks(out) {
+  const t = G.blueT, dir = G.blueDir === 'a' ? 1 : -1;
+  for (let i = 0; i < 4; i++) {
+    const h = (i + 0.5) * BS;
+    let x = BT[0], y = BT[1], z = h, R = I3;
+    if (t >= 0) {
+      const a = easeIn(clamp(t / 0.5, 0, 1)) * 1.05;
+      const px = BT[0] - BS / 2;
+      x = px + (BT[0] - px) * Math.cos(a) - h * Math.sin(a);
+      z = (BT[0] - px) * Math.sin(a) + h * Math.cos(a);
+      R = rY(-a);
+      // 一つずつバケツへ
+      const st = 0.5 + (3 - i) * 0.13;
+      if (t > st) {
+        const k = clamp((t - st) / 0.42, 0, 1);
+        const bz = bucketZ();
+        const tx = BUCKET[0] + dir * ((i % 2) - 0.5) * 0.3, ty = BUCKET[1] + ((i >> 1) - 0.5) * 0.3 * dir, tz = bz - 0.15 + (i >> 1) * 0.12 + 0.25;
+        x = lerp(x, tx, k); y = lerp(y, ty, k); z = lerp(z, tz, k) + Math.sin(k * PI) * 1.0;
+        R = mm(rZ(k * 1.3 * dir), rY(-a * (1 - k)));
+        if (k >= 1) { x = tx; y = ty; z = tz; }
+      }
+      if (G.blueHop >= 0) { const ht = G.t - G.blueHop - i * 0.07; if (ht > 0 && ht < 0.4) z += Math.sin(ht / 0.4 * PI) * 0.3; }
+    }
+    if (G.rebuildBlue >= 0) { const rt = G.t - G.rebuildBlue - (i * 0.15); x = BT[0]; y = BT[1]; R = I3; z = h + Math.max(0, 1 - easeIn(clamp(rt / 0.45, 0, 1))) * 4; if (rt < 0) z = 99; }
+    out.push([x, y, z, R, t > 0.5 + (3 - i) * 0.13 + 0.42]);
+  }
+  return out;
+}
+function drawBlue() {
+  padDraw(BLUE_PAD, COL.blue, G.blueDone);
+  const bl = blueBlocks([]);
+  const inBucket = G.blueT >= 0 && G.rebuildBlue < 0;
+  const sz = inBucket ? 0.42 : BS;
+  for (let i = 0; i < 4; i++) { const b = bl[i]; if (b[2] > 50) continue; const s = b[4] ? 0.4 : BS; box(b[0] + wob('blue') * (i + 1) * 0.3, b[1], b[2], s, s, s, b[3], i % 2 ? COL.blue : COL.blueD); }
+  // 滑車の柱
+  box(PUL1[0] + 0.62, PUL1[1], PUL1[2] / 2, 0.22, 0.22, PUL1[2], null, COL.yel);
+  box(PUL1[0] + 0.3, PUL1[1], PUL1[2] + 0.08, 0.7, 0.18, 0.16, null, COL.yel);
+  mesh(M_CYL, PUL1[0], PUL1[1], PUL1[2], 0.42, 0.12, 0.42, mm(rZ(0.6), rY(G.liftUp * 9)), COL.red, { noShadow: true });
+  // バケツ
+  const bz = bucketZ() + wob('bucket') * 0.5;
+  const bx = BUCKET[0], by = BUCKET[1];
+  box(bx, by, bz - 0.3, 0.9, 0.9, 0.08, null, COL.grn);
+  box(bx - 0.43, by, bz, 0.06, 0.9, 0.6, null, COL.grn);
+  box(bx + 0.43, by, bz, 0.06, 0.9, 0.6, null, COL.grnD, { bias: 0.4 });
+  box(bx, by - 0.43, bz, 0.9, 0.06, 0.6, null, COL.grn);
+  box(bx, by + 0.43, bz, 0.9, 0.06, 0.6, null, COL.grnD, { bias: 0.4 });
+  // ひも
+  ropeSeg([bx, by, bz + 0.3], PUL1);
+  ropeSeg(PUL1, PUL2);
+  const lz = liftZ();
+  ropeSeg(PUL2, [PUL2[0], PUL2[1], lz + 0.1]);
+  // 昇降機
+  const lx0 = LF0 - 0.15, lx1 = LF1 + 0.15;
+  for (const px of [lx0, lx1]) for (const py of [UP_Y - 0.62, UP_Y + 0.62]) box(px, py, 2.1, 0.18, 0.18, 4.2, null, COL.blue);
+  box((lx0 + lx1) / 2, UP_Y - 0.62, 4.2, lx1 - lx0 + 0.2, 0.2, 0.2, null, COL.blueD);
+  box((lx0 + lx1) / 2, UP_Y + 0.62, 4.2, lx1 - lx0 + 0.2, 0.2, 0.2, null, COL.blueD);
+  mesh(M_CYL, PUL2[0], PUL2[1], PUL2[2], 0.4, 0.12, 0.4, mm(rZ(PI / 2), rY(G.liftUp * 9)), COL.red, { noShadow: true });
+  const L = LF1 - LF0;
+  box((LF0 + LF1) / 2, UP_Y, lz - 0.12, L, 0.95, 0.22, null, COL.yel, { cols: [null, null, null, null, null, COL.woodL] });
+  box((LF0 + LF1) / 2, UP_Y - 0.22, lz + 0.02, L, 0.07, 0.06, null, COL.rail, { noShadow: true, bias: 0.03 });
+  box((LF0 + LF1) / 2, UP_Y + 0.22, lz + 0.02, L, 0.07, 0.06, null, COL.rail, { noShadow: true, bias: 0.03 });
+  // 昇降機についた歯車と軸（青先行なら風車の起動とかみ合う）
+  const gz = lz + 0.45;
+  gear(-1.4, WINCH[1], gz, G.tt ? G.ttAng * 1.3 : 0, COL.blue);
+  shaft(-1.4, LF1, WINCH[1], gz, G.tt ? G.ttAng * 1.3 : 0);
+}
+function ropeSeg(a, b) {
+  const d = (depthOf(a[0], a[1], a[2]) + depthOf(b[0], b[1], b[2])) / 2;
+  custom(d, () => { const p = P(a[0], a[1], a[2]), q = P(b[0], b[1], b[2]); ctx.strokeStyle = '#5a4630'; ctx.lineWidth = Math.max(1.2, cam.scale * 0.05); ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(q[0], q[1]); ctx.stroke(); });
+}
+// 跳ぶ場所の台（線路わきの低い積み木の段）
+function padDraw(p, col, done) {
+  const glow = guide.pad === p ? (0.5 + 0.5 * Math.sin(G.t * 6)) : 0;
+  custom(depthOf(p[0], p[1], p[2]) - 3, () => {
+    if (glow > 0) {
+      const c = P(p[0], p[1], p[2] + 0.02);
+      ctx.save(); ctx.translate(c[0], c[1]); ctx.scale(1, cam.sp * 1.15);
+      ctx.strokeStyle = 'rgba(255,240,150,' + (0.45 + glow * 0.5) + ')'; ctx.lineWidth = cam.scale * 0.14;
+      ctx.beginPath(); ctx.arc(0, 0, cam.scale * (0.95 + glow * 0.18), 0, TAU); ctx.stroke(); ctx.restore();
+    }
+  });
+  // 線路の両側の小さな段
+  const e = p === RED_PAD ? [1, 0] : [0, 1];
+  for (const sd of [-0.62, 0.62]) {
+    box(p[0] + e[0] * sd, p[1] + e[1] * sd, p[2] + 0.07, e[0] ? 0.2 : 1.2, e[1] ? 0.2 : 1.2, 0.14, null, done ? COL.yel : col);
+  }
+}
+
+// ============================================================
+//  屋上駅・パン屋・回転台・遊園地・下の駅・家・支線
+// ============================================================
+const BAKER_HOME = [3.55, UP_Y + 0.95];
+function drawUpper() {
+  // 駅の建物（屋上がレール）
+  const cx = (ST0 + ST1) / 2;
+  box(cx, UP_Y + 0.15, UP_Z / 2 - 0.1, ST1 - ST0, 1.5, UP_Z - 0.2, null, COL.cream, { cols: [null, null, null, COL.pink] });
+  box(cx, UP_Y + 1.15, UP_Z - 0.1, ST1 - ST0, 0.6, 0.2, null, COL.white); // ホーム
+  // 窓（ブロック）
+  for (const wx of [ST0 + 0.6, cx, ST1 - 0.6]) box(wx, UP_Y + 0.91, 0.9, 0.36, 0.04, 0.5, null, COL.roof, { noShadow: true });
+  // 跳ぶ台（屋上駅前）
+  padStation();
+  // 鐘
+  const bx = ST0 + 0.35, by = UP_Y + 1.3;
+  box(bx, by, UP_Z + 0.65, 0.12, 0.12, 1.1, null, COL.brown);
+  box(bx, by, UP_Z + 1.2, 0.5, 0.12, 0.1, null, COL.brown);
+  const sw = G.bellT >= 0 && G.t - G.bellT < 1.6 ? Math.sin((G.t - G.bellT) * 14) * 0.5 * (1 - (G.t - G.bellT) / 1.6) : 0;
+  const Rb = rY(sw); const bc = ap(Rb, 0, 0, -0.2);
+  mesh(M_HEX, bx + bc[0], by, UP_Z + 1.12 + bc[2], 0.34, 0.3, 0.34, mm(Rb, rZ(PI / 2)), COL.yel);
+  mesh(M_ROOF, bx + bc[0], by, UP_Z + 1.12 + bc[2] + 0.17, 0.3, 0.34, 0.14, Rb, COL.yel);
+  // パン屋の小屋
+  box(BAKER_HOME[0] + 0.15, UP_Y + 1.25, UP_Z + 0.35, 0.6, 0.4, 0.5, null, COL.white);
+  mesh(M_ROOF, BAKER_HOME[0] + 0.15, UP_Y + 1.25, UP_Z + 0.7, 0.66, 0.5, 0.25, null, COL.pink);
+  // パン職人と荷車
+  bakerAndCart();
+  // 屋上の軸（駅→回転台）
+  shaft(LF1, TT[0] - 0.5, WINCH[1], 2.45, G.tt ? G.ttAng * 1.3 : 0);
+  // 回転台
+  box(TT[0], TT[1], UP_Z / 2 - 0.15, 0.5, 0.5, UP_Z - 0.3, null, COL.grn);
+  mesh(M_CYL, TT[0], TT[1], UP_Z - 0.1, 1.3, 0.2, 1.3, mm(rZ(G.ttAng), rX(PI / 2)), COL.purple,
+    { cols: [COL.yel, COL.yel, COL.purple, COL.yel, COL.purple, COL.yel, COL.purple, COL.yel, COL.purple, COL.yel, COL.purple, COL.yel, COL.purple, COL.yel] });
+  const tq = ap(rZ(G.ttAng), 0.5, 0, 0);
+  box(TT[0] + tq[0], TT[1] + tq[1], UP_Z + 0.05, 0.16, 0.16, 0.12, null, COL.red, { noShadow: true });
+}
+function padStation() {
+  const p = ST_PAD;
+  const glow = guide.pad === p ? (0.5 + 0.5 * Math.sin(G.t * 6)) : 0;
+  custom(depthOf(p[0], p[1], p[2]) - 1, () => {
+    if (glow > 0) {
+      const c = P(p[0], p[1], p[2] + 0.03);
+      ctx.save(); ctx.translate(c[0], c[1]); ctx.scale(1, cam.sp * 1.15);
+      ctx.strokeStyle = 'rgba(255,240,150,' + (0.45 + glow * 0.5) + ')'; ctx.lineWidth = cam.scale * 0.14;
+      ctx.beginPath(); ctx.arc(0, 0, cam.scale * (0.95 + glow * 0.18), 0, TAU); ctx.stroke(); ctx.restore();
+    }
+  });
+  for (const sd of [-0.62, 0.62]) box(p[0], p[1] + sd, p[2] + 0.07, 1.2, 0.2, 0.14, null, G.cake ? COL.yel : COL.pink);
+}
+function cartPos() {
+  // 0: 小屋の前, 1: 列車の荷台の横
+  const k = ease(G.cartGo);
+  const tx = train.cargoPos ? train.cargoPos.x : ST_PAD[0];
+  return [lerp(BAKER_HOME[0] - 0.4, tx, k), UP_Y + 1.0, UP_Z];
+}
+function bakerAndCart() {
+  const c = cartPos();
+  const push = G.cartGo > 0 && G.cartGo < 1;
+  box(c[0], c[1], c[2] + 0.35, 0.6, 0.42, 0.24, null, COL.wood);
+  for (const dx of [-0.2, 0.2]) mesh(M_OCT, c[0] + dx, c[1] + 0.22, c[2] + 0.14, 0.26, 0.06, 0.26, rY(c[0] * 4), COL.black, { noShadow: true });
+  if (G.cakeT < 0 || G.t - G.cakeT < 0) cakeAt(c[0], c[1], c[2] + 0.47, 0);
+  // パン職人（高い白い帽子）
+  const bxp = c[0] + 0.55, look = G.cartGo > 0 ? [c[0] - 2, c[1], c[2]] : null;
+  person(bxp, c[1], c[2], PI, { body: COL.white, hat: COL.white, hatTall: true, armR: push ? 1.4 : 0.3, armL: push ? 1.4 : 0.3, look, smile: true });
+}
+function cakeAt(x, y, z, rot) {
+  box(x, y, z + 0.1, 0.42, 0.42, 0.2, rZ(rot), COL.pink, { bias: 0.05 });
+  box(x, y, z + 0.24, 0.3, 0.3, 0.08, rZ(rot), COL.white, { bias: 0.06 });
+  box(x, y, z + 0.34, 0.1, 0.1, 0.12, rZ(rot), COL.red, { bias: 0.07 });
+}
+// 遊園地
+const WHEEL = [7.6, -9.1, 3.3];
+function drawPark() {
+  const op = G.parkOpen;
+  // 観覧車の脚
+  for (const sx of [-1, 1]) {
+    for (const sy of [-0.5, 0.5]) {
+      const Rl = rY(sx * -0.42);
+      box(WHEEL[0] + sx * 0.75, WHEEL[1] + sy, WHEEL[2] / 2 - 0.1, 0.18, 0.18, WHEEL[2] + 0.4, Rl, COL.blue);
+    }
+  }
+  const n = 8, R = 1.85, ang = G.wheelAng;
+  mesh(M_CYL, WHEEL[0], WHEEL[1], WHEEL[2], 0.4, 1.2, 0.4, rY(ang), COL.yel);
+  for (let k = 0; k < n; k++) {
+    const a = ang + k * TAU / n;
+    const Rs = rY(-a);
+    const c = ap(Rs, R / 2, 0, 0);
+    box(WHEEL[0] + c[0], WHEEL[1] + 0.3, WHEEL[2] + c[2], R, 0.08, 0.08, Rs, COL.white, { noShadow: true });
+    box(WHEEL[0] + c[0], WHEEL[1] - 0.3, WHEEL[2] + c[2], R, 0.08, 0.08, Rs, COL.white, { noShadow: true });
+    // ゴンドラ
+    const gx = WHEEL[0] + Math.cos(a) * R, gz = WHEEL[2] + Math.sin(a) * R;
+    const swing = G.wheelCheerT >= 0 && G.t - G.wheelCheerT < 1.5 ? Math.sin((G.t - G.wheelCheerT) * 10 + k) * 0.25 : 0;
+    const gc = [COL.red, COL.yel, COL.blue, COL.grn][k % 4];
+    box(gx, WHEEL[1], gz - 0.25, 0.45, 0.5, 0.4, rY(swing), gc);
+    // 乗っている人の頭
+    if (G.passengers === 'park' && (k === 0 || k === 4)) {
+      const hop = G.wheelCheerT >= 0 && G.t - G.wheelCheerT < 1.5 ? Math.abs(Math.sin((G.t - G.wheelCheerT) * 9)) * 0.12 : 0;
+      box(gx, WHEEL[1], gz + 0.07 + hop, 0.24, 0.24, 0.24, null, COL.skin, { bias: 0.05 });
+      box(gx, WHEEL[1], gz + 0.23 + hop, 0.26, 0.26, 0.07, null, k ? COL.orange : COL.purple, { bias: 0.06 });
+    }
+    // 外周
+    const a2 = a + TAU / n * 0.5, Rr = rY(-(a2 + PI / 2));
+    box(WHEEL[0] + Math.cos(a2) * R * 0.98, WHEEL[1], WHEEL[2] + Math.sin(a2) * R * 0.98, R * 0.78, 0.1, 0.1, Rr, k % 2 ? COL.red : COL.white, { noShadow: true });
+  }
+  // くるくるカップ
+  const cc = [9.4, -6.9];
+  box(cc[0], cc[1], 0.1, 2.0, 2.0, 0.2, null, COL.white);
+  for (let k = 0; k < 3; k++) {
+    const a = G.cupsAng + k * TAU / 3, x = cc[0] + Math.cos(a) * 0.6, y = cc[1] + Math.sin(a) * 0.6;
+    mesh(M_HEX, x, y, 0.42, 0.55, 0.45, 0.55, mm(rZ(a * 2), rX(PI / 2)), [COL.red, COL.blue, COL.yel][k]);
+  }
+  // 門と旗：開園でせり上がる
+  const gy = -7.9, gx = 5.6;
+  for (const dx of [-0.75, 0.75]) box(gx + dx, gy, 0.75, 0.3, 0.3, 1.5, null, COL.red);
+  box(gx, gy, 1.6 + (op > 0 ? 0 : 0), 1.9, 0.32, 0.25, rY(op > 0 ? 0 : 0), COL.yel);
+  // 遮断棒：閉→上がる
+  const bar = lerp(0, 1.4, ease(op));
+  const Rbar = rY(-bar), bc = ap(Rbar, 0.7, 0, 0);
+  box(gx - 0.7 + bc[0], gy + 0.3, 0.6 + bc[2], 1.4, 0.1, 0.1, Rbar, COL.white);
+  for (let k = 0; k < 5; k++) {
+    const fx = 4.6 + k * 1.35, fy = -10.2 + (k % 2) * 0.3;
+    const h = 0.3 + ease(clamp(op * 1.6 - k * 0.12, 0, 1)) * 1.4;
+    box(fx, fy, h / 2, 0.1, 0.1, h, null, COL.white);
+    if (op > 0.05) box(fx + 0.22, fy, h - 0.12, 0.38, 0.05, 0.26, rZ(Math.sin(G.t * 4 + k) * 0.25), [COL.red, COL.blue, COL.yel, COL.grn, COL.pink][k]);
+  }
+}
+// 下の駅
+const STAFF = [3.3, 4.05];
+function drawLowerStation() {
+  box(LOW_ST[0], LOW_ST[1] + 0.95, 0.12, 2.8, 0.75, 0.24, null, COL.white);
+  for (const dx of [-1.25, 1.25]) box(LOW_ST[0] + dx, LOW_ST[1] + 1.2, 0.85, 0.14, 0.14, 1.5, null, COL.yel);
+  box(LOW_ST[0], LOW_ST[1] + 1.2, 1.7, 2.7, 0.14, 0.36, null, COL.grn);
+  for (let k = 0; k < 4; k++) box(LOW_ST[0] - 0.9 + k * 0.6, LOW_ST[1] + 1.12, 1.7, 0.3, 0.04, 0.2, null, [COL.red, COL.yel, COL.blue, COL.white][k], { noShadow: true });
+  // 駅員：次の客を手招き
+  const waiting = G.passengers === 'wait';
+  const beck = waiting ? Math.sin(G.t * 5) * 0.4 + 1.6 : 0.2;
+  const look = waiting ? [train.x, train.y, train.z] : null;
+  person(STAFF[0], STAFF[1], 0.24, waiting ? PI * 0.15 + Math.sin(G.t * 0.7) * 0.4 : PI * 0.3, { body: COL.blueD, hat: COL.blueD, armR: beck, look, smile: waiting });
+  // 待つ客（観覧車へ行く人）
+  if (G.passengers === 'wait' || (G.passengers === 'board' && G.t - G.boardT < 0.6)) {
+    const k = G.passengers === 'board' ? clamp((G.t - G.boardT) / 0.6, 0, 1) : 0;
+    for (let i = 0; i < 2; i++) {
+      const x = LOW_ST[0] - 0.6 + i * 0.6, y = LOW_ST[1] + 1.0;
+      person(lerp(x, train.coachPos ? train.coachPos.x : x, k), lerp(y, LOW_ST[1], k), 0.24 * (1 - k) + (k > 0 ? 0.4 * k : 0), PI * 0.3, { body: i ? COL.orange : COL.purple, hat: i ? COL.orange : COL.purple, jump: Math.sin(k * PI) * 0.6 + (Math.sin(G.t * 3 + i) > 0.9 ? 0.06 : 0), look: [train.x, train.y, train.z] });
+    }
+  }
+  // 1周目の受け取り客（支線がない周はここ）
+  if (!G.spur || G.spurT < 0) customer(LOW_ST[0] - 1.1, LOW_ST[1] + 1.0, 0.24, 'st');
+}
+// 家（支線の先の受け取り客）
+const HOUSES = { A: [-4.7, 5.1], B: [8.1, -1.1] };
+function custSpot(id) {
+  if (id === 'st') return [LOW_ST[0] - 1.1, LOW_ST[1] + 1.0];
+  const h = HOUSES[id];
+  const m = G.spur && G.spur.midPt ? G.spur.midPt : (id === 'A' ? [-1.6, 4.2] : [6.3, 0.6]);
+  const dx = m[0] - h[0], dy = m[1] - h[1], l = Math.hypot(dx, dy) || 1;
+  return [h[0] + dx / l * 1.15, h[1] + dy / l * 1.15];
+}
+function drawHouses() {
+  const hs = [['A', COL.yel, COL.red], ['B', COL.white, COL.blue]];
+  for (const h of hs) {
+    const [hx, hy] = HOUSES[h[0]];
+    box(hx, hy, 0.6, 1.3, 1.1, 1.2, null, h[1]);
+    mesh(M_ROOF, hx, hy, 1.45, 1.45, 1.25, 0.5, null, h[2]);
+    box(hx + 0.66, hy, 0.35, 0.04, 0.36, 0.6, null, COL.brown, { noShadow: true });
+    box(hx, hy + 0.56, 0.75, 0.36, 0.04, 0.3, null, COL.roof, { noShadow: true });
+    const active = G.spur && G.spurT >= 0 && ((h[0] === 'A') === (G.spur.color === 'red'));
+    if (active) { const c = custSpot(h[0]); customer(c[0], c[1], 0, h[0]); }
+  }
+}
+function customer(x, y, z, id) {
+  const happy = G.custHappyT >= 0 && G.t - G.custHappyT < 2.4 && G.custId === id;
+  const wave = (G.spurClackT >= 0 && G.t - G.spurClackT < 2.0 && id !== 'st') || happy;
+  const hasCake = G.custHappyT >= 0 && G.custId === id && G.t - G.custHappyT >= 0 && G.t - G.custHappyT < 6;
+  const j = happy ? Math.abs(Math.sin((G.t - G.custHappyT) * 8)) * 0.35 : 0;
+  person(x, y, z, Math.atan2(train.y - y, train.x - x), { body: COL.grn, hat: COL.yel, armR: wave ? 2.5 + Math.sin(G.t * 12) * 0.3 : 0.1, armL: hasCake ? 1.2 : 0, jump: j, smile: true, big: happy ? 0.6 : 0, look: [train.x, train.y, train.z] });
+  if (hasCake) cakeAt(x + 0.05, y + 0.05, z + j + 0.55, 0);
+}
+// 自作の支線
+function drawSpur() {
+  const sp = G.spur; if (!sp) return;
+  const e = E[sp.edge];
+  const built = clamp((G.t - G.spurT) / 1.6, 0, 1);
+  const q = {};
+  const col = sp.color === 'red' ? COL.red : COL.blue, colD = sp.color === 'red' ? COL.redD : COL.blueD;
+  const nT = Math.floor(e.len / 0.45);
+  for (let i = 0; i < nT; i++) {
+    const k = i / nT; if (k > built) break;
+    edgeAt(e, (i + 0.5) * 0.45, q);
+    const R = frameFrom(q.tx, q.ty, q.tz);
+    const pop = G.spurClackT >= 0 ? Math.max(0, Math.sin(clamp((G.t - G.spurClackT - i * 0.05) / 0.25, 0, 1) * PI)) * 0.18 : 0;
+    box(q.x, q.y, q.z - 0.03 + pop, 0.22, 0.86, 0.08, R, i % 2 ? col : COL.yel, { noShadow: q.z < 0.1 });
+    if (q.z > 0.15) box(q.x, q.y, (q.z - 0.1) / 2, 0.4, 0.4, q.z - 0.1, null, i % 2 ? colD : col);
+  }
+  if (built > 0.2) custom(depthOf(sp.midPt[0], sp.midPt[1], 0) - 0.5, () => {
+    ctx.strokeStyle = '#6f7882'; ctx.lineWidth = Math.max(1.5, cam.scale * 0.07);
+    for (const side of [-0.22, 0.22]) {
+      ctx.beginPath();
+      for (let d = 0, i = 0; d <= e.len * built; d += 0.2, i++) {
+        edgeAt(e, d, q); const l = Math.hypot(q.tx, q.ty) || 1;
+        const p = P(q.x - q.ty / l * side, q.y + q.tx / l * side, q.z + 0.05);
+        if (i) ctx.lineTo(p[0], p[1]); else ctx.moveTo(p[0], p[1]);
+      }
+      ctx.stroke();
+    }
+  });
+  // 倒れたまま残った4つの積み木が支線の両端の土台に
+  for (let i = 0; i < 4; i++) {
+    const d = i < 2 ? 0.9 : e.len - 0.9;
+    edgeAt(e, d, q);
+    const l = Math.hypot(q.tx, q.ty) || 1, side = (i % 2 ? 1 : -1) * 0.85;
+    const k = clamp((G.t - G.spurT - i * 0.12) / 0.7, 0, 1);
+    const from = sp.from[i];
+    const tx = q.x - q.ty / l * side, ty = q.y + q.tx / l * side, tz = BS / 2;
+    box(lerp(from[0], tx, k), lerp(from[1], ty, k), lerp(from[2], tz, k) + Math.sin(k * PI) * 2.2, BS, BS, BS, rZ(k * 6 + i), i % 2 ? col : colD);
+  }
+  // まれ：最後の一個がトンネルに
+  if (sp.tunnel && built >= 1) {
+    edgeAt(e, sp.mid, q);
+    const R = frameFrom(q.tx, q.ty, 0), l = Math.hypot(q.tx, q.ty) || 1;
+    for (const side of [-0.62, 0.62]) box(q.x - q.ty / l * side, q.y + q.tx / l * side, q.z + 0.55, 0.5, 0.25, 1.1, R, col);
+    box(q.x, q.y, q.z + 1.22, 0.55, 1.6, 0.26, R, COL.yel);
+  }
+}
+
+// ============================================================
+//  機関車
+// ============================================================
+const train = { edge: 'L1c', s: 2.9, v: 0.4, d: 0, trail: [], jumpT: -1, squashT: -1, landT: -1, queued: false, jz: 0, hold: 0,
+  stops: [], x: 0, y: 0, z: 0, tx: 0, ty: -1, tz: 0, wheel: 0, cargoPos: null, coachPos: null, demoPress: -1 };
+const JUMP_DUR = 0.7, JUMP_H = 1.2, CAR1 = 1.25, CAR2 = 2.45;
+(function prefill() {
+  const e = E[train.edge], q = {};
+  for (let d = train.s - 3; d <= train.s + 0.001; d += 0.1) { edgeAt(e, d, q); train.trail.push({ d: d, x: q.x, y: q.y, z: q.z, tx: q.tx, ty: q.ty, tz: q.tz }); }
+  train.d = train.s;
+})();
+function nextEdge(id) {
+  const sp = G.spur && G.spurT >= 0 ? G.spur : null;
+  switch (id) {
+    case 'L1a': return sp && sp.color === 'blue' ? 'Sbs' : 'Lbs';
+    case 'Lbs': case 'Sbs': return 'L1b';
+    case 'L1b': return sp && sp.color === 'red' ? 'Srs' : 'Lrs';
+    case 'Lrs': case 'Srs': return 'L1c';
+    case 'L1c': return G.connected ? 'U1' : 'L2';
+    case 'U1': return G.tt ? 'U2b' : 'U2a';
+    default: return 'L1a';
+  }
+}
+function trailAt(back, out) {
+  const want = train.d - back, tr = train.trail;
+  let i = tr.length - 1;
+  while (i > 0 && tr[i - 1].d > want) i--;
+  const b = tr[i], a = tr[Math.max(0, i - 1)];
+  const k = b.d - a.d > 1e-6 ? clamp((want - a.d) / (b.d - a.d), 0, 1) : 0;
+  out.x = lerp(a.x, b.x, k); out.y = lerp(a.y, b.y, k); out.z = lerp(a.z, b.z, k);
+  out.tx = b.tx; out.ty = b.ty; out.tz = b.tz;
+  return out;
+}
+function requestJump() {
+  if (train.squashT >= 0) { train.queued = true; return; }
+  if (train.jumpT >= 0) { train.queued = true; return; }
+  train.squashT = G.t;
+  sfx.squash();
+}
+function updateTrain(dt) {
+  // 跳ぶ
+  if (train.squashT >= 0 && G.t - train.squashT >= 0.07) { train.squashT = -1; train.jumpT = G.t; sfx.jump(); G.firstJump = true; }
+  if (train.jumpT >= 0) {
+    const k = (G.t - train.jumpT) / JUMP_DUR;
+    if (k >= 1) {
+      train.jumpT = -1; train.jz = 0; train.landT = G.t; onLand();
+      if (train.queued) { train.queued = false; train.squashT = G.t; sfx.squash(); }
+    } else train.jz = JUMP_H * 4 * k * (1 - k);
+  } else train.jz = 0;
+  // 速さ
+  let tv = G.firstJump ? 1.3 : 0.42;
+  if (G.firstJump && guide.pad) { const dx = guide.pad[0] - train.x, dy = guide.pad[1] - train.y; if (dx * dx + dy * dy < 7) tv = 0.7; }
+  if (train.edge === 'U1' || train.edge === 'U2b') tv = Math.min(tv, 1.05);
+  for (const st of train.stops) if (st.edge === train.edge && st.s > train.s) tv = Math.min(tv, Math.max(0.35, (st.s - train.s) * 1.2));
+  if (train.hold > 0) { train.hold -= dt; tv = 0; }
+  train.v += (tv - train.v) * Math.min(1, dt * (tv < train.v ? 6 : 2));
+  if (train.hold > 0) train.v = Math.min(train.v, 0.02);
+  let ds = train.v * dt;
+  train.s += ds; train.d += ds; train.wheel += ds * 5.5;
+  // 停車
+  for (let i = 0; i < train.stops.length; i++) {
+    const st = train.stops[i];
+    if (st.edge === train.edge && train.s >= st.s && train.s - ds <= st.s + 0.05) {
+      train.d -= train.s - st.s; train.s = st.s; train.v = 0; train.hold = st.dur;
+      train.stops.splice(i, 1); st.fn(); break;
+    }
+  }
+  while (train.s > E[train.edge].len) {
+    train.s -= E[train.edge].len;
+    train.edge = nextEdge(train.edge);
+    onEnterEdge(train.edge);
+  }
+  const q = edgeAt(E[train.edge], train.s, {});
+  train.x = q.x; train.y = q.y; train.z = q.z; train.tx = q.tx; train.ty = q.ty; train.tz = q.tz;
+  const tr = train.trail;
+  if (!tr.length || train.d - tr[tr.length - 1].d > 0.06) { tr.push({ d: train.d, x: q.x, y: q.y, z: q.z, tx: q.tx, ty: q.ty, tz: q.tz }); if (tr.length > 120) tr.shift(); }
+  train.coachPos = trailAt(CAR1, train.coachPos || {});
+  train.cargoPos = trailAt(CAR2, train.cargoPos || {});
+}
+function onEnterEdge(id) {
+  if (id === 'L2' && G.redDone && !G.blueDone) G.peekGapT = G.t; // 橋は下りたけど届かない
+  if (G.spur && id === G.spur.edge && G.spur.tunnel) G.tunnelPass = G.t;
+}
+function drawTrain() {
+  const e = E[train.edge];
+  // 変形：押し縮み→伸び→はね返り
+  let sxy = 1, sz = 1;
+  if (train.squashT >= 0) { sz = 0.66; sxy = 1.16; }
+  else if (train.jumpT >= 0) { const k = (G.t - train.jumpT) / JUMP_DUR; sz = k < 0.5 ? 1.18 : lerp(1.18, 1, (k - 0.5) * 2); sxy = 1 / Math.sqrt(sz); }
+  else if (train.landT >= 0 && G.t - train.landT < 0.35) { const k = (G.t - train.landT) / 0.35; sz = 1 - Math.sin(k * PI * 2) * 0.22 * (1 - k); sxy = 1 / Math.sqrt(sz); }
+  if (train.demoPress >= 0 && G.t - train.demoPress < 0.3) { const k = (G.t - train.demoPress) / 0.3; sz = 1 - Math.sin(k * PI) * 0.12; }
+  let idle = 0;
+  if (G.t - input.last > 2.2 && train.jumpT < 0 && train.squashT < 0) idle = Math.max(0, Math.sin(G.t * 5)) * 0.1;
+  const R = frameFrom(train.tx, train.ty, train.tz);
+  const bx = train.x, by = train.y, bz = train.z + train.jz + idle;
+  const part = (M, lx, ly, lz, w, d, h, col, ex, opt) => {
+    const p = ap(R, lx * sxy, ly * sxy, lz * sz);
+    mesh(M, bx + p[0], by + p[1], bz + p[2], w * sxy, d * sxy, h * sz, ex ? mm(R, ex) : R, col, opt || { bias: 0.2 });
+  };
+  // 誘い：機関車の足元の光
+  const glow = 0.5 + 0.5 * Math.sin(G.t * 5);
+  custom(depthOf(train.x, train.y, train.z) - 2.5, () => {
+    const c = P(train.x, train.y, train.z + 0.02);
+    ctx.save(); ctx.translate(c[0], c[1]); ctx.scale(1, cam.sp * 1.1);
+    ctx.fillStyle = 'rgba(255,236,140,' + (0.22 + glow * 0.25) + ')';
+    ctx.beginPath(); ctx.arc(0, 0, cam.scale * (0.95 + glow * 0.12), 0, TAU); ctx.fill(); ctx.restore();
+  });
+  part(M_BOX, 0, 0, 0.3, 1.15, 0.62, 0.16, COL.black);
+  part(M_CYL, 0.2, 0, 0.62, 0.5, 0.72, 0.5, COL.red, rZ(PI / 2), { bias: 0.2, cols: [COL.yel, COL.red] });
+  part(M_BOX, -0.3, 0, 0.6, 0.44, 0.62, 0.45, COL.red);
+  for (const cxy of [[-0.48, 0.27], [-0.48, -0.27], [-0.12, 0.27], [-0.12, -0.27]]) part(M_BOX, cxy[0], cxy[1], 1.08, 0.06, 0.06, 0.56, COL.redD);
+  part(M_BOX, -0.3, 0, 1.38, 0.56, 0.72, 0.08, COL.black, null, { bias: 0.45 });
+  part(M_BOX, 0.42, 0, 1.0, 0.18, 0.18, 0.3, COL.black);
+  part(M_BOX, 0.6, 0, 0.3, 0.06, 0.66, 0.12, COL.yel);
+  const wc = [COL.yel, COL.yel, COL.black, COL.yel, COL.black, COL.yel, COL.black, COL.yel, COL.black, COL.yel];
+  for (const w of [[0.3, 0.33], [0.3, -0.33], [-0.25, 0.33], [-0.25, -0.33]]) part(M_OCT, w[0], w[1], 0.2, 0.38, 0.1, 0.38, COL.yel, rY(train.wheel), { bias: 0.18, cols: wc });
+  // 運転士
+  const dp = ap(R, -0.3 * sxy, 0, 0.2 * sz);
+  const sal = G.saluteT >= 0 && G.t - G.saluteT < 2.2;
+  const tun = G.tunnelPass >= 0 && G.spur && train.edge === G.spur.edge && Math.abs(train.s - G.spur.mid) < 1.0;
+  const big = G.eyesBigT >= 0 && G.t - G.eyesBigT < 2.2 ? 1 : 0;
+  const head = Math.atan2(train.ty, train.tx);
+  const lookAt = guide.look;
+  const lookAng = lookAt ? Math.atan2(lookAt[1] - train.y, lookAt[0] - train.x) : head;
+  let da = lookAng - head; while (da > PI) da -= TAU; while (da < -PI) da += TAU;
+  const face = head + clamp(da, -1.3, 1.3) * 0.7;
+  person(bx + dp[0], by + dp[1], bz + dp[2], face, { noLegs: true, body: COL.blue, hat: COL.blue, armR: sal ? 2.7 : 0.3, armL: tun ? 2.8 : 0.3, look: lookAt, big, squint: tun, mouthO: humming() && !tun, hatPop: train.jumpT >= 0 ? 0.06 : 0, bias: 0.4 });
+  // 荷台
+  car(train.coachPos, 'coach');
+  car(train.cargoPos, 'cargo');
+}
+function humming() { return G.firstJump && train.v > 0.3 && (G.t % 2.6) < 1.2; }
+function car(q, kind) {
+  if (!q) return;
+  const R = frameFrom(q.tx, q.ty, q.tz);
+  const part = (M, lx, ly, lz, w, d, h, col, ex, opt) => {
+    const p = ap(R, lx, ly, lz);
+    mesh(M, q.x + p[0], q.y + p[1], q.z + p[2], w, d, h, ex ? mm(R, ex) : R, col, opt || { bias: 0.2 });
+  };
+  part(M_BOX, 0, 0, 0.3, 0.95, 0.6, 0.14, COL.black);
+  part(M_BOX, 0.55, 0, 0.3, 0.2, 0.1, 0.08, COL.gray);
+  const wc = [COL.blue, COL.blue, COL.black, COL.blue, COL.black, COL.blue, COL.black, COL.blue, COL.black, COL.blue];
+  for (const w of [[0.28, 0.33], [0.28, -0.33], [-0.28, 0.33], [-0.28, -0.33]]) part(M_OCT, w[0], w[1], 0.18, 0.32, 0.1, 0.32, COL.blue, rY(train.wheel), { bias: 0.18, cols: wc });
+  if (kind === 'cargo') {
+    part(M_BOX, 0, 0, 0.42, 0.95, 0.66, 0.1, COL.yel);
+    if (G.cake && G.t >= G.cakeT) { const p = ap(R, 0, 0, 0.47); cakeAt(q.x + p[0], q.y + p[1], q.z + p[2], Math.atan2(q.ty, q.tx)); }
+  } else {
+    part(M_BOX, 0, 0.29, 0.62, 0.95, 0.06, 0.5, COL.blue);
+    part(M_BOX, 0, -0.29, 0.62, 0.95, 0.06, 0.5, COL.blue);
+    part(M_BOX, 0.45, 0, 0.62, 0.06, 0.62, 0.5, COL.blueD);
+    part(M_BOX, -0.45, 0, 0.62, 0.06, 0.62, 0.5, COL.blueD);
+    part(M_BOX, 0, 0, 0.42, 0.9, 0.56, 0.1, COL.white);
+    if (G.passengers === 'ride') {
+      for (const i of [0, 1]) {
+        const p = ap(R, i ? -0.2 : 0.2, 0, 0.98 + (Math.sin(G.t * 6 + i * 2) > 0.7 ? 0.05 : 0));
+        box(q.x + p[0], q.y + p[1], q.z + p[2], 0.26, 0.26, 0.26, R, COL.skin, { bias: 0.3 });
+        box(q.x + p[0], q.y + p[1], q.z + p[2] + 0.17, 0.28, 0.28, 0.08, R, i ? COL.orange : COL.purple, { bias: 0.31 });
+      }
+    }
+  }
+}
+
+// ============================================================
+//  音（Web Audioで合成）
+// ============================================================
+let AC = null, master = null, noiseBuf = null;
+function audioInit() {
+  if (AC) { if (AC.state === 'suspended') AC.resume().catch(() => {}); return; }
+  try {
+    const C = window.AudioContext || window.webkitAudioContext; if (!C) return;
+    AC = new C(); master = AC.createGain(); master.gain.value = 0.75; master.connect(AC.destination);
+    noiseBuf = AC.createBuffer(1, AC.sampleRate * 0.25, AC.sampleRate);
+    const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
+    const o = AC.createOscillator(), g = AC.createGain(); g.gain.value = 0; o.connect(g); g.connect(master); o.start(); o.stop(AC.currentTime + 0.05);
+  } catch (e) { AC = null; }
+}
+function tone(f, dur, type, vol, delay, f2) {
+  if (!AC || AC.state !== 'running') return;
+  const t = AC.currentTime + (delay || 0);
+  const o = AC.createOscillator(), g = AC.createGain();
+  o.type = type || 'sine'; o.frequency.setValueAtTime(f, t);
+  if (f2) o.frequency.exponentialRampToValueAtTime(f2, t + dur);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.008); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g); g.connect(master); o.start(t); o.stop(t + dur + 0.02);
+}
+function noise(dur, freq, q, vol, delay) {
+  if (!AC || AC.state !== 'running' || !noiseBuf) return;
+  const t = AC.currentTime + (delay || 0);
+  const s = AC.createBufferSource(); s.buffer = noiseBuf;
+  const f = AC.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = freq; f.Q.value = q;
+  const g = AC.createGain(); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  s.connect(f); f.connect(g); g.connect(master); s.start(t); s.stop(t + dur + 0.02);
+}
+const SCALE = [0, 2, 4, 7, 9, 12, 14, 16, 19, 21, 24];
+const note = (base, i) => base * Math.pow(2, SCALE[clamp(i, 0, SCALE.length - 1)] / 12);
+const sfx = {
+  wood(i, vol, delay) { const f = note(330, i); tone(f, 0.12, 'triangle', (vol || 0.35), delay); tone(f * 2.7, 0.05, 'sine', (vol || 0.35) * 0.4, delay); noise(0.05, f * 3, 4, (vol || 0.35) * 0.6, delay); },
+  squash() { tone(260, 0.08, 'sine', 0.18, 0, 200); },
+  jump() { tone(300, 0.22, 'sine', 0.25, 0, 720); noise(0.06, 2000, 1, 0.1); },
+  land(i) { noise(0.09, 500, 1.5, 0.35); tone(140, 0.12, 'sine', 0.35, 0, 80); sfx.wood(i || 0, 0.25, 0.02); },
+  bell() { for (const k of [1, 2.76, 5.4]) tone(880 * k / 1.0, 1.6 / k, 'sine', 0.22 / k); tone(880, 1.2, 'sine', 0.15, 0.45); },
+  chime() { [0, 2, 4, 5].forEach((n, i) => tone(note(523, n), 0.35, 'triangle', 0.22, i * 0.09)); },
+  fanfare() { [0, 2, 4, 5, 7].forEach((n, i) => { tone(note(392, n), 0.5, 'triangle', 0.22, i * 0.13); tone(note(196, n), 0.5, 'sine', 0.14, i * 0.13); }); tone(note(392, 8), 1.0, 'triangle', 0.25, 0.7); },
+  creak() { tone(110, 0.5, 'sawtooth', 0.05, 0, 150); },
+  gear() { for (let i = 0; i < 4; i++) noise(0.03, 3000, 6, 0.25, i * 0.07); tone(660, 0.1, 'square', 0.06, 0.3); },
+  plop(i) { tone(note(196, i), 0.15, 'sine', 0.3, 0, note(196, i) * 0.6); noise(0.05, 900, 2, 0.15); },
+  hum() { const b = 392; [0, 2, 4].forEach((n, i) => tone(note(b, n), 0.32, 'sine', 0.035, i * 0.34)); },
+  happy() { [4, 7, 9, 12].forEach((n, i) => tone(note(523, n % 11), 0.25, 'sine', 0.22, i * 0.08)); },
+  tick() { tone(1200, 0.04, 'sine', 0.08); },
+  whoosh() { noise(0.4, 1200, 0.7, 0.18); }
+};
+
+// ============================================================
+//  粒子（上限あり）
+// ============================================================
+const parts = []; const MAXP = 80;
+function spawn(type, x, y, z, vx, vy, vz, life, col) {
+  if (parts.length >= MAXP) parts.shift();
+  parts.push({ type, x, y, z, vx, vy, vz, life, max: life, col, r: rnd() * TAU });
+}
+function chips(x, y, z, n, col) { for (let i = 0; i < n; i++) { const a = rnd() * TAU, s = 0.8 + rnd() * 1.6; spawn('chip', x, y, z + 0.1, Math.cos(a) * s, Math.sin(a) * s, 1.5 + rnd() * 2, 0.6 + rnd() * 0.4, col || (rnd() < 0.5 ? COL.woodL : COL.cream)); } }
+function updParts(dt) {
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const p = parts[i]; p.life -= dt;
+    if (p.life <= 0) { parts.splice(i, 1); continue; }
+    p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
+    if (p.type === 'chip') { p.vz -= 9 * dt; if (p.z < 0 && p.vz < 0) { p.z = 0; p.vz *= -0.3; p.vx *= 0.6; p.vy *= 0.6; } p.r += dt * 8; }
+  }
+}
+function drawParts() {
+  for (const p of parts) {
+    const c = P(p.x, p.y, p.z), a = clamp(p.life / p.max * 2, 0, 1), s = cam.scale;
+    ctx.globalAlpha = a;
+    if (p.type === 'chip') {
+      ctx.fillStyle = p.col; ctx.save(); ctx.translate(c[0], c[1]); ctx.rotate(p.r); ctx.fillRect(-s * 0.07, -s * 0.04, s * 0.14, s * 0.08); ctx.restore();
+    } else if (p.type === 'note') {
+      ctx.fillStyle = COL.black; ctx.beginPath(); ctx.ellipse(c[0], c[1], s * 0.1, s * 0.075, -0.4, 0, TAU); ctx.fill();
+      ctx.fillRect(c[0] + s * 0.07, c[1] - s * 0.32, s * 0.035, s * 0.32);
+    } else if (p.type === 'heart') {
+      const r = s * 0.12; ctx.fillStyle = COL.red; ctx.beginPath();
+      ctx.arc(c[0] - r * 0.5, c[1], r * 0.6, PI, 0); ctx.arc(c[0] + r * 0.5, c[1], r * 0.6, PI, 0); ctx.lineTo(c[0], c[1] + r * 1.2); ctx.closePath(); ctx.fill();
+    } else if (p.type === 'spark') {
+      ctx.fillStyle = p.col; const r = s * 0.1 * a; ctx.beginPath();
+      for (let k = 0; k < 8; k++) { const rr = k % 2 ? r * 0.4 : r; const aa = k / 8 * TAU + p.r; ctx.lineTo(c[0] + Math.cos(aa) * rr, c[1] + Math.sin(aa) * rr); }
+      ctx.closePath(); ctx.fill();
+    } else if (p.type === 'ring') {
+      const k = 1 - p.life / p.max; ctx.strokeStyle = p.col; ctx.lineWidth = s * 0.08 * (1 - k);
+      ctx.save(); ctx.translate(c[0], c[1]); ctx.scale(1, cam.sp * 1.1); ctx.beginPath(); ctx.arc(0, 0, s * (0.4 + k * 2.2), 0, TAU); ctx.stroke(); ctx.restore();
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+function sparks(x, y, z, n) { const cs = [COL.yel, COL.red, COL.blue, COL.grn, COL.white]; for (let i = 0; i < n; i++) { const a = rnd() * TAU; spawn('spark', x, y, z, Math.cos(a) * 1.5, Math.sin(a) * 1.5, 1 + rnd() * 2, 0.9, cs[i % 5]); } }
+
+// ============================================================
+//  仕掛けの進行
+// ============================================================
+function logEv(ev, extra) { G.log.push(Object.assign({ t: +G.t.toFixed(2), cycle: G.cycle, ev }, extra || {})); }
+function dist2(a, b) { return (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2; }
+function beforePad(pad) { // 着地点が台の手前か（倒れる向きを決める）
+  return ((pad[0] - train.x) * train.tx + (pad[1] - train.y) * train.ty) > 0 ? 'a' : 'b';
+}
+function onLand() {
+  const lp = [train.x, train.y, train.z];
+  chips(lp[0], lp[1], lp[2], 7);
+  spawn('ring', lp[0], lp[1], lp[2] + 0.02, 0, 0, 0, 0.5, 'rgba(255,240,180,0.9)');
+  const R2 = 2.0 * 2.0;
+  const onLow = lp[2] < 0.3;
+  if (onLow && dist2(lp, RED_PAD) < R2) {
+    if (G.redT < 0) { startRed(beforePad(RED_PAD)); return; }
+    G.redHop = G.t; G.hopLv = Math.min(G.hopLv + 1, 8); sfx.land(G.hopLv); for (let i = 0; i < 4; i++) sfx.wood(G.hopLv + i, 0.2, 0.07 * i); return;
+  }
+  if (onLow && dist2(lp, BLUE_PAD) < R2 && train.edge === 'L2') {
+    if (G.blueT < 0) { startBlue(beforePad(BLUE_PAD)); return; }
+    G.blueHop = G.t; G.hopLv = Math.min(G.hopLv + 1, 8); sfx.land(G.hopLv); for (let i = 0; i < 4; i++) sfx.wood(G.hopLv + i, 0.2, 0.07 * i); return;
+  }
+  if (train.edge === 'U1' && dist2(lp, ST_PAD) < R2 && Math.abs(lp[2] - UP_Z) < 0.6) { stationJump(); return; }
+  if (G.spur && G.spurT >= 0 && train.edge === G.spur.edge) { spurJump(); return; }
+  if (train.edge === 'U2b' && dist2(lp, WHEEL_PAD) < 2.6 * 2.6) { wheelJump(); return; }
+  // 関係ない場所：近くが小さく揺れるだけ
+  sfx.land(0);
+  for (const k of [['red', [RT[0], RT[1]]], ['blue', [BT[0], BT[1]]], ['bucket', BUCKET], ['wind', [WM[0], WM[1]]]]) if (dist2(lp, k[1]) < 9) pokes[k[0]] = G.t;
+}
+function startRed(dir) {
+  G.redStart = G.t; G.redT = 0; G.redDir = dir; G.order.push('red'); G.hopLv = 0;
+  logEv('red-start', { dir, liftUp: +G.liftUp.toFixed(2) });
+  sfx.land(1);
+  at(0.15, () => sfx.creak());
+  at(0.6, () => { sfx.wood(2, 0.45); chips(SEE[0], SEE[1] + 0.9, 0.5, 6, COL.red); });
+  at(0.75, () => { sfx.wood(4, 0.4); sfx.whoosh(); });
+  at(1.5, () => {
+    sfx.wood(6, 0.45); chips(WM[0] + 0.5, WM[1] + 0.8, WM[2] - 0.9, 6, COL.yel);
+    // 風車の起動の一押しが歯車へ：昇降機が上がっていれば歯車がかみ合う
+    if (G.liftUp > 0.95) { G.tt = true; G.ttT = G.t; sfx.gear(); at(0.4, () => sfx.chime()); logEv('turntable-on'); sparks(-1.7, WINCH[1], 2.45, 8); }
+    else logEv('gear-free');
+  });
+  at(1.9, () => sfx.creak());
+  at(3.45, () => {
+    G.redDone = true; G.saluteT = G.t; G.eyesBigT = G.t; sfx.wood(8, 0.4); sfx.chime();
+    chips((BR0 + BR1) / 2, UP_Y, UP_Z, 8, COL.red); logEv('bridge-down'); checkConnect();
+  });
+}
+function startBlue(dir) {
+  G.blueStart = G.t; G.blueT = 0; G.blueDir = dir; G.order.push('blue'); G.hopLv = 0;
+  logEv('blue-start', { dir });
+  sfx.land(1); at(0.12, () => sfx.creak());
+  for (let i = 0; i < 4; i++) at(0.5 + (3 - i) * 0.13 + 0.42, () => sfx.plop(i + 1));
+  at(1.2, () => { sfx.creak(); sfx.creak(); });
+  at(2.6, () => {
+    G.blueDone = true; G.eyesBigT = G.t; sfx.wood(7, 0.4); sfx.chime(); chips(0, UP_Y, UP_Z, 8, COL.blue);
+    logEv('lift-up', { bridgeLow: +G.bridgeLow.toFixed(2) }); checkConnect();
+  });
+}
+function checkConnect() {
+  if (!G.redDone || !G.blueDone || G.connected) return;
+  G.connected = true; G.connT = G.t; G.parkT = G.t; G.saluteT = G.t + 0.4; G.eyesBigT = G.t;
+  logEv('connected', { order: G.order.slice(), tt: G.tt });
+  sfx.fanfare(); sparks((BR1 + LF0) / 2, UP_Y, UP_Z + 0.4, 14);
+  fitCamera(true);
+  at(1.0, () => sparks(WHEEL[0], WHEEL[1], WHEEL[2] + 1, 12));
+  if (G.passengers === 'wait') addStop('L1b', S_LOWST + CAR1, 1.4, board);
+}
+let S_LOWST = nearestS(E.L1b, LOW_ST[0], LOW_ST[1]);
+function addStop(edge, s, dur, fn) { train.stops.push({ edge, s, dur, fn }); }
+function board() {
+  if (G.passengers !== 'wait') return;
+  G.passengers = 'board'; G.boardT = G.t; sfx.wood(3, 0.3); sfx.wood(5, 0.3, 0.15);
+  at(0.6, () => { G.passengers = 'ride'; sfx.chime(); logEv('boarded'); });
+}
+function stationJump() {
+  G.bellT = G.t; sfx.bell(); sfx.land(3);
+  if (G.passengers === 'ride') { G.passengers = 'park'; G.alightT = G.t; sparks(WHEEL[0], WHEEL[1], WHEEL[2], 6); logEv('to-park'); }
+  if (G.cake || G.delivered || G.cakeT >= 0) { logEv('bell-only'); return; }
+  logEv('station-jump');
+  train.hold = 2.8;
+  G.cartGo = 0.001; G.cartDir = 1;
+  G.cakeT = G.t + 1.15;
+  at(1.15, () => { G.cake = true; sfx.wood(5, 0.35); sfx.wood(7, 0.3, 0.1); sparks(train.cargoPos.x, train.cargoPos.y, train.cargoPos.z + 0.6, 5); logEv('cake-loaded'); scheduleDelivery(); });
+  at(1.4, () => { G.cartDir = -1; });
+}
+function scheduleDelivery() {
+  if (G.spur && G.spurT >= 0) { addStop(G.spur.edge, Math.min(E[G.spur.edge].len - 0.05, G.spur.mid + CAR2), 2.4, deliver); G.custId = G.spur.color === 'red' ? 'A' : 'B'; }
+  else { addStop('L1b', S_LOWST - 1.0 + CAR2, 2.4, deliver); G.custId = 'st'; }
+}
+function deliver() {
+  if (G.delivered) return;
+  G.cake = false; G.delivered = true; G.custHappyT = G.t + 0.5;
+  sfx.wood(4, 0.3); at(0.5, () => { sfx.happy(); const c = custPos(); for (let i = 0; i < 4; i++) spawn('heart', c[0], c[1], 1.2, (rnd() - 0.5) * 0.6, (rnd() - 0.5) * 0.6, 1.2, 1.4, COL.red); });
+  logEv('delivered', { to: G.custId });
+  at(2.8, startNextCycle);
+}
+function custPos() { return custSpot(G.custId || 'st'); }
+function spurJump() {
+  G.spurClackT = G.t; sfx.land(2);
+  const n = 8; for (let i = 0; i < n; i++) sfx.wood(i + 1, 0.22, i * 0.05);
+  logEv('spur-jump', { color: G.spur.color });
+}
+function wheelJump() {
+  G.wheelBoost = 2.2; G.wheelCheerT = G.t; sfx.land(4); sfx.happy();
+  sparks(WHEEL[0], WHEEL[1], WHEEL[2] + 1.5, 8); logEv('wheel-jump');
+}
+function fallenPos(color) {
+  const out = color === 'red' ? redBlocks([]) : blueBlocks([]);
+  return out.map(b => [b[0], b[1], b[2]]);
+}
+function startNextCycle() {
+  if (!G.delivered || G.order.length < 2) return;
+  if (train.edge[0] === 'U') { at(0.5, startNextCycle); return; } // 高架を走行中は降りてから
+  const last = G.order[G.order.length - 1];
+  const dir = last === 'red' ? G.redDir : G.blueDir;
+  const tunnel = G.forceTunnel || rnd() < 0.15;
+  G.memory.push({ order: G.order.slice(), last, dir, tunnel });
+  G.pendingSpur = { color: last, dir, tunnel, from: fallenPos(last) };
+  logEv('next-cycle', { last, dir, tunnel });
+  G.redT = -1; G.blueT = -1; G.redStart = -1; G.blueStart = -1;
+  G.rebuildRed = G.t + 0.2; G.rebuildBlue = G.t + 0.3;
+  G.redDone = G.blueDone = false; G.connected = false; G.tt = false; G.order = [];
+  G.cake = false; G.delivered = false; G.passengers = 'wait'; G.cartGo = 0; G.cakeT = -1; G.hopLv = 0;
+  train.stops.length = 0;
+  G.cycle++;
+  sfx.whoosh(); for (let i = 0; i < 6; i++) sfx.wood(8 - i, 0.2, 0.1 * i);
+}
+function applyPendingSpur() {
+  if (!G.pendingSpur) return;
+  if (train.edge === 'Srs' || train.edge === 'Sbs') return;
+  if (train.edge === 'U1' || train.edge === 'U2a' || train.edge === 'U2b') return;
+  G.spur = G.pendingSpur; G.pendingSpur = null; buildSpur(G.spur); G.spurT = G.t;
+  for (let i = 0; i < 10; i++) at(0.7 + i * 0.12, () => sfx.wood(2 + (i % 6), 0.18));
+}
+
+// ============================================================
+//  言葉なしの誘導
+// ============================================================
+const guide = { pad: null, look: null };
+const input = { last: 0, demoShown: false, demoT: -1, pointers: new Map() };
+function updateGuide() {
+  guide.pad = null; guide.look = null;
+  const redRun = G.redT >= 0 && G.redT < 3.45, blueRun = G.blueT >= 0 && G.blueT < 2.6;
+  if (redRun) { guide.look = G.redT < 1.5 ? [SEE[0], SEE[1], 0.5] : G.redT < 2 ? [WM[0], WM[1], WM[2]] : [BR0 + 0.8, UP_Y, UP_Z + 0.5]; return; }
+  if (blueRun) { guide.look = G.blueT < 1 ? [BUCKET[0], BUCKET[1], 1.5] : [0, UP_Y, liftZ()]; return; }
+  if (G.pendingSpur || G.custHappyT >= 0 && G.t - G.custHappyT < 2.4) { const c = G.custId ? custPos() : [0, 0]; guide.look = [c[0], c[1], 1]; return; }
+  if (!G.redDone && !G.blueDone) {
+    let first = 'red';
+    if (G.memory.length) first = G.memory[G.memory.length - 1].order[0] === 'red' ? 'blue' : 'red';
+    guide.pad = first === 'red' ? RED_PAD : BLUE_PAD;
+  } else if (!G.redDone) guide.pad = RED_PAD;
+  else if (!G.blueDone) guide.pad = BLUE_PAD;
+  else if (G.connected && !G.cake && !G.delivered) guide.pad = ST_PAD;
+  else if (G.cake) { const c = G.spur && G.spurT >= 0 ? G.spur.midPt : LOW_ST; guide.look = [c[0], c[1], 0.5]; }
+  if (guide.pad) guide.look = guide.pad;
+  if (G.peekGapT >= 0 && G.t - G.peekGapT < 2) guide.look = [LF0, UP_Y, 0.8];
+}
+function drawHand() {
+  if (input.demoT < 0) return;
+  const t = G.t - input.demoT;
+  if (t > 2.2) { input.demoT = -1; return; }
+  const c = P(train.x, train.y, train.z + 0.6);
+  const k = easeOut(clamp(t / 0.7, 0, 1));
+  const press = t > 0.7 && t < 1.1 ? Math.sin((t - 0.7) / 0.4 * PI) : 0;
+  const s = Math.max(30, cam.scale * 1.1);
+  const x = c[0] + (1 - k) * s * 2.2 + s * 0.25, y = c[1] + (1 - k) * s * 2.6 + s * 0.35 + press * s * 0.15;
+  ctx.globalAlpha = t > 1.6 ? clamp(1 - (t - 1.6) / 0.6, 0, 1) : clamp(t / 0.25, 0, 1);
+  ctx.fillStyle = '#ffe1c4'; ctx.strokeStyle = '#c98d5f'; ctx.lineWidth = Math.max(2, s * 0.05);
+  // 人差し指
+  ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x - s * 0.13, y - s * 0.35, s * 0.26, s * 0.6, s * 0.13) : ctx.rect(x - s * 0.13, y - s * 0.35, s * 0.26, s * 0.6); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.ellipse(x + s * 0.12, y + s * 0.42, s * 0.36, s * 0.32, 0, 0, TAU); ctx.fill(); ctx.stroke();
+  if (press > 0.5) { ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, y - s * 0.38, s * 0.3 * press, 0, TAU); ctx.stroke(); }
+  ctx.globalAlpha = 1;
+  if (t > 0.75 && train.demoPress < input.demoT) train.demoPress = G.t;
+}
+
+// ============================================================
+//  画角（角度は固定、範囲だけ広げる）
+// ============================================================
+let dprCap = 2;
+let W = 0, H = 0, DPR = 1, SAFE = { t: 0, r: 0, b: 0, l: 0 }, portrait = false;
+const CORE = [[-5, -3, 0], [5, 3, 0], [5, -3, 0], [-5, 3, 0], [-6.4, 0.5, 2.3], [-6.8, -4.3, 4.4], [-6.75, -5.7, 0], [BR0 + 0.6, UP_Y, UP_Z + 1.8],
+  [LF1, UP_Y - 0.7, 4.3], [LF0, UP_Y - 0.7, 4.3], [2.6, -4, 2.3], [ST1, UP_Y + 1.3, 2.4], [TT[0] + 0.7, TT[1], 2], [5.9, -4.5, 1.3], [LOW_ST[0] + 1.4, 4.3, 0], [LOW_ST[0] - 1.4, 4.3, 1.9], [-2.4, 4.7, 0], [6.4, 1.2, 0]];
+const FULL = CORE.concat([[WHEEL[0], WHEEL[1], WHEEL[2] + 2.3], [WHEEL[0] - 2, WHEEL[1], 0], [WHEEL[0] + 2.5, WHEEL[1], WHEEL[2]], [WHEEL[0] + 1.5, WHEEL[1], WHEEL[2] + 2.0], [WHEEL[0] - 1.5, WHEEL[1] + 0.6, WHEEL[2] + 2.2], [10.4, -6.9, 0.6], [4.6, -10.2, 1.8],
+  [9.2, -6, 0], [-4.7, 5.8, 1.8], [-5.4, 5.7, 0], [8.8, -1.1, 1.8], [8.8, -0.5, 0], [-1.6, 5.2, 0], [7.2, 1.2, 0], [8.4, -4.5, 2]]);
+const MIN_SC = 36;
+const follow = { on: false, u0: 0, u1: 0, v0: 0, v1: 0 };
+function fitCamera(animate) {
+  const pts = (G.connected || G.cycle > 1 || G.wide) ? FULL : CORE;
+  if (pts === FULL) G.wide = true;
+  let u0 = 1e9, u1 = -1e9, v0 = 1e9, v1 = -1e9;
+  for (const p of pts) { const u = pu(p[0], p[1]), v = pv(p[0], p[1], p[2]); u0 = Math.min(u0, u); u1 = Math.max(u1, u); v0 = Math.min(v0, v); v1 = Math.max(v1, v); }
+  const m = 8, aw = W - SAFE.l - SAFE.r - m * 2, ah = H - SAFE.t - SAFE.b - m * 2;
+  let sc = Math.min(aw / (u1 - u0), ah / (v1 - v0));
+  follow.on = false;
+  if (sc < MIN_SC) { // 縦長の小さな画面：大きく見せて、動きに合わせて横に追う
+    sc = Math.min(MIN_SC, ah / (v1 - v0) * 1.25);
+    follow.on = true; follow.u0 = u0; follow.u1 = u1; follow.v0 = v0; follow.v1 = v1; follow.aw = aw; follow.ah = ah;
+  }
+  cam.ox = SAFE.l + m + aw / 2; cam.oy = SAFE.t + m + ah / 2;
+  let tcx = (u0 + u1) / 2, tcy = (v0 + v1) / 2;
+  if (follow.on) { const f = followTarget(sc); tcx = f[0]; tcy = f[1]; }
+  if (animate) { cam.fromScale = cam.scale; cam.fromCx = cam.cx; cam.fromCy = cam.cy; cam.tScale = sc; cam.tcx = tcx; cam.tcy = tcy; cam.tw = 0; cam.twDur = 3.2; }
+  else { cam.scale = cam.tScale = sc; cam.cx = cam.tcx = tcx; cam.cy = cam.tcy = tcy; cam.tw = 1; }
+}
+function followTarget(sc) {
+  let fu = -0.1, fv = pv(0, -1, 0.5);
+  if (G.firstJump || G.wide) {
+    const tu = pu(train.x, train.y), tv = pv(train.x, train.y, train.z);
+    const g = guide.look || guide.pad;
+    const gu = g ? pu(g[0], g[1]) : tu, gv = g ? pv(g[0], g[1], g[2] || 0) : tv;
+    fu = tu * 0.5 + gu * 0.5; fv = tv * 0.5 + gv * 0.5;
+  }
+  const hw = follow.aw / 2 / sc, hh = follow.ah / 2 / sc;
+  const cu = follow.u1 - follow.u0 > hw * 2 ? clamp(fu, follow.u0 + hw, follow.u1 - hw) : (follow.u0 + follow.u1) / 2;
+  const cvv = follow.v1 - follow.v0 > hh * 2 ? clamp(fv, follow.v0 + hh, follow.v1 - hh) : (follow.v0 + follow.v1) / 2;
+  return [cu, cvv];
+}
+function updCamera(dt) {
+  if (follow.on) {
+    const f = followTarget(cam.tScale);
+    cam.tcx += (f[0] - cam.tcx) * Math.min(1, dt * 1.2); cam.tcy += (f[1] - cam.tcy) * Math.min(1, dt * 1.2);
+    if (cam.tw >= 1) { cam.cx = cam.tcx; cam.cy = cam.tcy; }
+  }
+  if (cam.tw < 1) {
+    cam.tw = Math.min(1, cam.tw + dt / cam.twDur);
+    const k = ease(cam.tw);
+    cam.scale = lerp(cam.fromScale, cam.tScale, k); cam.cx = lerp(cam.fromCx, cam.tcx, k); cam.cy = lerp(cam.fromCy, cam.tcy, k);
+  }
+}
+function resize() {
+  W = window.innerWidth; H = window.innerHeight;
+  DPR = Math.min(dprCap, window.devicePixelRatio || 1);
+  cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+  cv.style.width = W + 'px'; cv.style.height = H + 'px';
+  const cs = getComputedStyle(saEl);
+  SAFE = { t: parseFloat(cs.paddingTop) || 0, r: parseFloat(cs.paddingRight) || 0, b: parseFloat(cs.paddingBottom) || 0, l: parseFloat(cs.paddingLeft) || 0 };
+  portrait = W / H < 0.9;
+  if (portrait) setYaw(45, 50); else setYaw(45, 38);
+  fitCamera(false);
+}
+
+// ============================================================
+//  更新
+// ============================================================
+G.redStart = -1; G.blueStart = -1; G.peekGapT = -1; G.tunnelPass = -1; G.cartDir = 0; G.custId = null; G.pendingSpur = null; G.wide = false;
+function update(dt) {
+  G.t += dt;
+  G.redT = G.redStart >= 0 ? G.t - G.redStart : -1;
+  G.blueT = G.blueStart >= 0 ? G.t - G.blueStart : -1;
+  if (G.rebuildRed >= 0 && G.t - G.rebuildRed > 1.5) G.rebuildRed = -1;
+  if (G.rebuildBlue >= 0 && G.t - G.rebuildBlue > 1.5) G.rebuildBlue = -1;
+  runEvents();
+  applyPendingSpur();
+  // 橋・昇降機（到達状態は周の間保持）
+  if (G.redT >= 0) G.bridgeLow = Math.max(G.bridgeLow, ease((G.redT - 1.9) / 1.55));
+  else G.bridgeLow = Math.max(0, G.bridgeLow - dt / 1.6);
+  if (G.blueT >= 0) G.liftUp = Math.max(G.liftUp, ease((G.blueT - 1.15) / 1.4));
+  else G.liftUp = Math.max(0, G.liftUp - dt / 1.6);
+  // 風車
+  const wTarget = G.redT >= 1.5 ? (G.redT < 3.5 ? 4 : 1.6) : 0;
+  G.windV += (wTarget - G.windV) * Math.min(1, dt * (wTarget > G.windV ? 3 : 0.6));
+  G.windAng += G.windV * dt;
+  if (G.tt) G.ttAng += dt * 1.4;
+  // 遊園地
+  G.parkOpen = G.connected ? Math.min(1, G.parkOpen + dt / 2.2) : Math.max(0, G.parkOpen - dt / 2);
+  G.wheelBoost = Math.max(0, G.wheelBoost - dt * 0.8);
+  const wv = (G.connected ? 0.35 : 0) + G.wheelBoost;
+  G.wheelV += (wv - G.wheelV) * Math.min(1, dt * 1.5);
+  G.wheelAng += G.wheelV * dt; G.cupsAng += G.wheelV * 2.2 * dt;
+  // 荷車
+  if (G.cartDir > 0) G.cartGo = Math.min(1, G.cartGo + dt / 1.0);
+  else if (G.cartDir < 0) { G.cartGo = Math.max(0, G.cartGo - dt / 1.2); if (G.cartGo === 0) G.cartDir = 0; }
+  updateTrain(dt);
+  updateGuide();
+  updCamera(dt);
+  updParts(dt);
+  // 鼻歌
+  if (humming() && (G.t % 2.6) < dt * 1.01) {
+    const p = ap(frameFrom(train.tx, train.ty, train.tz), -0.3, 0, 1.4);
+    spawn('note', train.x + p[0], train.y + p[1], train.z + p[2], 0.1, -0.3, 0.8, 1.3);
+    sfx.hum();
+  }
+  // お手本（約4秒操作なしで1回だけ）
+  if (!input.demoShown && G.t - input.last > 4 && train.jumpT < 0 && input.demoT < 0) { input.demoShown = true; input.demoT = G.t; }
+}
+
+// ============================================================
+//  描画
+// ============================================================
+function render() {
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.fillStyle = '#4a2e1c'; ctx.fillRect(0, 0, W, H);
+  groundLayer();
+  // 高架
+  elevated(E.U1, 1.0, U1_BR[0]);
+  elevated(E.U1, nearestS(E.U1, ST0, UP_Y), E.U1.len);
+  elevated(E.U2a, 0, E.U2a.len);
+  elevated(E.U2b, 0, E.U2b.len, G.parkOpen > 0.5 || G.tt ? COL.woodL : COL.wood);
+  drawSpur();
+  drawRed(); drawBlue(); drawUpper(); drawPark(); drawLowerStation(); drawHouses();
+  // 公園へ向かう客
+  if (G.passengers === 'park' && G.t - G.alightT < 1.0) {
+    const k = clamp((G.t - G.alightT) / 1.0, 0, 1);
+    for (let i = 0; i < 2; i++) person(lerp(train.coachPos.x, WHEEL[0], k), lerp(train.coachPos.y, WHEEL[1], k), lerp(train.coachPos.z, WHEEL[2], k) + Math.sin(k * PI) * 2, 0, { body: i ? COL.orange : COL.purple, hat: i ? COL.orange : COL.purple, bias: 2 });
+  }
+  drawTrain();
+  flush();
+  drawParts();
+  drawHand();
+}
+
+// 地面（机と下段の線路）は画角が止まっている間は焼き込んで使い回す
+const gcv = document.createElement('canvas'), gctx = gcv.getContext('2d');
+let gKey = '';
+function groundLayer() {
+  if (follow.on || cam.tw < 1) { drawGround(); return; }
+  const key = [W, H, DPR, cam.scale.toFixed(3), cam.cx.toFixed(3), cam.cy.toFixed(3), G.parkOpen > 0.5, cam.sp].join();
+  if (key !== gKey) {
+    gKey = key; gcv.width = cv.width; gcv.height = cv.height;
+    const keep = ctx; ctxSwap(gctx); gctx.setTransform(DPR, 0, 0, DPR, 0, 0); gctx.clearRect(0, 0, W, H); drawGround(); ctxSwap(keep);
+  }
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(gcv, 0, 0); ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+// 負荷が高い端末は内部解像度を下げる
+let perfAcc = 0, perfN = 0;
+function perfWatch(dt) {
+  perfAcc += dt; perfN++;
+  if (perfN >= 90) {
+    const avg = perfAcc / perfN; perfAcc = 0; perfN = 0;
+    if (avg > 0.024 && dprCap > 1) { dprCap = Math.max(1, dprCap - 0.5); resize(); }
+  }
+}
+
+// ============================================================
+//  入力（Pointer Events・指一本）
+// ============================================================
+function hitTrain(px, py) {
+  const r = Math.max(46, cam.scale * 1.0);
+  const pts = [[train.x, train.y, train.z + train.jz + 0.6]];
+  if (train.cargoPos) pts.push([train.cargoPos.x, train.cargoPos.y, train.cargoPos.z + 0.5]);
+  if (train.coachPos) pts.push([train.coachPos.x, train.coachPos.y, train.coachPos.z + 0.5]);
+  for (let i = 0; i < pts.length; i++) { const c = P(pts[i][0], pts[i][1], pts[i][2]); if (Math.hypot(c[0] - px, c[1] - py) < (i ? r * 0.8 : r)) return true; }
+  return false;
+}
+const POKE = [['red', [RT[0], RT[1], 1.1]], ['blue', [BT[0], BT[1], 1.1]], ['bucket', [BUCKET[0], BUCKET[1], 1.5]], ['wind', [WM[0], WM[1], WM[2]]]];
+function onDown(e) {
+  e.preventDefault();
+  audioInit();
+  input.pointers.set(e.pointerId, true);
+  input.last = G.t; input.demoShown = false; input.demoT = -1;
+  const px = e.clientX, py = e.clientY;
+  if (hitTrain(px, py)) { requestJump(); return; }
+  for (const k of POKE) { const c = P(k[1][0], k[1][1], k[1][2]); if (Math.hypot(c[0] - px, c[1] - py) < Math.max(36, cam.scale * 1.2)) { pokes[k[0]] = G.t; sfx.tick(); return; } }
+}
+function onUp(e) { input.pointers.delete(e.pointerId); }
+cv.addEventListener('pointerdown', onDown, { passive: false });
+window.addEventListener('pointerup', onUp); window.addEventListener('pointercancel', onUp);
+window.addEventListener('lostpointercapture', onUp);
+for (const ev of ['touchstart', 'touchmove', 'touchend', 'gesturestart', 'gesturechange', 'dblclick', 'contextmenu', 'selectstart'])
+  document.addEventListener(ev, e => { if (e.cancelable) e.preventDefault(); }, { passive: false });
+
+// ============================================================
+//  ループ（rAFのみ・非表示で停止）
+// ============================================================
+let raf = 0, lastT = 0, running = false;
+function frame(now) {
+  raf = 0;
+  if (!running) return;
+  let dt = (now - lastT) / 1000; lastT = now;
+  if (!(dt > 0)) dt = 0; if (dt > 0.05) dt = 0.05;
+  update(dt);
+  render();
+  if (dt > 0 && dt < 0.2) perfWatch(dt);
+  raf = requestAnimationFrame(frame);
+}
+function start() { if (running) return; running = true; lastT = performance.now(); raf = requestAnimationFrame(frame); }
+function stop() { running = false; if (raf) cancelAnimationFrame(raf); raf = 0; }
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { stop(); input.pointers.clear(); if (AC && AC.state === 'running') AC.suspend().catch(() => {}); }
+  else { if (AC && AC.state === 'suspended') AC.resume().catch(() => {}); start(); }
+});
+window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', () => setTimeout(resize, 120));
+resize();
+start();
+// 検証用（ゲームには影響しない）
+window.__pon = { G, train, E, cam, requestJump, startNextCycle, P, guide, parts, input, render,
+  step(dt, n, nr) { for (let i = 0; i < n; i++) update(dt); if (!nr) render(); } };
+})();
+</script>
+</body>
+</html>
