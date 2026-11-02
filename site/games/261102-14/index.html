@@ -1,0 +1,1620 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta name="robots" content="noindex,nofollow">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,minimum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#1d4e89">
+<title>かちん！おきがえロボのびっくり設計図ひろば</title>
+<style>
+html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#1d4e89;overscroll-behavior:none;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}
+body{position:fixed;left:0;top:0;right:0;bottom:0}
+canvas{position:absolute;left:0;top:0;display:block;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+#safe{position:absolute;left:0;top:0;width:0;height:0;visibility:hidden;pointer-events:none;padding-top:env(safe-area-inset-top);padding-right:env(safe-area-inset-right);padding-bottom:env(safe-area-inset-bottom);padding-left:env(safe-area-inset-left)}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="safe"></div>
+<script>
+'use strict';
+(function(){
+// ============================================================
+//  かちん！おきがえロボのびっくり設計図ひろば  (dressup / blueprint)
+// ============================================================
+const cv=document.getElementById('c');
+const ctx=cv.getContext('2d');
+const safeEl=document.getElementById('safe');
+
+let W=0,H=0,DPR=1,U=40,LW=1.5,TS=50,BS=80,IS=50,portrait=true;
+const box={x0:0,y0:0,x1:0,y1:0};
+let T=0,DT=1/60,lastT=0,raf=0,needLayout=true,lastInput=0,started=false;
+const BGC='#1d4e89';
+const WA=a=>'rgba(255,255,255,'+a+')';
+const CA=a=>'rgba(170,230,255,'+a+')';
+const CY='#aae6ff';
+const PI=Math.PI,TAU=PI*2;
+const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+const lerp=(a,b,t)=>a+(b-a)*t;
+const dist=(ax,ay,bx,by)=>Math.hypot(ax-bx,ay-by);
+const ease=t=>{t=clamp(t,0,1);return t*t*(3-2*t);};
+const rnd=(a,b)=>a+Math.random()*(b-a);
+
+// ---------------------------------------------------------- layout table
+// [portrait fx,fy] , [landscape fx,fy]  (fractions of the safe box)
+const LA={
+  robot:[[.5,.8],[.25,.62]],
+  cloud:[[.7,.5],[.33,.13]],
+  wheel:[[.17,.73],[.135,.64]],
+  puddle:[[.5,.54],[.46,.62]],
+  step:[[.5,.475],[.525,.62]],
+  windmill:[[.9,.5],[.49,.1]],
+  bigSpot:[[.16,.6],[.15,.18]],
+  shelf0:[[.77,.875],[.22,.92]],
+  shelf1:[[.92,.875],[.31,.92]],
+  shelf2:[[.86,.76],[.40,.92]],
+  tray0:[[.13,.965],[.05,.3]],
+  tray1:[[.37,.965],[.05,.48]],
+  tray2:[[.63,.965],[.05,.66]],
+  tray3:[[.87,.965],[.05,.84]]
+};
+const RIVER=[[.3,.42],[.57,.69]]; // portrait: y range ; landscape: x range
+const SITES=[
+  {id:'P1',big:0,L:[[.12,.2],[.79,.86]],routes:['near']},
+  {id:'P2',big:0,L:[[.37,.2],[.79,.64]],routes:['near','far']},
+  {id:'P3',big:0,L:[[.62,.2],[.79,.42]],routes:['far','bridge']},
+  {id:'B1',big:0,L:[[.87,.2],[.79,.2]],routes:['bridge']},
+  {id:'C1',big:1,L:[[.18,.075],[.925,.8]],routes:[]},
+  {id:'C2',big:1,L:[[.5,.075],[.925,.5]],routes:[]},
+  {id:'C3',big:1,L:[[.82,.075],[.925,.2]],routes:[]}
+];
+const RT={
+  near:[[['puddle'],['step'],[.3,.435],[.28,.39,1],[.28,.335,1],[.28,.27,1]],
+        [['puddle'],['step'],[.555,.8],[.6,.82,1],[.645,.82,1],[.705,.82,1]]],
+  far:[[['puddle'],['step'],[.6,.435],[.62,.39,1],[.62,.335,1],[.62,.27,1]],
+       [['puddle'],['step'],[.555,.52],[.6,.5,1],[.645,.5,1],[.705,.5,1]]],
+  bridge:[[[.68,.63],[.82,.44],[.82,.36],[.82,.27]],
+          [[.38,.45],[.555,.37],[.63,.37],[.705,.37]]]
+};
+const STONES={near:[[[.28,.39],[.28,.335]],[[.6,.82],[.645,.82]]],far:[[[.62,.39],[.62,.335]],[[.6,.5],[.645,.5]]]};
+const BRIDGE=[[[.82,.43],[.82,.29]],[[.565,.37],[.695,.37]]];
+const POS={};
+function Pf(p){return [box.x0+p[0]*(box.x1-box.x0),box.y0+p[1]*(box.y1-box.y0)];}
+
+// ---------------------------------------------------------- state
+const ITEM_IDS=['boots','umbrella','scarf','helmet','gloves'];
+const items={};
+ITEM_IDS.forEach((id,i)=>{items[id]={id,
+  slots:id==='boots'?['feet','hands']:(id==='umbrella'||id==='helmet')?['head']:id==='scarf'?['neck']:['hands'],
+  home:id==='boots'?'bootsHome':'tray'+(i-1),x:0,y:0,state:'home',slot:null,sq:0,sqv:0,lift:0,wob:0,vx:0,vy:0,
+  pitch:[1,1.19,1.33,0.89,1.12][i]};});
+const worn={head:null,neck:null,hands:null,feet:null};
+const toys=['slide','swing','seesaw','spin'].map((id,i)=>({id,kind:id,where:i<3?'shelf':'none',shelf:i<3?i:-1,site:null,x:0,y:0,sq:0,sqv:0,bt:1,ph:Math.random()*6,wob:0,org:null}));
+const bigs=['ferris','clock'].map((id,i)=>({id,kind:id,where:i===0?'spot':'none',site:null,x:0,y:0,sq:0,sqv:0,bt:1,ph:Math.random()*6,wob:0,ox:0,oy:0,org:null}));
+const R={x:0,y:0,legE:0,legEv:0,jumpH:0,ph:0,walking:0,sq:0,sqv:0,tilt:0,tiltv:0,tiltT:3,blink:0,blinkT:2,
+  expr:'idle',exprT:0,eyeX:0,eyeY:0,lookO:null,morph:0,morphv:0,redraw:0,flash:0,holding:null,act:null,busy:false,
+  stomp:0,umbFlex:0,umbFlexv:0,umbOpen:0,boomX:0,boomY:0,hook:null,swing:0,swingv:0,clap:0,armUp:0,laughT:0};
+const S={built:{near:false,far:false,bridge:false},bt:{near:1,far:1,bridge:1},route:null,
+  rflash:{near:0,far:0,bridge:0},rpulse:{near:0,far:0,bridge:0},ever:{bootsFeet:false},
+  comboJump:false,comboBridge:false,wearTime:{},rainBoost:0,wheelA:0,wheelV:0,millA:0,millV:0,windBoost:0,
+  ropeRun:0,opened:false,openT:0,grand:false,grandT:0,clockTimer:-1,spinTimer:-1,demoDone:false,demo:null,
+  hint:null,fireT:4,wob:{},invite:null,rainAcc:0,windAcc:0,lampFlash:0,dropSound:0};
+let drag=null; // active one-finger drag
+const parts=[];const PMAX=160;
+
+// ---------------------------------------------------------- audio
+const AU={ctx:null,master:null,noise:null};
+function audioStart(){
+  try{
+    if(AU.ctx){ if(AU.ctx.state==='suspended'&&!document.hidden) AU.ctx.resume().catch(()=>{}); return; }
+    const AC=window.AudioContext||window.webkitAudioContext; if(!AC) return;
+    const c=new AC(); AU.ctx=c;
+    AU.master=c.createGain(); AU.master.gain.value=0.6;
+    const comp=c.createDynamicsCompressor(); AU.master.connect(comp); comp.connect(c.destination);
+    const len=Math.floor(c.sampleRate*0.8); const b=c.createBuffer(1,len,c.sampleRate); const d=b.getChannelData(0);
+    for(let i=0;i<len;i++) d[i]=Math.random()*2-1; AU.noise=b;
+    // unlock with silent buffer
+    const s=c.createBufferSource(); s.buffer=c.createBuffer(1,1,22050); s.connect(c.destination); s.start(0);
+    if(c.state==='suspended') c.resume().catch(()=>{});
+  }catch(e){ AU.ctx=null; }
+}
+function tone(f,dur,o){
+  const c=AU.ctx; if(!c||c.state==='closed'||document.hidden) return; o=o||{};
+  try{
+    const t=c.currentTime+(o.delay||0); const os=c.createOscillator(), g=c.createGain();
+    os.type=o.type||'sine'; os.frequency.setValueAtTime(f,t);
+    if(o.to) os.frequency.exponentialRampToValueAtTime(o.to,t+dur);
+    const v=o.vol||0.15; g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(v,t+(o.att||0.006));
+    g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+    os.connect(g); g.connect(AU.master); os.start(t); os.stop(t+dur+0.03);
+  }catch(e){}
+}
+function noise(dur,o){
+  const c=AU.ctx; if(!c||!AU.noise||c.state==='closed'||document.hidden) return; o=o||{};
+  try{
+    const t=c.currentTime+(o.delay||0); const s=c.createBufferSource(); s.buffer=AU.noise;
+    const f=c.createBiquadFilter(); f.type=o.ft||'bandpass'; f.frequency.setValueAtTime(o.f||1000,t);
+    if(o.to) f.frequency.exponentialRampToValueAtTime(o.to,t+dur); f.Q.value=o.q||1;
+    const g=c.createGain(); const v=o.vol||0.1; g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(v,t+(o.att||0.01)); g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+    s.connect(f); f.connect(g); g.connect(AU.master); s.start(t); s.stop(t+dur+0.03);
+  }catch(e){}
+}
+const SFX={
+  touch(p){p=p||1; tone(440*p,0.13,{type:'triangle',vol:0.16,to:620*p}); },
+  tick(sp){ tone(260+Math.min(900,sp*0.9),0.045,{type:'triangle',vol:0.035}); },
+  snap(){ tone(2093,0.07,{type:'triangle',vol:0.22}); tone(3136,0.1,{vol:0.12,delay:0.035}); noise(0.03,{f:5200,q:2,vol:0.18}); },
+  success(){ [523.3,659.3,784,1046.5].forEach((f,i)=>tone(f,0.3,{type:'triangle',vol:0.15,delay:i*0.085})); tone(1568,0.6,{vol:0.07,delay:0.34}); },
+  back(){ tone(620,0.22,{vol:0.1,to:310}); },
+  stomp(l){ tone(150-l*14,0.22,{vol:0.32,to:48}); noise(0.09,{f:380,q:1,vol:0.14}); },
+  drip(){ tone(1300+Math.random()*800,0.05,{vol:0.035,to:880}); },
+  splash(){ noise(0.28,{f:1700,q:0.7,vol:0.16,to:900}); },
+  wind(){ noise(0.7,{f:600,q:0.7,vol:0.1,to:1500,att:0.15}); },
+  creak(){ tone(95,0.4,{type:'sawtooth',vol:0.04,to:72}); },
+  motor(up){ tone(up?160:340,0.65,{type:'square',vol:0.045,to:up?340:160}); },
+  jump(){ tone(280,0.4,{vol:0.18,to:950}); },
+  land(){ tone(210,0.16,{vol:0.24,to:100}); noise(0.06,{f:600,vol:0.08}); },
+  hop(){ tone(500,0.09,{type:'triangle',vol:0.07,to:760}); },
+  grab(){ tone(700,0.07,{type:'square',vol:0.06}); tone(1050,0.08,{type:'square',vol:0.05,delay:0.06}); },
+  nope(){ tone(392,0.12,{vol:0.1,to:349}); tone(330,0.18,{vol:0.09,delay:0.12,to:311}); },
+  boop(){ tone(330,0.1,{type:'triangle',vol:0.1,to:420}); },
+  ripple(){ tone(880,0.06,{vol:0.03,to:700}); },
+  clap(){ noise(0.05,{f:2400,q:1.5,vol:0.2}); noise(0.05,{f:2600,q:1.5,vol:0.16,delay:0.12}); },
+  lamp(){ tone(1568,0.12,{vol:0.08}); tone(2093,0.16,{vol:0.06,delay:0.06}); },
+  route(){ [784,988,1175].forEach((f,i)=>tone(f,0.12,{type:'triangle',vol:0.08,delay:i*0.05})); },
+  chime(){ [1046.5,784,880,523.3].forEach((f,i)=>tone(f,0.7,{vol:0.1,delay:i*0.32})); },
+  fanfare(){ const n=[523.3,659.3,784,1046.5,784,1046.5,1318.5]; n.forEach((f,i)=>{tone(f,0.32,{type:'triangle',vol:0.14,delay:i*0.13}); tone(f/2,0.32,{type:'sine',vol:0.08,delay:i*0.13});}); noise(0.5,{f:3000,q:0.5,vol:0.05,delay:0.9}); },
+  pop(){ noise(0.12,{f:2600,q:0.8,vol:0.08}); tone(1200+Math.random()*800,0.18,{vol:0.05,to:600}); }
+};
+
+// ---------------------------------------------------------- layout
+function readSafe(){
+  const cs=getComputedStyle(safeEl);
+  return {t:parseFloat(cs.paddingTop)||0,r:parseFloat(cs.paddingRight)||0,b:parseFloat(cs.paddingBottom)||0,l:parseFloat(cs.paddingLeft)||0};
+}
+let bgCv=null;
+function layout(){
+  // finish any running action so positions remain consistent
+  if(drag) endDrag(drag.x,drag.y,true);
+  fastForward();
+  W=Math.max(1,window.innerWidth); H=Math.max(1,window.innerHeight);
+  DPR=Math.min(2,window.devicePixelRatio||1);
+  cv.width=Math.round(W*DPR); cv.height=Math.round(H*DPR); cv.style.width=W+'px'; cv.style.height=H+'px';
+  const sf=readSafe();
+  portrait=H>=W;
+  box.x0=sf.l+8; box.x1=W-sf.r-8; box.y0=sf.t+8; box.y1=H-sf.b-8;
+  const bw=box.x1-box.x0, bh=box.y1-box.y0;
+  U=portrait?Math.min(bw/10.4,bh/19):Math.min(bh/11,bw/17);
+  U=Math.max(18,U);
+  LW=Math.max(1.3,U*0.042); TS=U*1.25; BS=U*2.1; IS=U*1.25;
+  for(const k in LA) POS[k]=Pf(LA[k][portrait?0:1]);
+  POS.bootsHome=[POS.robot[0]+1.85*U,POS.robot[1]-0.45*U];
+  SITES.forEach(s=>{const p=Pf(s.L[portrait?0:1]); s.x=p[0]; s.y=p[1];});
+  R.x=POS.robot[0]; R.y=POS.robot[1]; R.jumpH=0;
+  idleBoom(true);
+  snapAll();
+  buildBG();
+  needLayout=false;
+}
+function homeOf(it){const p=POS[it.home]; return {x:p[0],y:p[1]};}
+function shelfPos(i){const p=POS['shelf'+i]; return {x:p[0],y:p[1]};}
+function siteById(id){for(const s of SITES) if(s.id===id) return s; return null;}
+function snapAll(){
+  ITEM_IDS.forEach(id=>{const it=items[id]; const p=itemTarget(it); it.x=p.x; it.y=p.y;});
+  toys.forEach(t=>{const p=toyTarget(t); if(p){t.x=p.x;t.y=p.y;}});
+  bigs.forEach(b=>{const p=bigTarget(b); if(p){b.x=p.x;b.y=p.y;}});
+}
+function buildBG(){
+  bgCv=document.createElement('canvas'); bgCv.width=cv.width; bgCv.height=cv.height;
+  const g=bgCv.getContext('2d'); g.setTransform(DPR,0,0,DPR,0,0);
+  g.fillStyle=BGC; g.fillRect(0,0,W,H);
+  const step=U*0.5;
+  g.lineWidth=1;
+  for(let x=0,i=0;x<=W;x+=step,i++){g.strokeStyle=i%2?'rgba(255,255,255,0.05)':'rgba(255,255,255,0.11)'; g.beginPath(); g.moveTo(x+0.5,0); g.lineTo(x+0.5,H); g.stroke();}
+  for(let y=0,i=0;y<=H;y+=step,i++){g.strokeStyle=i%2?'rgba(255,255,255,0.05)':'rgba(255,255,255,0.11)'; g.beginPath(); g.moveTo(0,y+0.5); g.lineTo(W,y+0.5); g.stroke();}
+  // drawing frame
+  g.strokeStyle='rgba(255,255,255,0.35)'; g.lineWidth=1.2;
+  g.strokeRect(box.x0-4,box.y0-4,box.x1-box.x0+8,box.y1-box.y0+8);
+  g.strokeStyle='rgba(255,255,255,0.18)';
+  g.strokeRect(box.x0,box.y0,box.x1-box.x0,box.y1-box.y0);
+  // corner marks
+  g.strokeStyle='rgba(255,255,255,0.4)';
+  const cm=U*0.4;[[box.x0,box.y0,1,1],[box.x1,box.y0,-1,1],[box.x0,box.y1,1,-1],[box.x1,box.y1,-1,-1]].forEach(c=>{g.beginPath();g.moveTo(c[0]+c[2]*cm,c[1]);g.lineTo(c[0],c[1]);g.lineTo(c[0],c[1]+c[3]*cm);g.stroke();});
+  // river banks hatch + park plan
+  const rv=RIVER[portrait?0:1];
+  g.strokeStyle='rgba(255,255,255,0.13)'; g.lineWidth=1;
+  if(portrait){
+    const yn=Pf([0,rv[1]])[1], yf=Pf([0,rv[0]])[1];
+    for(let x=-U;x<W+U;x+=U*0.28){ g.beginPath(); g.moveTo(x,yn); g.lineTo(x+U*0.2,yn+U*0.2); g.stroke(); g.beginPath(); g.moveTo(x,yf); g.lineTo(x+U*0.2,yf-U*0.2); g.stroke(); }
+  }else{
+    const xn=Pf([rv[0],0])[0], xf=Pf([rv[1],0])[0];
+    for(let y=-U;y<H+U;y+=U*0.28){ g.beginPath(); g.moveTo(xn,y); g.lineTo(xn-U*0.2,y+U*0.2); g.stroke(); g.beginPath(); g.moveTo(xf,y); g.lineTo(xf+U*0.2,y+U*0.2); g.stroke(); }
+  }
+  // title-block-like lines (no text)
+  g.strokeStyle='rgba(255,255,255,0.22)';
+  if(portrait){ const y=Pf([0,.915])[1]; g.setLineDash([U*0.1,U*0.1]); g.beginPath(); g.moveTo(box.x0,y); g.lineTo(box.x1,y); g.stroke(); g.setLineDash([]); }
+  else { const x=Pf([.1,0])[0]; g.setLineDash([U*0.1,U*0.1]); g.beginPath(); g.moveTo(x,box.y0); g.lineTo(x,box.y1); g.stroke(); g.setLineDash([]); }
+}
+
+// ---------------------------------------------------------- draw helpers
+function L(x1,y1,x2,y2){ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();}
+function poly(p,close){ctx.beginPath();ctx.moveTo(p[0],p[1]);for(let i=2;i<p.length;i+=2)ctx.lineTo(p[i],p[i+1]);if(close)ctx.closePath();ctx.stroke();}
+function circ(x,y,r){ctx.beginPath();ctx.arc(x,y,Math.max(0.1,r),0,TAU);ctx.stroke();}
+function arc(x,y,r,a0,a1){ctx.beginPath();ctx.arc(x,y,Math.max(0.1,r),a0,a1);ctx.stroke();}
+function rectS(x,y,w,h){ctx.strokeRect(x,y,w,h);}
+function dash(a,b){ctx.setLineDash([a,b]);}
+function nodash(){ctx.setLineDash([]);}
+function cross(x,y,r){L(x-r,y,x+r,y);L(x,y-r,x,y+r);}
+function dimLine(x1,y1,x2,y2){L(x1,y1,x2,y2);const a=Math.atan2(y2-y1,x2-x1)+PI/4,t=U*0.1,c=Math.cos(a)*t,s=Math.sin(a)*t;L(x1-c,y1-s,x1+c,y1+s);L(x2-c,y2-s,x2+c,y2+s);}
+function hatch(x,y,w,h,gap){ctx.save();ctx.beginPath();ctx.rect(x,y,w,h);ctx.clip();ctx.beginPath();for(let i=-h;i<w;i+=gap){ctx.moveTo(x+i,y+h);ctx.lineTo(x+i+h,y);}ctx.stroke();ctx.restore();}
+function glowOn(k){ctx.shadowColor=CY;ctx.shadowBlur=U*(0.25+0.3*k);}
+function glowOff(){ctx.shadowBlur=0;ctx.shadowColor='transparent';}
+function isInv(key){return S.invite===key;}
+function invK(){return 0.5+0.5*Math.sin(T*5);}
+function invHop(){const p=(T*0.75)%1; return p<0.22?Math.sin(p/0.22*PI)*U*0.22:0;}
+
+// ---------------------------------------------------------- particles
+function addP(p){if(parts.length>=PMAX) parts.shift(); parts.push(p);}
+function sparks(x,y,n,col,spd){for(let i=0;i<n;i++){const a=Math.random()*TAU,v=spd*(0.4+Math.random()*0.8);addP({k:'s',x,y,vx:Math.cos(a)*v,vy:Math.sin(a)*v,life:0.45+Math.random()*0.35,t:0,c:col||0});}}
+function ring(x,y,r,col,life){addP({k:'o',x,y,r:r||U*0.2,vr:U*2.2,life:life||0.5,t:0,c:col||0});}
+
+// ---------------------------------------------------------- robot geometry
+function geo(){
+  const u=U, legLen=(0.5+0.62*R.legE)*u, footH=0.22*u;
+  const hipY=-(footH+legLen), torsoH=1.2*u, topY=hipY-torsoH, headH=1.0*u, headW=1.45*u;
+  const headBot=topY-0.1*u, headTop=headBot-headH;
+  const gx=R.x, gy=R.y-R.jumpH;
+  let rhx=1.12*u, rhy=topY+1.0*u, lhx=-1.12*u, lhy=rhy;
+  if(R.holding){ rhx=1.0*u; rhy=topY+0.1*u; lhx=-0.95*u; lhy=topY+0.55*u; }
+  if(R.armUp>0){ const k=R.armUp; rhx=lerp(rhx,1.0*u,k); rhy=lerp(rhy,topY-0.4*u,k); lhx=lerp(lhx,-1.0*u,k); lhy=lerp(lhy,topY-0.4*u,k); }
+  if(R.clap>0){ const k=Math.sin(R.clap*PI); rhx=lerp(rhx,0.28*u,k); lhx=lerp(lhx,-0.28*u,k); rhy=lerp(rhy,topY+0.55*u,k); lhy=rhy; }
+  return {u,legLen,footH,hipY,torsoH,topY,headH,headW,headBot,headTop,gx,gy,
+    rhl:{x:rhx,y:rhy},lhl:{x:lhx,y:lhy},rh:{x:gx+rhx,y:gy+rhy},lh:{x:gx+lhx,y:gy+lhy}};
+}
+function craneGeo(){
+  const u=U, x=R.x, y=R.y;
+  const tt=y-2.3*u, cabTop=tt-0.75*u;
+  const px=x+0.5*u, py=tt-0.45*u;
+  const cable=0.75*u;
+  const hx=R.boomX+Math.sin(R.swing)*cable, hy=R.boomY+Math.cos(R.swing)*cable;
+  return {x,y,tt,cabTop,px,py,cable,hx,hy};
+}
+function idleBoom(snap){
+  const cg={px:R.x+0.5*U,py:R.y-2.75*U};
+  const tx=cg.px+(portrait?0.9:2.3)*U, ty=cg.py-(portrait?2.2:1.0)*U;
+  if(snap){R.boomX=tx;R.boomY=ty;}
+  return {x:tx,y:ty};
+}
+function isCrane(){return worn.hands==='boots';}
+function slotPoints(slot){
+  if(isCrane()&&R.morph>0.5){
+    const c=craneGeo();
+    if(slot==='hands') return [{x:c.hx,y:c.hy}];
+    if(slot==='head') return [{x:c.x,y:c.cabTop-1.0*U}];
+    if(slot==='neck') return [{x:c.x,y:c.cabTop}];
+    if(slot==='feet') return [{x:c.x,y:c.y-0.4*U}];
+  }
+  const g=geo();
+  if(slot==='head') return [{x:g.gx,y:g.gy+g.headTop-0.15*U}];
+  if(slot==='neck') return [{x:g.gx,y:g.gy+g.topY}];
+  if(slot==='hands') return [g.rh,g.lh];
+  if(slot==='feet') return [{x:g.gx,y:g.gy-0.35*U}];
+  return [];
+}
+function wornPos(it){
+  const p=slotPoints(it.slot);
+  if(it.id==='umbrella'&&p[0]) return {x:p[0].x,y:p[0].y-0.85*U};
+  return p[0]||{x:R.x,y:R.y};
+}
+function itemTarget(it){
+  if(it.state==='worn') return wornPos(it);
+  if(it.state==='drag') return {x:it.x,y:it.y};
+  return homeOf(it);
+}
+function heldPos(){const g=geo(); return {x:g.rh.x+0.35*U,y:g.rh.y-0.55*U};}
+function toyTarget(t){
+  if(t.where==='shelf') return shelfPos(t.shelf);
+  if(t.where==='site'){const s=siteById(t.site); return {x:s.x,y:s.y};}
+  if(t.where==='held') return heldPos();
+  if(t.where==='drag') return {x:t.x,y:t.y};
+  return null;
+}
+function hookedPos(){const c=craneGeo(); const r=c.cable+BS*0.48; return {x:R.boomX+Math.sin(R.swing)*r,y:R.boomY+Math.cos(R.swing)*r};}
+function bigTarget(b){
+  if(b.where==='spot') return {x:POS.bigSpot[0],y:POS.bigSpot[1]};
+  if(b.where==='site'){const s=siteById(b.site); return {x:s.x,y:s.y};}
+  if(b.where==='hook') return hookedPos();
+  return null;
+}
+
+// ---------------------------------------------------------- generators (robot actions)
+function* wait(t){while(t>0){t-=DT;yield;}}
+function speed(){return (worn.feet==='boots'?5.2:3.4)*U;}
+function* walkTo(x,y,sp){
+  R.walking=1; let guard=0;
+  while(guard++<2000){
+    const d=dist(R.x,R.y,x,y); if(d<1.5){R.x=x;R.y=y;break;}
+    const st=Math.min(d,(sp||speed())*DT); R.x+=(x-R.x)/d*st; R.y+=(y-R.y)/d*st;
+    const prev=R.ph; R.ph+=DT*(sp||speed())/U*(worn.feet==='boots'?1.7:2.6);
+    if(Math.floor(prev/PI)!==Math.floor(R.ph/PI)) tone(worn.feet==='boots'?110:170,0.05,{vol:0.06});
+    yield;
+  }
+  R.walking=0;
+}
+function* hopTo(x,y,h,dur){
+  const sx=R.x,sy=R.y; let t=0; SFX.hop();
+  while(t<dur){t+=DT; const k=clamp(t/dur,0,1); R.x=lerp(sx,x,k); R.y=lerp(sy,y,k); R.jumpH=Math.sin(k*PI)*h; yield;}
+  R.jumpH=0; R.sqv+=3;
+}
+function routePts(rt){
+  return RT[rt][portrait?0:1].map(p=>{
+    if(typeof p[0]==='string'){const q=POS[p[0]]; return {x:q[0],y:q[1],hop:false,tag:p[0]};}
+    const q=Pf(p); return {x:q[0],y:q[1],hop:!!p[2],tag:''};
+  });
+}
+function splashAt(x,y){ sparks(x,y,8,1,U*3); ring(x,y,U*0.3,1,0.6); SFX.splash(); }
+function* followPts(pts){
+  for(const p of pts){
+    if(p.hop) yield* hopTo(p.x,p.y,0.7*U,0.36); else yield* walkTo(p.x,p.y);
+    if(p.tag==='puddle') splashAt(p.x,p.y);
+  }
+}
+function* goHome(pts){ // reverse of route
+  const rev=pts.slice().reverse();
+  for(let i=1;i<rev.length;i++){ const p=rev[i], prev=rev[i-1];
+    if(prev.hop) yield* hopTo(p.x,p.y,0.7*U,0.36); else yield* walkTo(p.x,p.y);
+    if(p.tag==='puddle') splashAt(p.x,p.y);
+  }
+  yield* walkTo(POS.robot[0],POS.robot[1]);
+}
+function standOf(s){
+  const minY=box.y0+4.2*U;
+  if(portrait) return {x:s.x+(s.x<W/2?1:-1)*0.95*U,y:Math.max(minY,s.y+0.8*U)};
+  return {x:s.x-1.2*U,y:Math.max(minY,s.y+0.45*U)};
+}
+function setExpr(e,t){R.expr=e;R.exprT=t||1.2;}
+function lookAt(x,y,t){R.lookO={x,y,t:t||1};}
+
+function* strideSeq(){
+  R.busy=true; setExpr('proud',3);
+  const pts=routePts('near');
+  yield* walkTo(pts[0].x,pts[0].y); splashAt(pts[0].x,pts[0].y);
+  yield* walkTo(pts[1].x,pts[1].y);
+  // look across the river, can't jump yet
+  const rv=riverMid(); lookAt(rv.x,rv.y,1.2); yield* hopTo(pts[1].x,pts[1].y,0.15*U,0.2);
+  setExpr('hmm',1.2); R.tiltv+=3; yield* wait(0.9);
+  const um=items.umbrella; if(worn.head!=='umbrella'){ lookAt(um.x,um.y,1.4); setHint('item:umbrella',1.8); }
+  yield* wait(0.7);
+  yield* walkTo(pts[0].x,pts[0].y); splashAt(pts[0].x,pts[0].y);
+  yield* walkTo(POS.robot[0],POS.robot[1]);
+  setExpr('proud',1.5);
+  R.busy=false;
+}
+function stonePts(which){return STONES[which][portrait?0:1].map(Pf);}
+function* jumpSeq(which){
+  R.busy=true; setExpr('proud',2);
+  const pts=routePts(which); const already=S.built[which];
+  yield* walkTo(pts[0].x,pts[0].y); splashAt(pts[0].x,pts[0].y);
+  yield* walkTo(pts[1].x,pts[1].y);
+  R.sqv+=7; yield* wait(0.35);
+  SFX.jump(); R.umbOpen=1;
+  const st=stonePts(which)[0]; const sx=R.x,sy=R.y; const dur=1.15, h=clamp(Math.min(sy,st[1])-box.y0-4.7*U,1.1*U,2.6*U); let t=0, built=already;
+  while(t<dur){
+    t+=DT; const k=clamp(t/dur,0,1);
+    R.x=lerp(sx,st[0],k); R.y=lerp(sy,st[1],k); R.jumpH=Math.sin(k*PI)*h*(k>0.5?1-(k-0.5)*0.15:1);
+    if(k>0.45&&!built){ built=true; S.built[which]=true; S.bt[which]=0; SFX.motor(true); }
+    if(Math.random()<0.4) addP({k:'s',x:R.x+rnd(-0.6,0.6)*U,y:R.y-R.jumpH-3.6*U,vx:rnd(-20,20),vy:rnd(10,40),life:0.5,t:0,c:1});
+    yield;
+  }
+  R.jumpH=0; R.umbOpen=0; R.sqv+=9; SFX.land(); sparks(R.x,R.y,14,1,U*4);
+  S.route=which; S.rflash[which]=1.5; SFX.success(); setExpr('wow',1.6); save();
+  yield* wait(0.8);
+  // short hop to the next stone and back to show it holds
+  const st2=stonePts(which)[1]; yield* hopTo(st2[0],st2[1],0.6*U,0.35); yield* wait(0.25);
+  yield* hopTo(st[0],st[1],0.6*U,0.35);
+  yield* hopTo(pts[2].x,pts[2].y,0.7*U,0.4);
+  yield* walkTo(pts[1].x,pts[1].y);
+  yield* walkTo(pts[0].x,pts[0].y); splashAt(pts[0].x,pts[0].y);
+  yield* walkTo(POS.robot[0],POS.robot[1]);
+  setExpr('proud',1.5); R.busy=false;
+}
+function* bridgeSeq(){
+  R.busy=true; const already=S.built.bridge; const wm=POS.windmill;
+  lookAt(wm[0],wm[1],3.5); S.windBoost=1.6; SFX.wind();
+  yield* wait(0.9);
+  if(!already){
+    S.built.bridge=true; S.bt.bridge=0; let c=0;
+    while(S.bt.bridge<1){ S.bt.bridge=Math.min(1,S.bt.bridge+DT/2.3); S.ropeRun+=DT*3; c+=DT; if(c>0.38){c=0;SFX.creak();} yield; }
+    const b=bridgeEnds(); sparks(b[1][0],b[1][1],12,1,U*3); SFX.land();
+  }else{ S.rpulse.bridge=1.2; yield* wait(0.7); }
+  S.route='bridge'; S.rflash.bridge=1.5; SFX.success(); setExpr('wow',1.6); save();
+  yield* wait(0.6); R.busy=false;
+}
+function* deliverSeq(toy,site,from){
+  R.busy=true; const rt=S.route; const pts=routePts(rt); setExpr('proud',2);
+  yield* followPts(pts);
+  if(from){ const fs=siteById(from); const sp=standOf(fs); yield* walkTo(sp.x,sp.y); lookAt(fs.x,fs.y,0.5);
+    yield* wait(0.2); toy.where='held'; toy.site=null; R.holding=toy; SFX.grab(); toy.sqv-=6; yield* wait(0.25); }
+  const sp=standOf(site); yield* walkTo(sp.x,sp.y); lookAt(site.x,site.y,0.8);
+  yield* wait(0.15);
+  placeToy(toy,site);
+  yield* wait(0.6);
+  const last=pts[pts.length-1]; yield* walkTo(last.x,last.y);
+  yield* goHome(pts);
+  R.busy=false; afterPlacement();
+}
+function* fetchSeq(toy,from){
+  R.busy=true; const pts=routePts(S.route);
+  yield* followPts(pts);
+  const fs=siteById(from); const sp=standOf(fs); yield* walkTo(sp.x,sp.y); lookAt(fs.x,fs.y,0.5);
+  yield* wait(0.2); toy.where='held'; toy.site=null; R.holding=toy; SFX.grab(); save();
+  const last=pts[pts.length-1]; yield* walkTo(last.x,last.y);
+  yield* goHome(pts); R.busy=false;
+}
+function placeToy(toy,site){
+  toy.where='site'; toy.site=site.id; toy.bt=0; toy.org=null; if(R.holding===toy) R.holding=null;
+  SFX.snap(); SFX.success(); sparks(site.x,site.y,14,1,U*3.5); ring(site.x,site.y,U*0.4,1,0.7); setExpr('wow',1.4); save();
+}
+function* craneDrop(b,site){
+  R.busy=true; const c0=craneGeo();
+  const tx=site.x, ty=site.y-(c0.cable+BS*0.48);
+  let t=0; const sx=R.boomX, sy=R.boomY;
+  while(t<1){ t+=DT/0.7; const k=ease(t); R.boomX=lerp(sx,tx,k); R.boomY=lerp(sy,ty,k); yield; }
+  SFX.motor(false); yield* wait(0.25);
+  b.where='site'; b.site=site.id; b.bt=0; R.hook=null; b.org=null;
+  SFX.snap(); SFX.success(); sparks(site.x,site.y,18,1,U*4); ring(site.x,site.y,U*0.6,1,0.8); setExpr('wow',1.4); save();
+  yield* wait(0.4);
+  const it=idleBoom(false); const bx=R.boomX, by=R.boomY; t=0;
+  while(t<1){ t+=DT/0.8; const k=ease(t); R.boomX=lerp(bx,it.x,k); R.boomY=lerp(by,it.y,k); yield; }
+  setExpr('careful',3); R.busy=false; afterPlacement();
+}
+function* craneReturn(b){
+  R.busy=true; const o=b.org||{where:'spot'}; const dest=o.where==='site'?siteById(o.site):{x:POS.bigSpot[0],y:POS.bigSpot[1]};
+  const c0=craneGeo(); const tx=dest.x, ty=dest.y-(c0.cable+BS*0.48);
+  let t=0; const sx=R.boomX, sy=R.boomY;
+  while(t<1){ t+=DT/0.6; const k=ease(t); R.boomX=lerp(sx,tx,k); R.boomY=lerp(sy,ty,k); yield; }
+  b.where=o.where; b.site=o.where==='site'?o.site:null; b.org=null; R.hook=null; b.sqv+=5; SFX.back();
+  const it=idleBoom(false); const bx=R.boomX, by=R.boomY; t=0;
+  while(t<1){ t+=DT/0.6; const k=ease(t); R.boomX=lerp(bx,it.x,k); R.boomY=lerp(by,it.y,k); yield; }
+  R.busy=false;
+}
+function startAct(gen){ if(R.act) fastForward(); R.act=gen; R.busy=true; }
+function fastForward(){
+  if(!R.act) return; const keep=DT; DT=0.1; let n=0;
+  try{ while(n++<800){ const r=R.act.next(); if(r.done) break; } }catch(e){}
+  DT=keep; R.act=null; R.busy=false; R.walking=0; R.jumpH=0;
+}
+
+// ---------------------------------------------------------- world helpers
+function riverMid(){const rv=RIVER[portrait?0:1]; return portrait?{x:W/2,y:Pf([0,(rv[0]+rv[1])/2])[1]}:{x:Pf([(rv[0]+rv[1])/2,0])[0],y:H/2};}
+function bridgeEnds(){return BRIDGE[portrait?0:1].map(Pf);}
+function structPos(id){
+  if(id==='bridge'){const b=bridgeEnds(); return {x:(b[0][0]+b[1][0])/2,y:(b[0][1]+b[1][1])/2};}
+  const s=stonePts(id); return {x:(s[0][0]+s[1][0])/2,y:(s[0][1]+s[1][1])/2};
+}
+function siteOccupied(s){
+  for(const t of toys) if(t.where==='site'&&t.site===s.id) return t;
+  for(const b of bigs) if((b.where==='site'&&b.site===s.id)) return b;
+  return null;
+}
+function routeReach(rt){ return SITES.filter(s=>!s.big&&s.routes.includes(rt)); }
+function siteStatus(s,ignoreToy){
+  if(s.big) return 'big';
+  const occ=siteOccupied(s); if(occ&&occ!==ignoreToy) return 'full';
+  if(S.route&&S.built[S.route]&&s.routes.includes(S.route)){
+    if(S.route!=='bridge'&&worn.feet!=='boots') return 'needBoots';
+    return 'ok';
+  }
+  const alt=s.routes.find(r=>S.built[r]); if(alt) return 'inactive:'+alt;
+  return 'none';
+}
+function srcStatus(s){ // can the robot get to a toy sitting at site s
+  if(S.route&&S.built[S.route]&&s.routes.includes(S.route)){
+    if(S.route!=='bridge'&&worn.feet!=='boots') return 'needBoots';
+    return 'ok';
+  }
+  const alt=s.routes.find(r=>S.built[r]); if(alt) return 'inactive:'+alt;
+  return 'none';
+}
+function bestFreeSite(ignore){
+  const ok=SITES.filter(s=>!s.big&&siteStatus(s,ignore)==='ok'); if(ok.length) return ok[0];
+  return null;
+}
+function siteAt(x,y,big){
+  let best=null,bd=(big?1.7:1.15)*U;
+  for(const s of SITES){ if(!!s.big!==!!big) continue; const d=dist(x,y,s.x,s.y); if(d<bd){bd=d;best=s;} }
+  return best;
+}
+function freeShelf(){ for(let i=0;i<3;i++){ if(!toys.some(t=>t.where==='shelf'&&t.shelf===i)) return i; } return -1; }
+function setHint(key,t){ S.hint={key,t:t||2}; const p=keyPos(key); if(p) lookAt(p.x,p.y,t||2); }
+function keyPos(key){
+  if(!key) return null; const i=key.indexOf(':'); const t=key.slice(0,i), id=key.slice(i+1);
+  if(t==='item'){const it=items[id]; return {x:it.x,y:it.y};}
+  if(t==='toy'){for(const o of toys) if(o.id===id) return {x:o.x,y:o.y};}
+  if(t==='big'){for(const o of bigs) if(o.id===id) return {x:o.x,y:o.y};}
+  if(t==='site'){const s=siteById(id); return s?{x:s.x,y:s.y}:null;}
+  if(t==='struct') return structPos(id);
+  return null;
+}
+
+// ---------------------------------------------------------- wearing logic
+function wear(it,slot){
+  const prev=worn[slot];
+  if(prev&&prev!==it.id){ const p=items[prev]; unwear(p); p.state='home'; p.sqv+=4; }
+  worn[slot]=it.id; it.state='worn'; it.slot=slot; it.sqv-=10; it.lift=0;
+  S.wearTime[it.id]=T;
+  SFX.snap(); R.flash=1; R.sqv+=4; R.blink=0.15;
+  const p=wornPos(it); sparks(p.x,p.y,10,1,U*3.2); ring(p.x,p.y,U*0.25,1,0.45);
+  if(it.id==='boots'&&slot==='feet'){
+    S.ever.bootsFeet=true; R.legEv+=6;
+    if(worn.head==='umbrella'&&!S.comboJump){ S.comboJump=true; startAct(jumpSeq('far')); }
+    else startAct(strideSeq());
+  }
+  if(it.id==='umbrella'){
+    setExpr('laugh',1.5); R.umbFlexv+=8;
+    if(worn.feet==='boots'&&!S.comboJump){ S.comboJump=true; startAct(jumpSeq('near')); }
+  }
+  if((it.id==='scarf'||it.id==='helmet')){
+    if(it.id==='helmet'){ S.lampFlash=1; SFX.lamp(); }
+    if(it.id==='scarf'){ S.windBoost=Math.max(S.windBoost,0.8); SFX.wind(); }
+    if(worn.neck==='scarf'&&worn.head==='helmet'&&!S.comboBridge){ S.comboBridge=true; startAct(bridgeSeq()); }
+    else setExpr('happy',1.2);
+  }
+  if(it.id==='gloves'){ R.clap=0.001; SFX.clap(); setExpr('happy',1.4); }
+  if(it.id==='boots'&&slot==='hands'){
+    R.redraw=1; SFX.motor(true); setExpr('careful',4); idleBoom(true);
+  }
+  save();
+}
+function unwear(it){
+  if(it.state!=='worn') return;
+  const slot=it.slot; if(worn[slot]===it.id) worn[slot]=null; it.slot=null;
+  if(it.id==='boots'||it.id==='umbrella') S.comboJump=false;
+  if(it.id==='scarf'||it.id==='helmet') S.comboBridge=false;
+  if(it.id==='boots'&&slot==='hands'){
+    R.redraw=1; SFX.motor(false);
+    if(R.hook){ const b=R.hook; const o=b.org||{where:'spot'}; b.where=o.where; b.site=o.where==='site'?o.site:null; b.org=null; R.hook=null; }
+    setExpr('happy',1.2);
+  }
+  if(it.id==='gloves'&&R.holding){ returnToy(R.holding); R.holding=null; }
+  if(it.id==='boots'&&slot==='feet') R.legEv-=4;
+}
+function sendHome(it){ it.state='home'; it.slot=null; SFX.back(); it.sqv+=3; }
+function returnToy(t){
+  const o=t.org;
+  if(o&&o.where==='site'){ const s=siteById(o.site); if(s&&!siteOccupied(s)){ t.where='site'; t.site=o.site; t.org=null; return; } }
+  let i=(o&&o.where==='shelf')?o.shelf:-1;
+  if(i<0||toys.some(x=>x!==t&&x.where==='shelf'&&x.shelf===i)) i=freeShelf();
+  if(i<0){ const s=SITES.find(s=>!s.big&&!siteOccupied(s)); if(s){t.where='site';t.site=s.id;t.org=null;return;} i=0; }
+  t.where='shelf'; t.shelf=i; t.site=null; t.org=null; t.sqv+=4;
+}
+
+// ---------------------------------------------------------- tap reactions on worn items
+function tapWorn(it){
+  it.sqv+=6;
+  if(it.id==='boots'&&it.slot==='feet'){
+    R.stomp=Math.min(4,R.stomp+1); R.sqv+=3+R.stomp*1.5; R.stompJ=0.001; SFX.stomp(R.stomp); setExpr('proud',1.6);
+    sparks(R.x,R.y,4+R.stomp*2,1,U*(2+R.stomp*0.5));
+  }else if(it.id==='umbrella'){
+    R.umbFlexv+=10; S.rainBoost=Math.min(1,S.rainBoost+0.34); setExpr('laugh',1.8); SFX.drip(); SFX.drip();
+  }else if(it.id==='scarf'){
+    S.windBoost=Math.min(2,S.windBoost+0.7); SFX.wind(); setExpr('happy',1);
+  }else if(it.id==='helmet'){
+    S.lampFlash=1; SFX.lamp(); setExpr('wow',0.8);
+  }else if(it.id==='gloves'){
+    R.clap=0.001; SFX.clap(); setExpr('happy',1);
+  }else if(it.id==='boots'&&it.slot==='hands'){
+    R.swingv+=4; SFX.tick(400);
+  }
+}
+
+// ---------------------------------------------------------- input
+function pt(e){return {x:e.clientX,y:e.clientY};}
+function hitTest(x,y){
+  const hr=Math.max(0.78*U,24);
+  let best=null,bd=1e9;
+  const cand=(type,id,px,py,r)=>{const d=dist(x,y,px,py); if(d<r&&d<bd){bd=d;best={type,id};}};
+  if(R.holding&&!R.busy){const p=heldPos(); cand('held',R.holding.id,p.x,p.y,Math.max(0.8*U,26));}
+  for(const id of ITEM_IDS){ const it=items[id];
+    if(it.state==='worn'){ for(const p of slotPoints(it.slot)){ const q=it.id==='umbrella'?{x:p.x,y:p.y-0.85*U}:p; cand('worn',id,q.x,q.y,hr*(it.id==='umbrella'?1.2:1)); } }
+    else cand('item',id,it.x,it.y,hr);
+  }
+  if(best) return best;
+  for(const t of toys){ if(t.where==='shelf'||t.where==='site') cand('toy',t.id,t.x,t.y,Math.max(0.72*U,24)); }
+  if(best) return best;
+  for(const b of bigs){ if(b.where==='spot'||b.where==='site') cand('big',b.id,b.x,b.y,Math.max(1.05*U,30)); }
+  if(best) return best;
+  for(const id of ['near','far','bridge']){ if(!S.built[id]) continue; const p=structPos(id); cand('struct',id,p.x,p.y,Math.max(1.0*U,30)); }
+  if(best) return best;
+  // robot body
+  if(isCrane()&&R.morph>0.5){ const c=craneGeo(); if(Math.abs(x-c.x)<1.2*U&&y<c.y&&y>c.cabTop-1.2*U) return {type:'robot'}; }
+  else { const g=geo(); if(Math.abs(x-g.gx)<0.95*U&&y<g.gy&&y>g.gy+g.headTop) return {type:'robot'}; }
+  // decor
+  const dec={cloud:POS.cloud,wheel:POS.wheel,windmill:POS.windmill,puddle:POS.puddle};
+  for(const k in dec){ const p=dec[k]; cand('decor',k,p[0],p[1],U*0.9); }
+  if(best) return best;
+  return {type:'bg'};
+}
+function onDown(e){
+  e.preventDefault();
+  audioStart(); lastInput=T; started=true;
+  if(S.demo){ S.demo=null; S.demoDone=true; }
+  const p=pt(e);
+  if(drag){ // extra finger: tiny local response only
+    ring(p.x,p.y,U*0.15,0,0.35); return;
+  }
+  const h=hitTest(p.x,p.y);
+  try{ cv.setPointerCapture(e.pointerId); }catch(er){}
+  if(h.type==='item'){
+    const it=items[h.id]; it.state='drag'; it.sqv-=9; it.lift=0.35*U; it.ox=it.x-p.x; it.oy=it.y-p.y;
+    drag={pid:e.pointerId,type:'item',id:h.id,x:p.x,y:p.y,sx:p.x,sy:p.y,moved:false,lt:0,lx:p.x,ly:p.y};
+    SFX.touch(it.pitch); lookAt(it.x,it.y,1.5); R.blink=0.12; setExpr('curious',1.2);
+  }else if(h.type==='worn'){
+    const it=items[h.id];
+    drag={pid:e.pointerId,type:'worn',id:h.id,x:p.x,y:p.y,sx:p.x,sy:p.y,moved:false,lt:0,lx:p.x,ly:p.y};
+    it.sqv-=5; SFX.touch(it.pitch*1.1);
+  }else if(h.type==='toy'){
+    const t=toys.find(o=>o.id===h.id);
+    t.sqv-=7; SFX.touch(1.5);
+    if(R.busy){ t.wob=1; drag={pid:e.pointerId,type:'none',x:p.x,y:p.y}; return; }
+    if(t.where==='shelf'){ t.org={where:'shelf',shelf:t.shelf}; t.where='drag'; t.ox=t.x-p.x; t.oy=t.y-p.y;
+      drag={pid:e.pointerId,type:'toy',id:t.id,x:p.x,y:p.y,sx:p.x,sy:p.y,moved:false,lt:0,lx:p.x,ly:p.y}; lookAt(t.x,t.y,1.2); }
+    else { drag={pid:e.pointerId,type:'siteToy',id:t.id,x:p.x,y:p.y,sx:p.x,sy:p.y,moved:false,lt:0,lx:p.x,ly:p.y}; lookAt(t.x,t.y,1.2); }
+  }else if(h.type==='held'){
+    drag={pid:e.pointerId,type:'held',id:h.id,x:p.x,y:p.y,sx:p.x,sy:p.y,moved:false,lt:0,lx:p.x,ly:p.y};
+    R.holding.sqv-=6; SFX.touch(1.4);
+  }else if(h.type==='big'){
+    const b=bigs.find(o=>o.id===h.id); b.sqv-=6; SFX.touch(0.7);
+    if(isCrane()&&R.morph>0.9&&!R.busy){
+      b.org=b.where==='site'?{where:'site',site:b.site}:{where:'spot'}; b.where='hook'; b.site=null; R.hook=b; SFX.grab(); SFX.motor(true);
+      drag={pid:e.pointerId,type:'hook',id:b.id,x:p.x,y:p.y,sx:p.x,sy:p.y,moved:false,lt:0,lx:p.x,ly:p.y}; setExpr('careful',5);
+    }else{
+      drag={pid:e.pointerId,type:'heavy',id:b.id,x:p.x,y:p.y,sx:p.x,sy:p.y,moved:false,lt:0,lx:p.x,ly:p.y};
+      if(!R.busy){ R.armUp=0.001; lookAt(b.x,b.y,1.2); }
+    }
+  }else if(h.type==='struct'){
+    if(!R.busy||true){ S.route=h.id; S.rflash[h.id]=1.6; SFX.route(); const sp=structPos(h.id); lookAt(sp.x,sp.y,1.3); sparks(sp.x,sp.y,8,1,U*2); save(); }
+    drag={pid:e.pointerId,type:'none',x:p.x,y:p.y};
+  }else if(h.type==='robot'){
+    R.sqv+=4; R.blink=0.15; R.tiltv+=(Math.random()<0.5?-3:3); SFX.boop(); lookAt(p.x,p.y,0.8);
+    drag={pid:e.pointerId,type:'none',x:p.x,y:p.y};
+  }else if(h.type==='decor'){
+    S.wob[h.id]=1; ring(p.x,p.y,U*0.15,0,0.4); SFX.ripple();
+    drag={pid:e.pointerId,type:'none',x:p.x,y:p.y};
+  }else{
+    ring(p.x,p.y,U*0.12,0,0.35); SFX.ripple();
+    drag={pid:e.pointerId,type:'none',x:p.x,y:p.y};
+  }
+}
+function onMove(e){
+  if(!drag||e.pointerId!==drag.pid) return;
+  e.preventDefault(); lastInput=T;
+  const p=pt(e); const dx=p.x-drag.x, dy=p.y-drag.y; drag.x=p.x; drag.y=p.y;
+  if(!drag.moved&&dist(p.x,p.y,drag.sx,drag.sy)>U*0.3) drag.moved=true;
+  // speed-pitched ticks
+  const now=T; const sp=Math.hypot(dx,dy)/Math.max(DT,0.008);
+  if(drag.type!=='none'&&now-drag.lt>0.09&&Math.hypot(p.x-drag.lx,p.y-drag.ly)>U*0.35){ drag.lt=now; drag.lx=p.x; drag.ly=p.y; SFX.tick(sp*0.4); }
+  if(drag.type==='item'){
+    const it=items[drag.id]; it.x=p.x+it.ox*0.6; it.y=p.y+it.oy*0.6-it.lift; it.vx=lerp(it.vx,dx/Math.max(DT,0.008),0.3); it.vy=lerp(it.vy,dy/Math.max(DT,0.008),0.3);
+    lookAt(it.x,it.y,0.6);
+  }else if(drag.type==='worn'){
+    const it=items[drag.id];
+    if(drag.moved){
+      if(R.busy){ drag.type='none'; it.sqv+=5; return; }
+      const wp=wornPos(it); unwear(it); it.state='drag'; it.x=wp.x; it.y=wp.y; it.ox=0; it.oy=0; it.lift=0.3*U;
+      drag.type='item'; SFX.touch(it.pitch*0.9); lookAt(it.x,it.y,1);
+    }
+  }else if(drag.type==='toy'){
+    const t=toys.find(o=>o.id===drag.id); t.x=p.x+t.ox*0.6; t.y=p.y+t.oy*0.6-0.3*U;
+    lookAt(t.x,t.y,0.6);
+    if(worn.hands==='gloves'&&R.morph<0.1&&!R.busy&&!R.holding){
+      const g=geo(); if(dist(t.x,t.y,g.rh.x,g.rh.y)<1.1*U||dist(t.x,t.y,g.lh.x,g.lh.y)<1.1*U){
+        t.where='held'; R.holding=t; SFX.grab(); t.sqv-=8; R.sqv+=2; setExpr('happy',1.2); drag.type='held';
+      }
+    }
+  }else if(drag.type==='held'){
+    lookAt(p.x,p.y,0.5);
+  }else if(drag.type==='hook'){
+    lookAt(p.x,p.y,0.5);
+  }else if(drag.type==='heavy'){
+    const b=bigs.find(o=>o.id===drag.id); const ddx=p.x-drag.sx, ddy=p.y-drag.sy; const d=Math.hypot(ddx,ddy)||1; const m=Math.min(d*0.18,0.45*U);
+    b.ox=ddx/d*m; b.oy=ddy/d*m;
+  }else if(drag.type==='siteToy'){
+    // ghost follows finger
+  }
+}
+function onUp(e){
+  if(!drag||e.pointerId!==drag.pid) return;
+  e.preventDefault();
+  const p=pt(e); endDrag(p.x,p.y,e.type==='pointercancel');
+}
+function endDrag(x,y,cancel){
+  const d=drag; drag=null; if(!d) return;
+  if(d.type==='item'){
+    const it=items[d.id];
+    if(cancel){ sendHome(it); return; }
+    dropItem(it,it.x,it.y+it.lift*0.5);
+  }else if(d.type==='worn'){
+    if(!cancel) tapWorn(items[d.id]);
+  }else if(d.type==='toy'){
+    const t=toys.find(o=>o.id===d.id);
+    if(cancel){ returnToy(t); return; }
+    dropToy(t,x,y);
+  }else if(d.type==='held'){
+    if(cancel) return;
+    dropHeld(R.holding,x,y,d.moved);
+  }else if(d.type==='siteToy'){
+    const t=toys.find(o=>o.id===d.id);
+    if(cancel||!d.moved){ t.wob=1; if(!d.moved) t.sqv-=4; return; }
+    dropSiteToy(t,x,y);
+  }else if(d.type==='hook'){
+    const b=R.hook; if(!b) return;
+    const s=cancel?null:siteAt(x,y,true);
+    if(s&&!siteOccupied(s)){ startAct(craneDrop(b,s)); }
+    else { if(!cancel){ SFX.nope(); const fs=SITES.find(q=>q.big&&!siteOccupied(q)); if(fs) setHint('site:'+fs.id,1.8);} startAct(craneReturn(b)); }
+  }else if(d.type==='heavy'){
+    const b=bigs.find(o=>o.id===d.id); b.ox=0; b.oy=0; b.sqv+=6; R.armUp=0;
+    if(!cancel&&!R.busy){ SFX.nope(); setExpr('hmm',1.4); R.tiltv+=3; if(!isCrane()) setHint('item:boots',2.2); }
+  }
+}
+function dropItem(it,x,y){
+  if(R.busy){ sendHome(it); lookAt(it.x,it.y,0.8); return; }
+  let best=null,bd=1.45*U;
+  for(const s of it.slots){ for(const p of slotPoints(s)){ const q=(it.id==='umbrella'&&s==='head')?{x:p.x,y:p.y-0.4*U}:p; const d=dist(x,y,q.x,q.y); if(d<bd){bd=d;best=s;} } }
+  if(best) wear(it,best); else sendHome(it);
+}
+function canCarry(){ return worn.hands==='gloves'&&R.morph<0.1&&!R.busy; }
+function dropToy(t,x,y){
+  if(!canCarry()||R.holding){
+    returnToy(t); SFX.back();
+    if(!R.busy&&worn.hands!=='gloves'){ setHint('item:gloves',2.2); setExpr('hmm',1.2); }
+    return;
+  }
+  const s=siteAt(x,y,false);
+  if(s){ t.where='held'; R.holding=t; SFX.grab(); tryDeliver(t,s,null); return; }
+  const g=geo();
+  if(dist(x,y,g.rh.x,g.rh.y)<1.6*U||dist(x,y,g.lh.x,g.lh.y)<1.6*U||dist(x,y,g.gx,g.gy-2*U)<1.6*U){ t.where='held'; R.holding=t; SFX.grab(); setExpr('happy',1.2); return; }
+  returnToy(t); SFX.back();
+}
+function dropHeld(t,x,y,moved){
+  if(!t) return;
+  if(!moved){ t.sqv-=4; return; }
+  const s=siteAt(x,y,false);
+  if(s){ tryDeliver(t,s,null); return; }
+  // back to a shelf?
+  for(let i=0;i<3;i++){ const sp=shelfPos(i); if(dist(x,y,sp.x,sp.y)<0.9*U&&!toys.some(o=>o.where==='shelf'&&o.shelf===i)){ R.holding=null; t.where='shelf'; t.shelf=i; t.org=null; SFX.back(); return; } }
+  // stays in hand; robot looks at a place it can reach
+  hintFail(bestFreeSite(t)?'none':'none',null,t);
+}
+function tryDeliver(t,s,from){
+  const st=siteStatus(s,t);
+  if(st==='ok'){ t.org=t.org||null; startAct(deliverSeq(t,s,from)); return true; }
+  hintFail(st,s,t); return false;
+}
+function hintFail(st,s,t){
+  SFX.nope(); setExpr('hmm',1.4); R.tiltv+=3; R.sqv+=2;
+  if(st==='needBoots'){ setHint('item:boots',2.4); return; }
+  if(st&&st.indexOf('inactive:')===0){ const r=st.split(':')[1]; S.rpulse[r]=2.2; setHint('struct:'+r,2.4); return; }
+  const f=bestFreeSite(t); if(f){ setHint('site:'+f.id,2.4); return; }
+  // no reachable free site with current path
+  const alt=SITES.find(q=>!q.big&&!siteOccupied(q)&&q.routes.some(r=>S.built[r]));
+  if(alt){ const r=alt.routes.find(r=>S.built[r]); if(r!==S.route){ S.rpulse[r]=2.2; setHint('struct:'+r,2.4); return; } if(worn.feet!=='boots'){ setHint('item:boots',2.4); return; } }
+}
+function dropSiteToy(t,x,y){
+  if(!canCarry()||R.holding){ t.wob=1; SFX.nope(); if(!R.busy&&worn.hands!=='gloves') setHint('item:gloves',2.2); return; }
+  const from=siteById(t.site); const ss=srcStatus(from);
+  if(ss!=='ok'){ t.wob=1; hintFail(ss,from,t); return; }
+  const g=geo();
+  if(dist(x,y,g.rh.x,g.rh.y)<1.6*U||dist(x,y,g.gx,g.gy-2*U)<1.8*U){ t.org={where:'site',site:t.site}; startAct(fetchSeq(t,t.site)); return; }
+  const s=siteAt(x,y,false);
+  if(s&&s.id!==t.site){ const st=siteStatus(s,t); if(st==='ok'){ t.org={where:'site',site:t.site}; startAct(deliverSeq(t,s,t.site)); return; } t.wob=1; hintFail(st,s,t); return; }
+  t.wob=1;
+}
+
+// ---------------------------------------------------------- progression
+function smallPlaced(){return toys.filter(t=>t.where==='site').length;}
+function afterPlacement(){
+  const ferris=bigs[0], clock=bigs[1];
+  if(ferris.where==='site'&&clock.where==='none'&&S.clockTimer<0) S.clockTimer=rnd(9,20);
+  if(smallPlaced()>=2&&toys[3].where==='none'&&S.spinTimer<0) S.spinTimer=rnd(3,8);
+  if(!S.opened&&ferris.where==='site'&&smallPlaced()>=3){ startOpening(); }
+  else if(S.opened&&!S.grand&&smallPlaced()>=4&&clock.where==='site'&&ferris.where==='site'){ S.grand=true; S.grandT=0.001; SFX.fanfare(); SFX.chime(); save(); }
+  else if(S.opened){ // small parade when rearranging
+    toys.concat(bigs).forEach(o=>{if(o.where==='site') o.sqv-=4;}); SFX.pop();
+  }
+}
+function startOpening(){ S.opened=true; S.openT=0.001; SFX.fanfare(); setExpr('wow',3); save(); }
+function computeInvite(){
+  if(S.hint&&S.hint.t>0) return S.hint.key;
+  if(drag){
+    if(drag.type==='held'||drag.type==='toy'||drag.type==='siteToy'){ const f=bestFreeSite(drag.type==='siteToy'?toys.find(o=>o.id===drag.id):R.holding); return f?'site:'+f.id:null; }
+    if(drag.type==='hook'){ const f=SITES.find(q=>q.big&&!siteOccupied(q)); return f?'site:'+f.id:null; }
+    return null;
+  }
+  if(R.busy) return null;
+  if(R.holding){ const f=bestFreeSite(R.holding); if(f) return 'site:'+f.id; return smallRouteFix(); }
+  const w=worn;
+  if(!S.ever.bootsFeet) return 'item:boots';
+  if(!S.built.near&&!S.built.far){ if(w.feet!=='boots') return 'item:boots'; return 'item:umbrella'; }
+  if(!S.built.bridge){ if(w.neck!=='scarf') return 'item:scarf'; if(w.head!=='helmet') return 'item:helmet'; }
+  const shelfToy=toys.find(t=>t.where==='shelf');
+  const ferris=bigs[0], clock=bigs[1];
+  if(shelfToy&&smallPlaced()<2) return smallInvite(shelfToy);
+  if(ferris.where!=='site'){ if(w.hands!=='boots') return 'item:boots'; return 'big:ferris'; }
+  if(shelfToy&&SITES.some(s=>!s.big&&!siteOccupied(s))) return smallInvite(shelfToy);
+  if(clock.where==='spot'){ if(w.hands!=='boots') return 'item:boots'; return 'big:clock'; }
+  if(!S.built.far){ if(w.feet==='boots'&&w.head!=='umbrella') return 'item:boots'; if(w.head!=='umbrella') return 'item:umbrella'; return 'item:boots'; }
+  if(!S.built.near){ if(w.head==='umbrella'&&w.feet!=='boots') return 'item:umbrella'; if(w.feet!=='boots') return 'item:boots'; return 'item:umbrella'; }
+  return null;
+}
+function smallRouteFix(){
+  if(S.route&&S.route!=='bridge'&&worn.feet!=='boots') return 'item:boots';
+  const alt=SITES.find(q=>!q.big&&!siteOccupied(q)&&q.routes.some(r=>S.built[r]));
+  if(alt){ const r=alt.routes.find(r=>S.built[r]); if(r!==S.route) return 'struct:'+r; }
+  return null;
+}
+function smallInvite(t){
+  if(worn.hands!=='gloves') return 'item:gloves';
+  if(!bestFreeSite(t)){ const f=smallRouteFix(); if(f) return f; }
+  return 'toy:'+t.id;
+}
+
+// ---------------------------------------------------------- save / load
+const SAVE_KEY='gf261102-14-park-v1';
+function save(){
+  try{
+    const d={v:1,b:{near:!!S.built.near,far:!!S.built.far,bridge:!!S.built.bridge},r:S.route,t:{},g:{},o:!!S.opened,gr:!!S.grand,ck:bigs[1].where!=='none'};
+    toys.forEach(t=>{ if(t.where==='site') d.t[t.id]=t.site; });
+    bigs.forEach(b=>{ if(b.where==='site') d.g[b.id]=b.site; else if(b.where==='hook'&&b.org&&b.org.where==='site') d.g[b.id]=b.org.site; });
+    window.localStorage.setItem(SAVE_KEY,JSON.stringify(d));
+  }catch(e){}
+}
+function load(){
+  let d=null;
+  try{ const s=window.localStorage.getItem(SAVE_KEY); if(!s) return; d=JSON.parse(s); }catch(e){ return; }
+  if(!d||typeof d!=='object'||d.v!==1) return;
+  try{
+    const b=d.b&&typeof d.b==='object'?d.b:{};
+    ['near','far','bridge'].forEach(k=>{ S.built[k]=b[k]===true; S.bt[k]=1; });
+    S.route=(typeof d.r==='string'&&S.built[d.r])?d.r:(['bridge','near','far'].find(k=>S.built[k])||null);
+    const used={};
+    if(d.t&&typeof d.t==='object') toys.forEach(t=>{ const sid=d.t[t.id]; const s=typeof sid==='string'?siteById(sid):null;
+      if(s&&!s.big&&!used[s.id]&&s.routes.some(r=>S.built[r])){ used[s.id]=1; t.where='site'; t.site=s.id; t.shelf=-1; } });
+    if(d.g&&typeof d.g==='object') bigs.forEach(o=>{ const sid=d.g[o.id]; const s=typeof sid==='string'?siteById(sid):null;
+      if(s&&s.big&&!used[s.id]){ used[s.id]=1; o.where='site'; o.site=s.id; } });
+    if(bigs[1].where==='none'&&d.ck===true&&bigs[0].where==='site') bigs[1].where='spot';
+    // shelf for the rest
+    let i=0; toys.forEach(t=>{ if(t.where==='site') return; if(t.id==='spin'){ t.where='none'; return; } t.where='shelf'; t.shelf=i++; });
+    if(toys[3].where==='none'&&smallPlaced()>=2) S.spinTimer=rnd(3,8);
+    S.opened=d.o===true&&bigs[0].where==='site'&&smallPlaced()>=3; if(S.opened) S.openT=1;
+    S.grand=d.gr===true&&S.opened; if(S.grand) S.grandT=0;
+    if(bigs[0].where==='site'&&bigs[1].where==='none') S.clockTimer=rnd(9,20);
+    if(S.built.near||S.built.far) S.ever.bootsFeet=true;
+  }catch(e){
+    // corrupted: reset to empty
+    ['near','far','bridge'].forEach(k=>{S.built[k]=false;}); S.route=null; S.opened=false; S.grand=false;
+    toys.forEach((t,i)=>{t.where=i<3?'shelf':'none';t.shelf=i<3?i:-1;t.site=null;});
+    bigs.forEach((o,i)=>{o.where=i===0?'spot':'none';o.site=null;});
+  }
+}
+
+// ---------------------------------------------------------- update
+function springV(o,k,target,stiff,damp,dt){ const kv=k+'v'; let v=o[kv]||0; v+=((target-o[k])*stiff-v*damp)*dt; o[kv]=v; o[k]+=v*dt; }
+function update(dt){
+  // robot actions
+  if(R.act){ let r; try{ r=R.act.next(); }catch(e){ r={done:true}; } if(r.done){ R.act=null; R.busy=false; R.walking=0; R.jumpH=0; } }
+  // robot springs
+  springV(R,'legE',worn.feet==='boots'?1:0,120,11,dt);
+  springV(R,'morph',isCrane()?1:0,40,9,dt); R.morph=clamp(R.morph,0,1.05);
+  springV(R,'sq',0,260,13,dt); R.sq=clamp(R.sq,-0.3,0.3);
+  if(R.tiltT>0){R.tiltT-=dt;}
+  springV(R,'tilt',R.tiltTarget||0,90,8,dt);
+  springV(R,'umbFlex',0,160,6,dt);
+  R.redraw=Math.max(0,R.redraw-dt*0.9); R.flash=Math.max(0,R.flash-dt*2.5);
+  if(R.clap>0){ R.clap+=dt*2.4; if(R.clap>=1){R.clap=0;} if(R.clap>0.45&&R.clap<0.5+dt*2.4&&R.clap>=0.5){} }
+  if(R.armUp>0&&!(drag&&drag.type==='heavy')) R.armUp=Math.max(0,R.armUp-dt*2); else if(drag&&drag.type==='heavy') R.armUp=Math.min(1,R.armUp+dt*4);
+  R.stomp=Math.max(0,R.stomp-dt*0.35);
+  if(R.stompJ>0){ R.stompJ+=dt*3.2; if(R.stompJ>=1) R.stompJ=0; if(!R.busy) R.jumpH=Math.sin(clamp(R.stompJ,0,1)*PI)*U*(0.12+R.stomp*0.09); }
+  // blink
+  R.blinkT-=dt; if(R.blinkT<=0){ R.blink=0.13; R.blinkT=rnd(2,4.5); } R.blink=Math.max(0,R.blink-dt);
+  // expression
+  R.exprT-=dt; if(R.exprT<=0){ R.expr=isCrane()?'careful':(worn.head==='umbrella'&&S.rainBoost>0.3?'laugh':'idle'); R.exprT=0.5; }
+  // idle head tilt (curiosity)
+  if(!R.busy&&!drag){ R.idleTilt=(R.idleTilt||rnd(4,7))-dt; if(R.idleTilt<=0){ R.idleTilt=rnd(5,8); R.tiltTarget=(Math.random()<0.5?-1:1)*0.22; setTimeoutish(()=>{R.tiltTarget=0;},1.1); } }
+  // gaze
+  let lx=null,ly=null;
+  if(R.lookO&&R.lookO.t>0){ R.lookO.t-=dt; lx=R.lookO.x; ly=R.lookO.y; }
+  else { const kp=keyPos(S.invite); if(kp&&((T*0.4)%1)<0.7){lx=kp.x;ly=kp.y;} else { lx=R.x+Math.sin(T*0.7)*3*U; ly=R.y-2*U+Math.cos(T*0.5)*U; } }
+  const hc=isCrane()&&R.morph>0.5?{x:R.x,y:R.y-3.5*U}:{x:R.x,y:R.y-R.jumpH-2.8*U};
+  const ddx=lx-hc.x, ddy=ly-hc.y, dd=Math.hypot(ddx,ddy)||1;
+  R.eyeX=lerp(R.eyeX,ddx/dd,0.25); R.eyeY=lerp(R.eyeY,ddy/dd,0.25);
+  // timers
+  timers(dt);
+  if(S.hint){ S.hint.t-=dt; if(S.hint.t<=0) S.hint=null; }
+  S.invite=computeInvite();
+  // items
+  ITEM_IDS.forEach(id=>{ const it=items[id];
+    if(it.state==='home'){ const h=homeOf(it); it.x=lerp(it.x,h.x,1-Math.exp(-dt*9)); it.y=lerp(it.y,h.y,1-Math.exp(-dt*9)); it.vx*=0.8; it.vy*=0.8; }
+    else if(it.state==='worn'){ const p=wornPos(it); it.x=p.x; it.y=p.y; }
+    else { it.vx*=Math.exp(-dt*6); it.vy*=Math.exp(-dt*6); }
+    springV(it,'sq',0,300,14,dt); it.sq=clamp(it.sq,-0.35,0.35);
+    if(it.state!=='drag') it.lift=Math.max(0,it.lift-dt*U*2);
+  });
+  // toys
+  toys.concat(bigs).forEach(o=>{
+    const p=o.kind==='ferris'||o.kind==='clock'?bigTarget(o):toyTarget(o);
+    if(p&&o.where!=='drag'){ const k=o.where==='held'||o.where==='hook'?1:1-Math.exp(-dt*8); o.x=lerp(o.x,p.x,k); o.y=lerp(o.y,p.y,k); }
+    springV(o,'sq',0,280,12,dt); o.sq=clamp(o.sq,-0.35,0.35);
+    o.wob=Math.max(0,o.wob-dt*2); if(o.bt<1) o.bt=Math.min(1,o.bt+dt*1.4);
+    const sp=o.where==='site'?(S.opened?1:0.45):0.0; o.ph+=dt*sp;
+  });
+  // crane boom
+  if(isCrane()){
+    if(R.hook&&drag&&drag.type==='hook'){ const c=craneGeo(); const tx=drag.x, ty=drag.y-(c.cable+BS*0.48)-0.2*U; const ox=R.boomX; R.boomX=lerp(R.boomX,tx,1-Math.exp(-dt*7)); R.boomY=lerp(R.boomY,ty,1-Math.exp(-dt*7)); R.swingv+=-(R.boomX-ox)/Math.max(dt,0.008)*0.0009; }
+    else if(!R.busy){ const it=idleBoom(false); R.boomX=lerp(R.boomX,it.x,1-Math.exp(-dt*3)); R.boomY=lerp(R.boomY,it.y,1-Math.exp(-dt*3)); }
+  }
+  springV(R,'swing',0,9,1.6,dt); R.swing=clamp(R.swing,-0.7,0.7);
+  // structures
+  ['near','far'].forEach(k=>{ if(S.bt[k]<1) S.bt[k]=Math.min(1,S.bt[k]+dt*1.1); });
+  ['near','far','bridge'].forEach(k=>{ S.rflash[k]=Math.max(0,S.rflash[k]-dt); S.rpulse[k]=Math.max(0,S.rpulse[k]-dt); });
+  // rain
+  const umb=worn.head==='umbrella';
+  S.rainBoost=Math.max(0,S.rainBoost-dt*0.1);
+  S.rainAcc+=dt*(1.6+(umb?2.4+S.rainBoost*9:0));
+  while(S.rainAcc>1){ S.rainAcc-=1; spawnRain(); }
+  S.wheelV*=Math.exp(-dt*0.7); S.wheelA+=S.wheelV*dt;
+  // wind
+  S.windBoost=Math.max(0,S.windBoost-dt*0.35);
+  const scarf=worn.neck==='scarf', helm=worn.head==='helmet';
+  if(scarf){ S.windAcc+=dt*(2.5+(helm?5:0)+S.windBoost*5); while(S.windAcc>1){S.windAcc-=1; spawnWind(helm);} }
+  const millT=(scarf&&helm)?7:scarf?0.9:0.15;
+  S.millV=lerp(S.millV,millT+(S.windBoost*2),1-Math.exp(-dt*1.2)); S.millA+=S.millV*dt;
+  S.lampFlash=Math.max(0,S.lampFlash-dt*1.5);
+  for(const k in S.wob) S.wob[k]=Math.max(0,S.wob[k]-dt*2);
+  // opening
+  if(S.openT>0&&S.openT<1){ S.openT=Math.min(1,S.openT+dt/3.2); if(Math.random()<dt*7) firework(); }
+  if(S.grandT>0){ S.grandT+=dt/3.5; if(Math.random()<dt*9) firework(); if(S.grandT>=1) S.grandT=0; }
+  if(S.opened){ S.fireT-=dt; if(S.fireT<=0){ S.fireT=rnd(5,10); firework(); } }
+  // particles
+  for(let i=parts.length-1;i>=0;i--){ const p=parts[i]; p.t+=dt;
+    if(p.k==='r'){ const k=p.t/p.dur; p.x=lerp(p.sx,p.tx,k); p.y=lerp(p.sy,p.ty,k); if(k>=1){ parts.splice(i,1); rainHit(p); continue; } }
+    else if(p.k==='w'){ if(p.t>=p.dur){ parts.splice(i,1); S.wheelV=Math.min(14,S.wheelV+0.9); continue; } }
+    else if(p.k==='wd'){ p.x+=p.vx*dt; p.y+=p.vy*dt+Math.sin(p.t*7+p.ph)*U*0.6*dt; if(p.t>p.life){parts.splice(i,1);continue;} }
+    else { p.x+=(p.vx||0)*dt; p.y+=(p.vy||0)*dt; if(p.vy!==undefined) p.vy+=U*1.5*dt; if(p.r!==undefined) p.r+=p.vr*dt; if(p.t>p.life){parts.splice(i,1);continue;} }
+  }
+  // gentle idle return of loose gestures
+  if(R.act===null&&!R.busy&&R.walking){R.walking=0;}
+}
+const later=[];
+function setTimeoutish(fn,t){later.push({fn,t});}
+function timers(dt){
+  for(let i=later.length-1;i>=0;i--){ later[i].t-=dt; if(later[i].t<=0){ const f=later[i].fn; later.splice(i,1); f(); } }
+  if(S.clockTimer>0){ S.clockTimer-=dt; if(S.clockTimer<=0){ if(bigs[0].where!=='spot'&&bigs[1].where==='none'){ const c=bigs[1]; c.where='spot'; c.bt=0; c.sqv-=6; SFX.chime(); const p=POS.bigSpot; sparks(p[0],p[1],14,1,U*3); save(); } else S.clockTimer=rnd(4,8); } }
+  if(S.spinTimer>0){ S.spinTimer-=dt; if(S.spinTimer<=0){ const i=freeShelf(); const t=toys[3]; if(i>=0&&t.where==='none'){ t.where='shelf'; t.shelf=i; t.bt=0; const sp=shelfPos(i); t.x=sp.x; t.y=sp.y; SFX.pop(); sparks(sp.x,sp.y,10,1,U*2.5); } else S.spinTimer=rnd(3,6); } }
+  // idle demonstration (once per session)
+  if(!S.demoDone&&!S.demo&&!drag&&!R.busy&&T-lastInput>4&&!S.ever.bootsFeet&&items.boots.state==='home'){ S.demo={t:0}; }
+  if(S.demo){ S.demo.t+=dt; if(S.demo.t>3.2){ S.demo=null; S.demoDone=true; } }
+}
+function spawnRain(){
+  const c=POS.cloud; const sx=c[0]+rnd(-0.75,0.75)*U, sy=c[1]+0.35*U;
+  let tx,ty,kind='ground';
+  const atHome=dist(R.x,R.y,POS.robot[0],POS.robot[1])<0.5*U&&R.morph<0.5;
+  const g=geo();
+  if(atHome&&worn.head==='umbrella'){ const rr=umbR(); tx=g.gx+rnd(-0.85,0.85)*rr; ty=g.gy+g.headTop-0.85*U-rr*0.45+Math.abs(tx-g.gx)/rr*rr*0.4; kind='umb'; }
+  else if(atHome){ tx=g.gx+rnd(-0.6,0.6)*U; ty=g.gy+g.headTop+(worn.head==='helmet'?-0.4*U:0); kind=worn.head==='helmet'?'helm':'head'; }
+  else { tx=c[0]+rnd(-1.2,0.6)*U; ty=c[1]+rnd(2.4,3.2)*U; }
+  const d=dist(sx,sy,tx,ty);
+  addP({k:'r',sx,sy,tx,ty,x:sx,y:sy,t:0,dur:Math.max(0.15,d/(U*7)),kind});
+}
+function umbR(){return 1.05*U*(1+0.25*R.umbOpen)*(1+R.umbFlex*0.12);}
+function rainHit(p){
+  if(p.kind==='umb'){
+    const g=geo(); const rr=umbR(); const wx=POS.wheel[0], wy=POS.wheel[1]-0.55*U;
+    const sx=g.gx-rr*Math.sign(g.gx-wx||1), sy=g.gy+g.headTop-0.85*U+0.1*U;
+    addP({k:'w',p0x:sx,p0y:sy,p1x:(sx+wx)/2,p1y:Math.min(sy,wy)-1.0*U,p2x:wx,p2y:wy,t:0,dur:0.55+Math.random()*0.15});
+    S.dropSound+=1; if(S.dropSound>2){S.dropSound=0; SFX.drip();}
+    if(Math.random()<0.25){ R.laughT=0.5; if(R.expr==='idle') setExpr('laugh',0.8); }
+  }else if(p.kind==='head'){ if(Math.random()<0.3){R.blink=0.12;} addP({k:'o',x:p.x,y:p.y,r:U*0.05,vr:U*0.6,life:0.25,t:0,c:0}); }
+  else if(p.kind==='helm'){ addP({k:'s',x:p.x,y:p.y,vx:rnd(-30,30),vy:-rnd(20,60),life:0.25,t:0,c:1}); }
+  else addP({k:'o',x:p.x,y:p.y,r:U*0.05,vr:U*0.5,life:0.3,t:0,c:0});
+}
+function spawnWind(strong){
+  const pts=slotPoints('neck'); const p=pts[0]; const wm=POS.windmill;
+  const dx=wm[0]-p.x, dy=wm[1]-p.y, d=Math.hypot(dx,dy)||1; const v=U*(strong?3.4:2.0);
+  addP({k:'wd',x:p.x+rnd(-0.3,0.3)*U,y:p.y+rnd(-0.2,0.2)*U,vx:dx/d*v,vy:dy/d*v,life:strong?d/v:d/v*0.45,t:0,ph:Math.random()*6,len:U*rnd(0.35,0.7)});
+}
+function firework(){
+  let x,y;
+  if(portrait){ x=rnd(box.x0+U,box.x1-U); y=rnd(box.y0+0.5*U,Pf([0,.27])[1]); }
+  else { x=rnd(Pf([.72,0])[0],box.x1-U); y=rnd(box.y0+U,box.y1-U); }
+  const n=14; for(let i=0;i<n;i++){ const a=i/n*TAU; addP({k:'s',x,y,vx:Math.cos(a)*U*3.2,vy:Math.sin(a)*U*3.2,life:0.7,t:0,c:i%2}); }
+  ring(x,y,U*0.2,1,0.6); SFX.pop();
+}
+
+// ---------------------------------------------------------- drawing: world
+function drawRiver(){
+  const rv=RIVER[portrait?0:1];
+  ctx.lineWidth=LW; ctx.strokeStyle=WA(0.9);
+  if(portrait){
+    const yf=Pf([0,rv[0]])[1], yn=Pf([0,rv[1]])[1];
+    L(0,yf,W,yf); L(0,yn,W,yn);
+    ctx.strokeStyle=CA(0.55); ctx.lineWidth=LW*0.8; dash(U*0.5,U*0.35);
+    for(let i=1;i<4;i++){ const y=lerp(yf,yn,i/4); ctx.lineDashOffset=-T*U*(0.6+i*0.15); ctx.beginPath(); for(let x=0;x<=W;x+=U*0.5){ const yy=y+Math.sin(x/U*1.3+T*1.5+i)*U*0.06; if(x===0)ctx.moveTo(x,yy); else ctx.lineTo(x,yy);} ctx.stroke(); }
+    nodash(); ctx.lineDashOffset=0;
+  }else{
+    const xn=Pf([rv[0],0])[0], xf=Pf([rv[1],0])[0];
+    L(xn,0,xn,H); L(xf,0,xf,H);
+    ctx.strokeStyle=CA(0.55); ctx.lineWidth=LW*0.8; dash(U*0.5,U*0.35);
+    for(let i=1;i<4;i++){ const x=lerp(xn,xf,i/4); ctx.lineDashOffset=-T*U*(0.6+i*0.15); ctx.beginPath(); for(let y=0;y<=H;y+=U*0.5){ const xx=x+Math.sin(y/U*1.3+T*1.5+i)*U*0.06; if(y===0)ctx.moveTo(xx,y); else ctx.lineTo(xx,y);} ctx.stroke(); }
+    nodash(); ctx.lineDashOffset=0;
+  }
+}
+function drawPuddleStep(){
+  const p=POS.puddle, s=POS.step; const w=S.wob.puddle||0;
+  ctx.strokeStyle=CA(0.75); ctx.lineWidth=LW;
+  ctx.beginPath(); ctx.ellipse(p[0],p[1],0.95*U*(1+w*0.06),0.32*U,0,0,TAU); ctx.stroke();
+  ctx.strokeStyle=CA(0.4); ctx.beginPath(); ctx.ellipse(p[0],p[1],0.6*U,0.18*U*(1+0.2*Math.sin(T*2)),0,0,TAU); ctx.stroke();
+  // step block (section hatch)
+  ctx.strokeStyle=WA(0.85);
+  const bw=1.3*U,bh=0.32*U; rectS(s[0]-bw/2,s[1]-bh/2,bw,bh); ctx.strokeStyle=WA(0.35); hatch(s[0]-bw/2,s[1]-bh/2,bw,bh,U*0.13);
+  ctx.strokeStyle=WA(0.3); dimLine(s[0]+bw/2+0.15*U,s[1]-bh/2,s[0]+bw/2+0.15*U,s[1]+bh/2);
+}
+function drawCloud(){
+  const c=POS.cloud, w=S.wob.cloud||0; const x=c[0]+Math.sin(T*0.8)*U*0.08+Math.sin(T*30)*w*U*0.05, y=c[1];
+  ctx.strokeStyle=WA(0.85); ctx.lineWidth=LW;
+  ctx.beginPath();
+  ctx.moveTo(x-0.9*U,y+0.3*U);
+  ctx.arc(x-0.5*U,y+0.05*U,0.32*U,PI*0.9,PI*1.75);
+  ctx.arc(x+0.05*U,y-0.15*U,0.45*U,PI*1.1,PI*1.95);
+  ctx.arc(x+0.6*U,y+0.08*U,0.3*U,PI*1.3,PI*0.15);
+  ctx.lineTo(x-0.9*U,y+0.3*U); ctx.stroke();
+  ctx.strokeStyle=WA(0.3); dash(U*0.12,U*0.08); L(x-1.1*U,y+0.3*U,x+1.1*U,y+0.3*U); nodash();
+}
+function drawWheel(){
+  const p=POS.wheel, r=0.55*U, a=S.wheelA, w=S.wob.wheel||0; const x=p[0]+Math.sin(T*30)*w*U*0.04, y=p[1];
+  ctx.strokeStyle=WA(0.85); ctx.lineWidth=LW; circ(x,y,r); circ(x,y,0.1*U);
+  ctx.strokeStyle=CA(0.9);
+  for(let i=0;i<8;i++){ const an=a+i*TAU/8, c=Math.cos(an), s=Math.sin(an); L(x+c*0.1*U,y+s*0.1*U,x+c*r,y+s*r); L(x+c*r,y+s*r,x+c*r-s*0.2*U,y+s*r+c*0.2*U); }
+  ctx.strokeStyle=WA(0.7); poly([x-0.7*U,y+0.85*U,x,y,x+0.7*U,y+0.85*U],false); L(x-0.9*U,y+0.85*U,x+0.9*U,y+0.85*U);
+  // trough to collect
+  ctx.strokeStyle=WA(0.45); poly([x-0.35*U,y-r-0.25*U,x-0.25*U,y-r-0.05*U,x+0.25*U,y-r-0.05*U,x+0.35*U,y-r-0.25*U],false);
+  // shaft that stops short (hint: water alone can't reach the bridge)
+  ctx.strokeStyle=WA(0.25); dash(U*0.15,U*0.1); L(x+r+0.1*U,y,x+r+1.0*U,y); nodash();
+  if(S.wheelV>3){ ctx.strokeStyle=CA(0.35); arc(x,y,r+0.2*U,a,a+1.2); arc(x,y,r+0.2*U,a+PI,a+PI+1.2); }
+}
+function drawWindmill(){
+  const p=POS.windmill, w=S.wob.windmill||0; const x=p[0]+Math.sin(T*30)*w*U*0.04, y=p[1];
+  const lit=worn.head==='helmet'?1:0;
+  ctx.lineWidth=LW; ctx.strokeStyle=WA(0.85);
+  poly([x-0.35*U,y+1.1*U,x-0.15*U,y,x+0.15*U,y,x+0.35*U,y+1.1*U],true);
+  ctx.strokeStyle=WA(0.3); hatch(x-0.3*U,y+0.15*U,0.6*U,0.9*U,U*0.15);
+  // reel
+  ctx.strokeStyle=WA(0.8); circ(x,y+0.65*U,0.14*U);
+  ctx.strokeStyle=lit?CY:CA(0.85); if(lit) glowOn(0.2);
+  const bl=0.95*U;
+  for(let i=0;i<4;i++){ const an=S.millA+i*PI/2, c=Math.cos(an), s=Math.sin(an);
+    L(x,y,x+c*bl,y+s*bl);
+    poly([x+c*0.25*U,y+s*0.25*U,x+c*bl-s*0.22*U,y+s*bl+c*0.22*U,x+c*bl,y+s*bl],false);
+  }
+  glowOff(); ctx.strokeStyle=WA(0.9); circ(x,y,0.1*U);
+  ctx.strokeStyle=WA(0.25); dash(U*0.08,U*0.08); circ(x,y,bl); nodash();
+}
+function drawStones(){
+  ['near','far'].forEach(k=>{
+    const st=stonePts(k);
+    if(!S.built[k]){ ctx.strokeStyle=WA(0.13); ctx.lineWidth=1; st.forEach(s=>cross(s[0],s[1],0.18*U)); return; }
+    const bt=S.bt[k];
+    const act=S.route===k; const fl=S.rflash[k], pu=S.rpulse[k];
+    st.forEach((s,i)=>{
+      const kk=clamp(bt*2-i*0.6,0,1); if(kk<=0) return;
+      const w=0.95*U*(portrait?1:0.75), h=0.75*U*(portrait?0.7:1);
+      const e=ease(kk); const ww=w*e, hh=h*e;
+      ctx.lineWidth=LW*(act?1.2:1);
+      ctx.strokeStyle=act?CY:WA(0.6);
+      if(fl>0||pu>0||isInv('struct:'+k)) glowOn(Math.max(fl,pu>0?invK():0,isInv('struct:'+k)?invK():0));
+      rectS(s[0]-ww/2,s[1]-hh/2,ww,hh); glowOff();
+      ctx.strokeStyle=act?CA(0.5):WA(0.25); hatch(s[0]-ww/2,s[1]-hh/2,ww,hh,U*0.14);
+      if(kk<1){ ctx.strokeStyle=CA(0.8); dash(U*0.1,U*0.08); rectS(s[0]-w/2,s[1]-h/2,w,h); nodash(); }
+    });
+    if(act){ ctx.strokeStyle=CA(0.6); ctx.lineWidth=LW*0.8; dash(U*0.12,U*0.12); ctx.lineDashOffset=-T*U*0.6; poly([st[0][0],st[0][1],st[1][0],st[1][1]],false); nodash(); ctx.lineDashOffset=0; }
+  });
+}
+function drawBridge(){
+  const e=bridgeEnds(); const a=e[0], b=e[1]; const t=S.built.bridge?S.bt.bridge:0;
+  const dx=b[0]-a[0], dy=b[1]-a[1]; const len=Math.hypot(dx,dy); const nx=-dy/len, ny=dx/len; const hw=0.42*U;
+  const act=S.route==='bridge'&&S.built.bridge; const fl=S.rflash.bridge, pu=S.rpulse.bridge;
+  ctx.lineWidth=LW;
+  // towers
+  ctx.strokeStyle=WA(0.85);
+  const tower=(p,on)=>{ if(!on) return; rectS(p[0]+nx*hw-0.08*U,p[1]+ny*hw-0.08*U,0.16*U,0.16*U); rectS(p[0]-nx*hw-0.08*U,p[1]-ny*hw-0.08*U,0.16*U,0.16*U); };
+  tower(a,true);
+  // windmill rope
+  const wm=POS.windmill; ctx.strokeStyle=WA(0.55); ctx.lineWidth=LW*0.8; dash(U*0.1,U*0.07); ctx.lineDashOffset=-S.ropeRun*U;
+  L(wm[0],wm[1]+0.65*U,a[0]+nx*hw,a[1]+ny*hw); nodash(); ctx.lineDashOffset=0; ctx.lineWidth=LW;
+  if(t<=0){
+    // folded deck standing on the near bank (dim)
+    ctx.strokeStyle=WA(0.35); dash(U*0.12,U*0.08);
+    const fx=a[0]-dx/len*0.5*U, fy=a[1]-dy/len*0.5*U;
+    rectS(Math.min(a[0],fx)-0.42*U,Math.min(a[1],fy)-0.42*U,Math.abs(a[0]-fx)+0.84*U,Math.abs(a[1]-fy)+0.84*U); nodash();
+    ctx.strokeStyle=WA(0.13); dimLine(a[0]+nx*(hw+0.3*U),a[1]+ny*(hw+0.3*U),b[0]+nx*(hw+0.3*U),b[1]+ny*(hw+0.3*U));
+    return;
+  }
+  const ex=a[0]+dx*ease(t), ey=a[1]+dy*ease(t);
+  if(fl>0||pu>0||isInv('struct:bridge')) glowOn(Math.max(fl,pu>0?invK():0,isInv('struct:bridge')?invK():0));
+  ctx.strokeStyle=act?CY:WA(0.7); ctx.lineWidth=LW*(act?1.2:1);
+  L(a[0]+nx*hw,a[1]+ny*hw,ex+nx*hw,ey+ny*hw); L(a[0]-nx*hw,a[1]-ny*hw,ex-nx*hw,ey-ny*hw);
+  glowOff();
+  ctx.strokeStyle=act?CA(0.55):WA(0.3); ctx.lineWidth=LW*0.8;
+  const n=Math.floor(len*ease(t)/(0.25*U));
+  for(let i=1;i<=n;i++){ const k=i*0.25*U/len; const px=a[0]+dx*k, py=a[1]+dy*k; L(px+nx*hw,py+ny*hw,px-nx*hw,py-ny*hw); }
+  // suspension cables (sagging catenary)
+  ctx.strokeStyle=WA(0.6); ctx.lineWidth=LW*0.8;
+  for(const sd of [1,-1]){ ctx.beginPath(); for(let i=0;i<=12;i++){ const k=i/12*ease(t); const sag=Math.sin(k/Math.max(0.01,ease(t))*PI)*0.25*U; const px=a[0]+dx*k+nx*(hw+0.12*U+sag)*sd, py=a[1]+dy*k+ny*(hw+0.12*U+sag)*sd; if(i===0)ctx.moveTo(px,py); else ctx.lineTo(px,py);} ctx.stroke(); }
+  if(t>=1){ ctx.strokeStyle=WA(0.85); tower(b,true); }
+  if(act){ ctx.strokeStyle=CA(0.7); dash(U*0.12,U*0.12); ctx.lineDashOffset=-T*U*0.6; L(a[0],a[1],b[0],b[1]); nodash(); ctx.lineDashOffset=0; }
+}
+function drawSites(){
+  const carrying=(drag&&(drag.type==='held'||drag.type==='toy'||drag.type==='siteToy'))||R.holding;
+  const hooking=drag&&drag.type==='hook';
+  // paths between placed things (they line up and start to move)
+  const placed=SITES.filter(s=>siteOccupied(s));
+  if(placed.length>1){ ctx.strokeStyle=CA(0.35+0.25*(S.opened?1:0)); ctx.lineWidth=LW*0.8; dash(U*0.1,U*0.14); ctx.lineDashOffset=-T*U*0.4;
+    const so=placed.slice().sort((p,q)=>portrait?p.x-q.x||p.y-q.y:p.y-q.y||p.x-q.x); ctx.beginPath(); so.forEach((s,i)=>{ if(i===0)ctx.moveTo(s.x,s.y+(s.big?0.9*U:0.5*U)); else ctx.lineTo(s.x,s.y+(s.big?0.9*U:0.5*U)); }); ctx.stroke(); nodash(); ctx.lineDashOffset=0; }
+  for(const s of SITES){
+    const occ=siteOccupied(s);
+    const r=s.big?BS*0.5:TS*0.5;
+    let col=WA(0.38), lw=LW*0.9, glow=0;
+    if(!occ){
+      if(carrying&&!s.big){ const st=siteStatus(s,R.holding||null); if(st==='ok'){ col=CA(0.95); lw=LW*1.3; glow=0.4+0.4*invK(); } else col=WA(0.2); }
+      if(hooking&&s.big){ col=CA(0.95); lw=LW*1.3; glow=0.4+0.4*invK(); }
+    }
+    if(isInv('site:'+s.id)){ glow=Math.max(glow,invK()); col=CY; lw=LW*1.4; }
+    if(glow) glowOn(glow);
+    ctx.strokeStyle=col; ctx.lineWidth=lw;
+    dash(U*0.14,U*0.1);
+    if(s.big) circ(s.x,s.y,r); else rectS(s.x-r,s.y-r,2*r,2*r);
+    nodash(); glowOff();
+    ctx.strokeStyle=WA(occ?0.12:0.3); ctx.lineWidth=1;
+    // center line + dimension
+    dash(U*0.18,U*0.06); L(s.x-r-0.15*U,s.y,s.x+r+0.15*U,s.y); L(s.x,s.y-r-0.15*U,s.x,s.y+r+0.15*U); nodash();
+    if(!occ){ ctx.strokeStyle=WA(0.22); dimLine(s.x-r,s.y+r+0.18*U,s.x+r,s.y+r+0.18*U); }
+  }
+  // spot & shelf outlines on near bank
+  ctx.strokeStyle=WA(0.25); ctx.lineWidth=1; dash(U*0.1,U*0.1);
+  const bs=POS.bigSpot; circ(bs[0],bs[1],BS*0.5);
+  for(let i=0;i<3;i++){ const p=shelfPos(i); rectS(p.x-TS*0.5,p.y-TS*0.5,TS,TS); }
+  nodash();
+  ctx.strokeStyle=WA(0.4); const p0=shelfPos(0),p1=shelfPos(1); L(p0.x-TS*0.6,p0.y+TS*0.55,p1.x+TS*0.6,p1.y+TS*0.55);
+}
+function drawOpening(){
+  if(!S.opened) return; const k=ease(S.openT>=1?1:S.openT);
+  const bigsS=SITES.filter(s=>s.big);
+  // bunting between big sites
+  ctx.lineWidth=LW*0.8;
+  for(let i=0;i<bigsS.length-1;i++){
+    const a=bigsS[i], b=bigsS[i+1]; const ay=a.y-BS*0.55, by=b.y-BS*0.55;
+    const n=8; ctx.strokeStyle=WA(0.6); ctx.beginPath();
+    for(let j=0;j<=n*k;j++){ const t=j/n; const x=lerp(a.x,b.x,t), y=lerp(ay,by,t)+Math.sin(t*PI)*0.35*U; if(j===0)ctx.moveTo(x,y); else ctx.lineTo(x,y);} ctx.stroke();
+    ctx.strokeStyle=CA(0.8);
+    for(let j=1;j<n*k;j++){ const t=j/n; const x=lerp(a.x,b.x,t), y=lerp(ay,by,t)+Math.sin(t*PI)*0.35*U; const sw=Math.sin(T*3+j)*0.05*U; poly([x-0.13*U,y,x+0.13*U,y,x+sw,y+0.3*U],true); }
+  }
+  // twinkling lights along park edge
+  const rv=RIVER[portrait?0:1];
+  ctx.strokeStyle=CA(0.8);
+  for(let i=0;i<14*k;i++){ const t=(i+0.5)/14; const on=Math.sin(T*4+i*1.7)>0;
+    let x,y; if(portrait){ x=lerp(box.x0,box.x1,t); y=Pf([0,rv[0]])[1]-0.25*U; } else { x=Pf([rv[1],0])[0]+0.25*U; y=lerp(box.y0,box.y1,t); }
+    circ(x,y,on?0.08*U:0.04*U); }
+}
+
+// ---------------------------------------------------------- drawing: toys
+function drawToy(o,x,y,s,alpha){
+  const ph=o.ph, bt=o.bt;
+  ctx.save(); ctx.globalAlpha*=alpha==null?1:alpha;
+  const wob=o.wob>0?Math.sin(T*40)*o.wob*0.08:0;
+  ctx.translate(x,y+s*0.5); ctx.rotate(wob); ctx.scale(1+o.sq,(1-o.sq)*(0.05+0.95*ease(bt))); ctx.translate(-x,-(y+s*0.5));
+  ctx.lineWidth=LW; ctx.strokeStyle=WA(0.92);
+  const k=o.kind;
+  if(k==='slide'){
+    const l=x-0.38*s,b=y+0.45*s,t=y-0.3*s,r=x+0.45*s;
+    L(l,b,l,t); L(l+0.14*s,b,l+0.14*s,t);
+    for(let i=1;i<5;i++){ const yy=lerp(b,t,i/5); L(l,yy,l+0.14*s,yy); }
+    L(l-0.04*s,t,l+0.22*s,t); L(l-0.04*s,t,l-0.04*s,t-0.15*s); L(l+0.22*s,t,l+0.22*s,t-0.15*s);
+    ctx.strokeStyle=CA(0.95);
+    ctx.beginPath(); ctx.moveTo(l+0.18*s,t); ctx.quadraticCurveTo(x+0.05*s,y+0.35*s,r,b-0.04*s); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(l+0.18*s,t+0.1*s); ctx.quadraticCurveTo(x+0.02*s,y+0.45*s,r-0.05*s,b+0.04*s); ctx.stroke();
+    if(o.where==='site'){ const q=(ph*0.6)%1; const qx=(1-q)*(1-q)*(l+0.18*s)+2*(1-q)*q*(x+0.05*s)+q*q*r, qy=(1-q)*(1-q)*t+2*(1-q)*q*(y+0.35*s)+q*q*(b-0.04*s); circ(qx,qy-0.07*s,0.06*s); }
+    ctx.strokeStyle=WA(0.6); L(l-0.1*s,b,r+0.06*s,b);
+  }else if(k==='swing'){
+    const tp=y-0.38*s,b=y+0.45*s;
+    L(x-0.42*s,tp,x+0.42*s,tp);
+    L(x-0.32*s,tp,x-0.46*s,b); L(x-0.32*s,tp,x-0.18*s,b); L(x+0.32*s,tp,x+0.46*s,b); L(x+0.32*s,tp,x+0.18*s,b);
+    const an=Math.sin(ph*3)*0.55*(o.where==='site'?1:0.1); const len=0.58*s;
+    ctx.strokeStyle=CA(0.95);
+    for(const sd of [-0.12,0.12]){ const ax=x+sd*s; L(ax,tp,ax+Math.sin(an)*len,tp+Math.cos(an)*len); }
+    const sx=x+Math.sin(an)*len, sy=tp+Math.cos(an)*len; ctx.save(); ctx.translate(sx,sy); ctx.rotate(-an); rectS(-0.17*s,0,0.34*s,0.07*s); ctx.restore();
+    ctx.strokeStyle=WA(0.6); L(x-0.52*s,b,x+0.52*s,b);
+  }else if(k==='seesaw'){
+    const b=y+0.42*s; poly([x-0.13*s,b,x,b-0.3*s,x+0.13*s,b],true);
+    const an=Math.sin(ph*2.2)*0.3*(o.where==='site'?1:0.1);
+    ctx.save(); ctx.translate(x,b-0.3*s); ctx.rotate(an); ctx.strokeStyle=CA(0.95);
+    rectS(-0.5*s,-0.05*s,1.0*s,0.07*s); L(-0.36*s,-0.05*s,-0.36*s,-0.22*s); L(0.36*s,-0.05*s,0.36*s,-0.22*s); L(-0.42*s,-0.22*s,-0.3*s,-0.22*s); L(0.3*s,-0.22*s,0.42*s,-0.22*s);
+    ctx.restore(); ctx.strokeStyle=WA(0.6); L(x-0.5*s,b,x+0.5*s,b);
+  }else if(k==='spin'){
+    const b=y+0.3*s; ctx.beginPath(); ctx.ellipse(x,b,0.45*s,0.13*s,0,0,TAU); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(x,b-0.08*s,0.45*s,0.13*s,0,PI,TAU); ctx.stroke(); L(x-0.45*s,b,x-0.45*s,b-0.08*s); L(x+0.45*s,b,x+0.45*s,b-0.08*s);
+    L(x,b-0.08*s,x,y-0.4*s);
+    ctx.strokeStyle=CA(0.95);
+    for(let i=0;i<4;i++){ const an=ph*2.5+i*PI/2; const px=x+Math.cos(an)*0.36*s, py=b-0.08*s+Math.sin(an)*0.1*s; L(px,py,px,py-0.3*s); L(px,py-0.3*s,x,y-0.35*s); }
+  }else if(k==='ferris'){
+    const cx=x, cy=y-0.1*s, r=0.38*s;
+    ctx.strokeStyle=WA(0.92); poly([cx-0.3*s,y+0.48*s,cx,cy,cx+0.3*s,y+0.48*s],false); L(cx-0.4*s,y+0.48*s,cx+0.4*s,y+0.48*s);
+    ctx.strokeStyle=CA(0.95); circ(cx,cy,r); circ(cx,cy,r*0.25); circ(cx,cy,0.04*s);
+    const a0=ph*0.8;
+    for(let i=0;i<8;i++){ const an=a0+i*TAU/8; const px=cx+Math.cos(an)*r, py=cy+Math.sin(an)*r; L(cx+Math.cos(an)*r*0.25,cy+Math.sin(an)*r*0.25,px,py); L(px,py,px,py+0.04*s); rectS(px-0.05*s,py+0.04*s,0.1*s,0.08*s); }
+    ctx.strokeStyle=WA(0.3); dash(s*0.04,s*0.03); circ(cx,cy,r+0.08*s); nodash();
+  }else if(k==='clock'){
+    const cx=x, cy=y-0.15*s, r=0.3*s;
+    ctx.strokeStyle=WA(0.92); poly([cx-0.22*s,cy+r*0.6,cx-0.22*s,y+0.48*s,cx+0.22*s,y+0.48*s,cx+0.22*s,cy+r*0.6],false);
+    poly([cx-0.28*s,cy-r-0.02*s,cx,cy-r-0.22*s,cx+0.28*s,cy-r-0.02*s],false);
+    L(cx-0.35*s,y+0.48*s,cx+0.35*s,y+0.48*s);
+    circ(cx,cy,r); for(let i=0;i<12;i++){ const an=i*TAU/12; L(cx+Math.cos(an)*r*0.8,cy+Math.sin(an)*r*0.8,cx+Math.cos(an)*r*0.92,cy+Math.sin(an)*r*0.92); }
+    ctx.strokeStyle=CA(0.95);
+    const ha=ph*0.4-PI/2, ma=ph*3-PI/2; L(cx,cy,cx+Math.cos(ha)*r*0.5,cy+Math.sin(ha)*r*0.5); L(cx,cy,cx+Math.cos(ma)*r*0.75,cy+Math.sin(ma)*r*0.75);
+    const pa=Math.sin(ph*4)*0.4*(o.where==='site'?1:0.2); const py0=cy+r+0.04*s; L(cx,py0,cx+Math.sin(pa)*0.25*s,py0+Math.cos(pa)*0.25*s); circ(cx+Math.sin(pa)*0.27*s,py0+Math.cos(pa)*0.27*s,0.04*s);
+  }
+  ctx.restore();
+  if(bt<1){ // footprint construction lines
+    ctx.strokeStyle=CA(0.7*(1-bt)); ctx.lineWidth=1; dash(U*0.08,U*0.08); rectS(x-s*0.5,y-s*0.5,s,s); L(x,y-s*0.7,x,y+s*0.6); nodash();
+  }
+}
+function drawToys(){
+  for(const o of toys){ if(o.where==='none'||o.where==='held') continue; if(o.where==='drag') continue;
+    const inv=isInv('toy:'+o.id); const hop=inv?invHop():0; if(inv) glowOn(invK());
+    drawToy(o,o.x,o.y-hop,TS); glowOff(); }
+  for(const o of bigs){ if(o.where==='none'||o.where==='hook') continue;
+    const inv=isInv('big:'+o.id); const hop=inv?invHop():0; if(inv) glowOn(invK());
+    let x=o.x+(o.ox||0), y=o.y+(o.oy||0)-hop;
+    drawToy(o,x,y,BS); glowOff(); }
+}
+
+// ---------------------------------------------------------- drawing: clothes (loose)
+function drawItemLoose(id,x,y,s,col){
+  ctx.strokeStyle=col; ctx.lineWidth=LW;
+  if(id==='boots'){
+    for(const [cx,dir] of [[x-0.2*s,-1],[x+0.2*s,1]]){
+      const bw=0.15*s; const p=v=>cx+dir*v;
+      poly([p(-bw),y-0.42*s,p(bw),y-0.42*s,p(bw),y+0.16*s,p(bw+0.18*s),y+0.22*s,p(bw+0.18*s),y+0.42*s,p(-bw),y+0.42*s],true);
+      L(p(-bw),y-0.3*s,p(bw),y-0.3*s); L(p(-bw),y+0.34*s,p(bw+0.18*s),y+0.34*s);
+    }
+  }else if(id==='umbrella'){
+    const r=0.5*s, cy=y+0.02*s;
+    ctx.beginPath(); ctx.moveTo(x-r,cy); ctx.quadraticCurveTo(x-r,cy-r*0.95,x,cy-r*0.95); ctx.quadraticCurveTo(x+r,cy-r*0.95,x+r,cy); ctx.stroke();
+    for(let i=0;i<4;i++){ const a=x-r+i*r/2; arc(a+r/4,cy,r/4,PI,TAU); }
+    L(x,cy-r*0.95,x,cy-r*1.1); L(x,cy-r*0.95,x-r*0.5,cy); L(x,cy-r*0.95,x+r*0.5,cy);
+    L(x,cy,x,y+0.4*s); arc(x-0.08*s,y+0.4*s,0.08*s,0,PI);
+  }else if(id==='scarf'){
+    ctx.beginPath(); for(let i=0;i<=10;i++){const t=i/10; const xx=x-0.45*s+t*0.9*s, yy=y-0.2*s+Math.sin(t*TAU)*0.05*s; if(i===0)ctx.moveTo(xx,yy); else ctx.lineTo(xx,yy);} ctx.stroke();
+    ctx.beginPath(); for(let i=0;i<=10;i++){const t=i/10; const xx=x-0.45*s+t*0.9*s, yy=y+0.0*s+Math.sin(t*TAU)*0.05*s; if(i===0)ctx.moveTo(xx,yy); else ctx.lineTo(xx,yy);} ctx.stroke();
+    L(x-0.45*s,y-0.2*s,x-0.45*s,y); L(x+0.45*s,y-0.2*s,x+0.45*s,y);
+    poly([x+0.15*s,y,x+0.05*s,y+0.38*s,x+0.25*s,y+0.38*s,x+0.32*s,y],false);
+    for(let i=0;i<3;i++) L(x+0.08*s+i*0.07*s,y+0.38*s,x+0.08*s+i*0.07*s,y+0.46*s);
+    ctx.globalAlpha*=0.5; for(let i=1;i<5;i++) L(x-0.45*s+i*0.18*s,y-0.2*s+Math.sin(i*0.2*TAU)*0.05*s,x-0.45*s+i*0.18*s,y+Math.sin(i*0.2*TAU)*0.05*s); ctx.globalAlpha*=2;
+  }else if(id==='helmet'){
+    const cy=y+0.18*s, r=0.42*s; arc(x,cy,r,PI,TAU); L(x-r-0.1*s,cy,x+r+0.1*s,cy); L(x-r,cy+0.08*s,x+r,cy+0.08*s);
+    L(x-r-0.1*s,cy,x-r,cy+0.08*s); L(x+r+0.1*s,cy,x+r,cy+0.08*s);
+    rectS(x-0.08*s,cy-r-0.05*s,0.16*s,0.1*s); circ(x,cy-r+0.16*s,0.09*s); arc(x,cy,r*0.6,PI*1.15,PI*1.45);
+  }else if(id==='gloves'){
+    for(const dir of [-1,1]){ const cx=x+dir*0.22*s; const p=v=>cx+dir*v;
+      poly([p(-0.14*s),y+0.4*s,p(-0.14*s),y-0.1*s,p(-0.1*s),y-0.32*s,p(0.12*s),y-0.32*s,p(0.16*s),y-0.1*s,p(0.16*s),y+0.4*s],true);
+      poly([p(-0.14*s),y+0.0*s,p(-0.26*s),y-0.1*s,p(-0.24*s),y-0.2*s,p(-0.12*s),y-0.14*s],false);
+      L(p(-0.14*s),y+0.26*s,p(0.16*s),y+0.26*s);
+    }
+  }
+}
+function drawItems(){
+  const order=ITEM_IDS.slice().sort((a,b)=>(items[a].state==='drag')-(items[b].state==='drag'));
+  for(const id of order){ const it=items[id]; if(it.state==='worn') continue;
+    const inv=isInv('item:'+id); const hop=inv&&it.state==='home'?invHop():0;
+    const x=it.x, y=it.y-hop-(it.state==='home'?it.lift:0);
+    ctx.save();
+    // stretch along velocity while dragging
+    const sp=Math.hypot(it.vx,it.vy); const st=it.state==='drag'?Math.min(0.3,sp*0.0005):0;
+    ctx.translate(x,y);
+    if(st>0.01){ const an=Math.atan2(it.vy,it.vx); ctx.rotate(an); ctx.scale(1+st,1/(1+st)); ctx.rotate(-an); }
+    ctx.scale(1+it.sq,1-it.sq);
+    if(it.state==='drag'){ ctx.strokeStyle=WA(0.25); ctx.lineWidth=1; dash(U*0.06,U*0.06); ctx.beginPath(); ctx.ellipse(0,IS*0.55+it.lift,IS*0.4,IS*0.1,0,0,TAU); ctx.stroke(); nodash(); }
+    if(inv) glowOn(invK());
+    drawItemLoose(id,0,0,IS*(id==='boots'&&it.state==='home'?1.12:1),inv?CY:CA(0.95));
+    glowOff();
+    ctx.restore();
+  }
+}
+
+// ---------------------------------------------------------- drawing: robot
+function drawHead(hx,hy,tilt,carefulCab){
+  const u=U, hw=1.45*u, hh=1.0*u;
+  ctx.save(); ctx.translate(hx,hy); ctx.rotate(tilt);
+  const c=0.18*u;
+  ctx.strokeStyle=R.flash>0?CY:WA(0.95);
+  poly([-hw/2+c,-hh,hw/2-c,-hh,hw/2,-hh+c,hw/2,0,-hw/2,0,-hw/2,-hh+c],true);
+  rectS(-hw/2-0.12*u,-hh*0.62,0.12*u,0.3*u); rectS(hw/2,-hh*0.62,0.12*u,0.3*u);
+  // face
+  const ex=R.eyeX*0.06*u, ey=R.eyeY*0.06*u, eyY=-hh*0.58;
+  const e=R.expr; ctx.strokeStyle=WA(0.95);
+  for(const sd of [-1,1]){ const x=sd*0.33*u;
+    if(R.blink>0){ L(x-0.15*u,eyY,x+0.15*u,eyY); continue; }
+    if(e==='proud'||e==='laugh'||e==='happy'){ poly([x-0.15*u,eyY+0.06*u,x,eyY-0.1*u,x+0.15*u,eyY+0.06*u],false); continue; }
+    const er=e==='wow'?0.2*u:0.16*u; circ(x,eyY,er);
+    ctx.fillStyle=WA(0.95); ctx.beginPath(); ctx.arc(x+ex,eyY+ey,0.065*u,0,TAU); ctx.fill();
+    if(e==='careful'){ L(x-0.19*u,eyY-0.05*u,x+0.19*u,eyY-0.05*u); }
+    if(e==='hmm'&&sd>0){ L(x-0.18*u,eyY-0.25*u,x+0.15*u,eyY-0.18*u); }
+  }
+  const my=-hh*0.25;
+  if(e==='laugh'){ ctx.beginPath(); ctx.moveTo(-0.25*u,my-0.04*u); ctx.lineTo(0.25*u,my-0.04*u); ctx.arc(0,my-0.04*u,0.25*u,0,PI); ctx.stroke(); }
+  else if(e==='proud'||e==='happy'){ arc(0,my-0.12*u,0.24*u,0.2*PI,0.8*PI); }
+  else if(e==='wow'){ circ(0,my,0.09*u); }
+  else if(e==='careful'){ L(-0.14*u,my,0.14*u,my); }
+  else if(e==='hmm'){ poly([-0.18*u,my,-0.06*u,my-0.05*u,0.06*u,my+0.03*u,0.18*u,my-0.02*u],false); }
+  else if(e==='curious'){ circ(0.05*u,my,0.06*u); }
+  else { arc(0,my-0.18*u,0.2*u,0.3*PI,0.7*PI); }
+  // head gear
+  const hd=worn.head;
+  if(!hd){ ctx.strokeStyle=WA(0.9); const sw=Math.sin(T*3)*0.06*u; L(0,-hh,sw,-hh-0.32*u); circ(sw,-hh-0.38*u,0.06*u); }
+  if(hd==='helmet'){
+    const it=items.helmet; ctx.save(); ctx.translate(0,-hh+0.05*u); ctx.scale(1+it.sq,1-it.sq);
+    const inv=isInv('item:helmet'); if(inv) glowOn(invK());
+    ctx.strokeStyle=CY; const r=hw*0.56; arc(0,0,r,PI,TAU); L(-r-0.1*u,0,r+0.1*u,0); L(-r,0.08*u,r,0.08*u);
+    rectS(-0.1*u,-r-0.06*u,0.2*u,0.12*u); arc(0,0,r*0.6,PI*1.15,PI*1.45);
+    const lr=0.11*u; circ(0,-r+0.2*u,lr);
+    glowOff();
+    if(S.lampFlash>0||true){ ctx.strokeStyle=CA(0.6+0.4*S.lampFlash); for(let i=0;i<6;i++){ const a=i*TAU/6+T; L(Math.cos(a)*lr*1.4,-r+0.2*u+Math.sin(a)*lr*1.4,Math.cos(a)*lr*(2+S.lampFlash*1.5),-r+0.2*u+Math.sin(a)*lr*(2+S.lampFlash*1.5)); } }
+    ctx.restore();
+  }
+  if(hd==='umbrella'){
+    const it=items.umbrella; const inv=isInv('item:umbrella'); if(inv) glowOn(invK());
+    ctx.strokeStyle=CY; const pt=-hh-0.85*u; L(0,-hh,0,pt+0.05*u);
+    const rr=umbR(); const h=rr*0.55*(1-R.umbFlex*0.25)*(1-it.sq*0.5);
+    ctx.beginPath(); ctx.moveTo(-rr,pt); ctx.quadraticCurveTo(-rr,pt-h*1.3,0,pt-h*1.3); ctx.quadraticCurveTo(rr,pt-h*1.3,rr,pt); ctx.stroke();
+    for(let i=0;i<4;i++){ const a=-rr+i*rr/2; arc(a+rr/4,pt,rr/4,PI,TAU); }
+    L(0,pt-h*1.3,-rr*0.5,pt); L(0,pt-h*1.3,rr*0.5,pt); L(0,pt-h*1.3,0,pt-h*1.3-0.12*u);
+    // collected water line
+    if(S.rainBoost>0.05){ ctx.strokeStyle=CA(0.4+S.rainBoost*0.5); dash(U*0.06,U*0.05); arc(0,pt-h*0.2,rr*0.85,PI*1.1,PI*1.9); nodash(); }
+    glowOff();
+  }
+  ctx.restore();
+}
+function drawScarf(nx,ny,sc){
+  const it=items.scarf; const inv=isInv('item:scarf'); if(inv) glowOn(invK());
+  ctx.save(); ctx.translate(nx,ny); ctx.scale(sc*(1+it.sq),sc*(1-it.sq));
+  ctx.strokeStyle=CY; const u=U; rectS(-0.55*u,-0.14*u,1.1*u,0.26*u);
+  const wm=POS.windmill; const dir=Math.sign(wm[0]-nx)||1;
+  const fl=1+S.windBoost*0.8+(worn.head==='helmet'?0.6:0);
+  ctx.beginPath(); ctx.moveTo(dir*0.3*u,0.1*u);
+  for(let i=1;i<=6;i++){ ctx.lineTo(dir*(0.3*u+i*0.13*u*fl*0.8),0.1*u+i*0.1*u/fl+Math.sin(T*9+i)*0.05*u*fl); } ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(dir*0.42*u,0.1*u);
+  for(let i=1;i<=6;i++){ ctx.lineTo(dir*(0.42*u+i*0.13*u*fl*0.8),0.15*u+i*0.1*u/fl+Math.sin(T*9+i+0.4)*0.05*u*fl); } ctx.stroke();
+  ctx.restore(); glowOff();
+}
+function drawRobotN(g){
+  const u=U;
+  ctx.save(); ctx.translate(g.gx,g.gy); ctx.scale(1+R.sq,1-R.sq);
+  const col=R.flash>0?CY:WA(0.95);
+  ctx.lineWidth=LW*(1+R.flash*0.5);
+  if(R.redraw>0){ ctx.setLineDash([u*0.4*(1-R.redraw)+0.5,u*0.4*R.redraw+0.01]); ctx.lineDashOffset=-T*u*2; }
+  // legs
+  const bootsOn=worn.feet==='boots';
+  const bi=isInv('item:boots')&&bootsOn;
+  for(const sd of [-1,1]){
+    const lift=R.walking?Math.max(0,Math.sin(R.ph+(sd>0?PI:0)))*0.22*u:0;
+    const lx=sd*0.45*u; ctx.strokeStyle=col;
+    rectS(lx-0.15*u,g.hipY,0.3*u,Math.max(0.05*u,g.legLen-lift));
+    circ(lx,g.hipY+(g.legLen-lift)*0.5,0.07*u);
+    const fy=-g.footH-lift; const p=v=>lx+sd*v;
+    poly([p(-0.22*u),fy,p(0.24*u),fy,p(0.3*u),fy+g.footH,p(-0.25*u),fy+g.footH],true);
+    if(bootsOn){
+      const it=items.boots; if(bi) glowOn(invK());
+      ctx.strokeStyle=CY; const bw=0.25*u; const top=fy-g.legLen*0.62*(1-it.sq*0.4);
+      poly([p(-bw),top,p(bw),top,p(bw),fy-0.02*u,p(bw+0.2*u),fy+0.05*u,p(bw+0.2*u),fy+g.footH,p(-bw-0.03*u),fy+g.footH],true);
+      L(p(-bw),top+0.13*u,p(bw),top+0.13*u); L(p(-bw-0.03*u),fy+g.footH*0.6,p(bw+0.2*u),fy+g.footH*0.6);
+      glowOff();
+    }
+  }
+  // torso
+  ctx.strokeStyle=col; const c=0.18*u, tw=0.85*u;
+  poly([-tw+c,g.topY,tw-c,g.topY,tw,g.topY+c,tw,g.hipY,-tw,g.hipY,-tw,g.topY+c],true);
+  rectS(-0.45*u,g.topY+0.25*u,0.7*u,0.55*u);
+  circ(0.42*u,g.topY+0.52*u,0.15*u);
+  const nd=-PI/2+(R.legE*0.6+(worn.head?0.3:0)+(worn.neck?0.3:0)+(worn.hands?0.3:0))*1.1;
+  ctx.strokeStyle=CA(0.95); L(0.42*u,g.topY+0.52*u,0.42*u+Math.cos(nd)*0.12*u,g.topY+0.52*u+Math.sin(nd)*0.12*u);
+  ctx.strokeStyle=WA(0.4); hatch(-0.4*u,g.topY+0.3*u,0.6*u,0.45*u,u*0.13);
+  ctx.strokeStyle=col;
+  for(const sd of [-1,1]){ circ(sd*0.7*u,g.hipY-0.12*u,0.04*u); circ(sd*0.7*u,g.topY+0.12*u,0.04*u); }
+  // arms
+  const hands=[g.lhl,g.rhl];
+  [-1,1].forEach((sd,i)=>{
+    const sx=sd*0.85*u, sy=g.topY+0.28*u; const h=hands[i];
+    const ex=(sx+h.x)/2+sd*0.12*u, ey=(sy+h.y)/2;
+    ctx.strokeStyle=col; circ(sx,sy,0.12*u);
+    const seg=(x1,y1,x2,y2)=>{ const dx=x2-x1, dy=y2-y1, d=Math.hypot(dx,dy)||1, nx=-dy/d*0.09*u, ny=dx/d*0.09*u; L(x1+nx,y1+ny,x2+nx,y2+ny); L(x1-nx,y1-ny,x2-nx,y2-ny); };
+    seg(sx,sy,ex,ey); seg(ex,ey,h.x,h.y); circ(ex,ey,0.07*u);
+    if(worn.hands==='gloves'){
+      const it=items.gloves; const inv=isInv('item:gloves'); if(inv) glowOn(invK());
+      ctx.strokeStyle=CY; const s=0.62*u*(1+it.sq); const p=v=>h.x+sd*v;
+      poly([p(-0.15*s),h.y-0.05*s,p(-0.15*s),h.y+0.4*s,p(-0.08*s),h.y+0.58*s,p(0.15*s),h.y+0.58*s,p(0.2*s),h.y+0.4*s,p(0.2*s),h.y-0.05*s],true);
+      poly([p(-0.15*s),h.y+0.2*s,p(-0.3*s),h.y+0.3*s,p(-0.28*s),h.y+0.42*s,p(-0.13*s),h.y+0.38*s],false);
+      L(p(-0.15*s),h.y+0.05*s,p(0.2*s),h.y+0.05*s); glowOff();
+    }else if(worn.hands==='boots'&&R.morph<0.5){
+      ctx.strokeStyle=CY; rectS(h.x-0.2*u,h.y-0.1*u,0.4*u,0.5*u);
+    }else{
+      ctx.strokeStyle=col; circ(h.x,h.y+0.08*u,0.11*u); L(h.x-0.08*u,h.y+0.15*u,h.x-0.12*u,h.y+0.3*u); L(h.x+0.08*u,h.y+0.15*u,h.x+0.12*u,h.y+0.3*u);
+    }
+  });
+  // neck
+  ctx.strokeStyle=col; rectS(-0.2*u,g.headBot,0.4*u,g.topY-g.headBot);
+  nodash(); ctx.lineDashOffset=0;
+  ctx.restore();
+  // head (separate transform to keep squash subtle)
+  ctx.save(); ctx.translate(g.gx,g.gy); ctx.scale(1+R.sq*0.6,1-R.sq*0.6);
+  if(R.redraw>0){ ctx.setLineDash([u*0.4*(1-R.redraw)+0.5,u*0.4*R.redraw+0.01]); }
+  ctx.lineWidth=LW*(1+R.flash*0.5);
+  drawHead(0,g.headBot,R.tilt);
+  nodash(); ctx.restore();
+  if(worn.neck==='scarf') drawScarf(g.gx,g.gy+g.topY*(1-R.sq*0.6),1);
+  // blueprint marks: center line + height dimension (grows with boots)
+  ctx.strokeStyle=WA(0.28); ctx.lineWidth=1;
+  dash(u*0.3,u*0.08); L(g.gx,g.gy+0.25*u,g.gx,g.gy+g.headTop-0.5*u); nodash();
+  ctx.strokeStyle=R.legE>0.5?CA(0.55):WA(0.3); dimLine(g.gx-1.55*u,g.gy,g.gx-1.55*u,g.gy+g.headTop);
+  L(g.gx-1.7*u,g.gy,g.gx-0.9*u,g.gy); L(g.gx-1.7*u,g.gy+g.headTop,g.gx-0.8*u,g.gy+g.headTop);
+}
+function drawCrane(){
+  const c=craneGeo(), u=U, x=c.x, y=c.y;
+  ctx.lineWidth=LW; const col=WA(0.95);
+  if(R.redraw>0){ ctx.setLineDash([u*0.4*(1-R.redraw)+0.5,u*0.4*R.redraw+0.01]); ctx.lineDashOffset=-T*u*2; }
+  ctx.strokeStyle=col;
+  // base with outriggers (the old legs)
+  poly([x-1.35*u,y,x-0.9*u,y-0.35*u,x+0.9*u,y-0.35*u,x+1.35*u,y],false); L(x-1.5*u,y,x+1.5*u,y);
+  rectS(x-1.45*u,y-0.08*u,0.2*u,0.08*u); rectS(x+1.25*u,y-0.08*u,0.2*u,0.08*u);
+  // lattice tower
+  const tb=y-0.35*u, tt=c.tt, tw=0.36*u;
+  L(x-tw,tb,x-tw,tt); L(x+tw,tb,x+tw,tt);
+  for(let k=0;k<5;k++){ const y1=lerp(tb,tt,k/5), y2=lerp(tb,tt,(k+1)/5); L(k%2?x+tw:x-tw,y1,k%2?x-tw:x+tw,y2); L(x-tw,y1,x+tw,y1); }
+  // cab (torso)
+  rectS(x-0.8*u,c.cabTop,1.6*u,tt-c.cabTop); rectS(x-0.55*u,c.cabTop+0.15*u,0.5*u,0.4*u); ctx.strokeStyle=WA(0.4); hatch(x+0.1*u,c.cabTop+0.15*u,0.5*u,0.45*u,u*0.12);
+  nodash();
+  ctx.save(); ctx.lineWidth=LW; if(R.redraw>0) ctx.setLineDash([u*0.4*(1-R.redraw)+0.5,u*0.4*R.redraw+0.01]);
+  drawHead(x-0.1*u,c.cabTop-0.06*u,R.tilt*0.5); ctx.restore();
+  if(worn.neck==='scarf') drawScarf(x-0.1*u,c.cabTop+0.02*u,0.9);
+  // boom (the arm) - lattice
+  const px=c.px, py=c.py, tx=R.boomX, ty=R.boomY;
+  const dx=tx-px, dy=ty-py, d=Math.hypot(dx,dy)||1, nx=-dy/d*0.13*u, ny=dx/d*0.13*u;
+  ctx.strokeStyle=col; if(R.redraw>0) ctx.setLineDash([u*0.4*(1-R.redraw)+0.5,u*0.4*R.redraw+0.01]);
+  L(px+nx,py+ny,tx+nx*0.4,ty+ny*0.4); L(px-nx,py-ny,tx-nx*0.4,ty-ny*0.4);
+  const n=Math.max(2,Math.floor(d/(0.35*u)));
+  ctx.strokeStyle=WA(0.6); ctx.beginPath();
+  for(let i=0;i<=n;i++){ const k=i/n; const w=1-k*0.6; const sx=px+dx*k+(i%2?nx:-nx)*w, sy=py+dy*k+(i%2?ny:-ny)*w; if(i===0)ctx.moveTo(sx,sy); else ctx.lineTo(sx,sy);} ctx.stroke();
+  ctx.strokeStyle=col; circ(px,py,0.13*u); circ(tx,ty,0.09*u);
+  nodash(); ctx.lineDashOffset=0;
+  // cable + boot hook
+  const it=items.boots; const inv=isInv('item:boots');
+  ctx.strokeStyle=WA(0.85); L(tx,ty,c.hx,c.hy);
+  ctx.save(); ctx.translate(c.hx,c.hy); ctx.rotate(-R.swing); ctx.scale(1+it.sq,1-it.sq);
+  if(inv) glowOn(invK());
+  ctx.strokeStyle=CY; const s=0.5*u;
+  poly([-0.18*s,-0.1*s,0.18*s,-0.1*s,0.18*s,0.55*s,0.45*s,0.62*s,0.45*s,0.82*s,-0.18*s,0.82*s],true);
+  L(-0.18*s,0.05*s,0.18*s,0.05*s); arc(0.05*s,1.05*s,0.22*s,PI*1.1,PI*2.6);
+  glowOff(); ctx.restore();
+  // dimension of reach
+  ctx.strokeStyle=CA(0.3); ctx.lineWidth=1; dash(u*0.12,u*0.08); L(px,py+0.4*u,tx,ty+0.4*u); nodash();
+}
+function drawRobot(){
+  const g=geo(); const m=clamp(R.morph,0,1);
+  // shadow line
+  ctx.strokeStyle=WA(0.25); ctx.lineWidth=1; dash(U*0.08,U*0.06);
+  ctx.beginPath(); ctx.ellipse(R.x,R.y+0.04*U,(1.0+R.morph*0.5)*U*(1-Math.min(0.4,R.jumpH/(U*6))),0.14*U,0,0,TAU); ctx.stroke(); nodash();
+  if(m<0.98){ ctx.save(); ctx.globalAlpha=1-m; drawRobotN(g); ctx.restore(); }
+  if(m>0.02){ ctx.save(); ctx.globalAlpha=m; drawCrane(); ctx.restore(); }
+  // held toy
+  if(R.holding&&R.holding.where==='held'){ const p=heldPos(); const t=R.holding; t.x=p.x; t.y=p.y; const inv=drag&&drag.type==='held'; drawToy(t,p.x,p.y,TS*0.85); }
+  // hooked big
+  if(R.hook){ const p=hookedPos(); const b=R.hook; b.x=p.x; b.y=p.y; ctx.save(); ctx.translate(p.x,p.y-BS*0.48); ctx.rotate(-R.swing*0.8); ctx.translate(-p.x,-(p.y-BS*0.48)); drawToy(b,p.x,p.y,BS); ctx.restore(); }
+  // helmet lamp beam
+  if(worn.head==='helmet'){
+    let lx,ly; if(m>0.5){ const c=craneGeo(); lx=c.x-0.1*U; ly=c.cabTop-0.06*U-1.0*U-0.6*U; } else { lx=g.gx; ly=g.gy+g.headTop-0.75*U; }
+    const wm=POS.windmill; const dx=wm[0]-lx, dy=wm[1]-ly, d=Math.hypot(dx,dy)||1; const len=Math.min(d,(worn.neck==='scarf'?d:d*0.6)); const sp=0.3;
+    const a=Math.atan2(dy,dx); ctx.strokeStyle=CA(0.22+0.4*S.lampFlash); ctx.lineWidth=1; dash(U*0.1,U*0.1);
+    L(lx,ly,lx+Math.cos(a-sp)*len,ly+Math.sin(a-sp)*len); L(lx,ly,lx+Math.cos(a+sp)*len,ly+Math.sin(a+sp)*len);
+    arc(lx,ly,len,a-sp,a+sp); nodash();
+  }
+}
+
+// ---------------------------------------------------------- drawing: particles, overlays
+function drawParticles(){
+  ctx.lineWidth=Math.max(1,LW*0.8);
+  for(const p of parts){
+    if(p.k==='s'){ const a=1-p.t/p.life; ctx.strokeStyle=p.c?CA(a):WA(a); L(p.x,p.y,p.x-p.vx*0.04,p.y-p.vy*0.04); }
+    else if(p.k==='o'){ const a=1-p.t/p.life; ctx.strokeStyle=p.c?CA(a*0.8):WA(a*0.5); circ(p.x,p.y,p.r); }
+    else if(p.k==='r'){ const dx=p.tx-p.sx, dy=p.ty-p.sy, d=Math.hypot(dx,dy)||1; ctx.strokeStyle=CA(0.7); L(p.x,p.y,p.x-dx/d*U*0.22,p.y-dy/d*U*0.22); }
+    else if(p.k==='w'){ const k=p.t/p.dur, q=1-k; const x=q*q*p.p0x+2*q*k*p.p1x+k*k*p.p2x, y=q*q*p.p0y+2*q*k*p.p1y+k*k*p.p2y; ctx.strokeStyle=CA(0.9); circ(x,y,0.06*U); }
+    else if(p.k==='wd'){ const a=Math.min(1,p.t*3)*(1-p.t/p.life); const d=Math.hypot(p.vx,p.vy)||1; ctx.strokeStyle=CA(a*0.85); ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.quadraticCurveTo(p.x-p.vx/d*p.len*0.5,p.y-p.vy/d*p.len*0.5+Math.sin(p.t*7+p.ph)*U*0.12,p.x-p.vx/d*p.len,p.y-p.vy/d*p.len); ctx.stroke(); }
+  }
+}
+function drawDragOverlay(){
+  if(!drag) return;
+  if(drag.type==='toy'){ const t=toys.find(o=>o.id===drag.id); ctx.save(); glowOn(0.5); drawToy(t,t.x,t.y,TS*1.05); glowOff(); ctx.restore(); }
+  if(drag.type==='held'&&R.holding){ const p=heldPos(); ctx.strokeStyle=CA(0.85); ctx.lineWidth=LW; dash(U*0.15,U*0.1); ctx.lineDashOffset=-T*U; L(p.x,p.y,drag.x,drag.y); nodash(); ctx.lineDashOffset=0; circ(drag.x,drag.y,0.25*U); cross(drag.x,drag.y,0.4*U); }
+  if(drag.type==='siteToy'&&drag.moved){ const t=toys.find(o=>o.id===drag.id); ctx.save(); ctx.globalAlpha=0.5; dash(U*0.1,U*0.08); drawToy(t,drag.x,drag.y-0.3*U,TS*0.9); nodash(); ctx.restore(); ctx.strokeStyle=CA(0.5); ctx.lineWidth=1; dash(U*0.1,U*0.1); L(t.x,t.y,drag.x,drag.y); nodash(); }
+}
+function drawDemo(){
+  const d=S.demo; if(!d) return;
+  const it=items.boots; const sp=slotPoints('feet')[0];
+  const t=d.t; const k=ease((t-0.4)/1.3); const fade=t<0.3?t/0.3:t>2.6?Math.max(0,1-(t-2.6)/0.6):1;
+  const x=lerp(it.x,sp.x,k), y=lerp(it.y,sp.y,k)-Math.sin(k*PI)*U*0.8;
+  ctx.save(); ctx.globalAlpha=fade*0.75; dash(U*0.08,U*0.06); drawItemLoose('boots',x,y,IS,CA(0.9)); nodash();
+  // hand
+  const hx=x+0.15*U, hy=y+0.1*U, s=U*1.1;
+  ctx.strokeStyle=WA(0.95); ctx.lineWidth=LW*1.1;
+  poly([hx-0.09*s,hy,hx+0.09*s,hy,hx+0.09*s,hy+0.42*s,hx+0.3*s,hy+0.38*s,hx+0.36*s,hy+0.85*s,hx-0.18*s,hy+0.92*s,hx-0.26*s,hy+0.5*s,hx-0.09*s,hy+0.4*s],true);
+  L(hx+0.09*s,hy+0.55*s,hx+0.3*s,hy+0.53*s);
+  if(t>1.7&&t<2.4){ ctx.strokeStyle=CA(0.8); circ(sp.x,sp.y,U*(0.3+(t-1.7)*1.2)); }
+  ctx.restore();
+}
+function draw(){
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  if(bgCv) ctx.drawImage(bgCv,0,0,W,H); else { ctx.fillStyle=BGC; ctx.fillRect(0,0,W,H); }
+  ctx.lineCap='round'; ctx.lineJoin='round';
+  drawRiver();
+  drawOpening();
+  drawSites();
+  drawStones();
+  drawBridge();
+  drawPuddleStep();
+  drawWindmill();
+  drawWheel();
+  drawCloud();
+  drawToys();
+  drawRobot();
+  drawItems();
+  drawParticles();
+  drawDragOverlay();
+  drawDemo();
+}
+
+// ---------------------------------------------------------- loop & lifecycle
+function frame(ts){
+  raf=0;
+  if(document.hidden) return;
+  if(needLayout) layout();
+  let dt=lastT?(ts-lastT)/1000:1/60; lastT=ts;
+  if(!(dt>0)) dt=1/60; dt=Math.min(dt,1/20);
+  DT=dt; T+=dt;
+  try{ update(dt); draw(); }catch(e){ if(window.console) console.warn(e); }
+  raf=requestAnimationFrame(frame);
+}
+function startLoop(){ if(!raf){ lastT=0; raf=requestAnimationFrame(frame); } }
+function stopLoop(){ if(raf){ cancelAnimationFrame(raf); raf=0; } }
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden){ stopLoop(); if(drag) endDrag(drag.x,drag.y,true); try{ if(AU.ctx&&AU.ctx.state==='running') AU.ctx.suspend(); }catch(e){} }
+  else { try{ if(AU.ctx&&AU.ctx.state==='suspended') AU.ctx.resume().catch(()=>{}); }catch(e){} lastT=0; startLoop(); }
+});
+window.addEventListener('pagehide',()=>{ stopLoop(); });
+window.addEventListener('pageshow',()=>{ if(!document.hidden){ lastT=0; startLoop(); } });
+window.addEventListener('resize',()=>{needLayout=true;});
+window.addEventListener('orientationchange',()=>{needLayout=true;});
+cv.addEventListener('pointerdown',onDown,{passive:false});
+cv.addEventListener('pointermove',onMove,{passive:false});
+cv.addEventListener('pointerup',onUp,{passive:false});
+cv.addEventListener('pointercancel',onUp,{passive:false});
+cv.addEventListener('lostpointercapture',e=>{ if(drag&&e.pointerId===drag.pid) endDrag(drag.x,drag.y,true); });
+['touchstart','touchmove','touchend'].forEach(ev=>document.addEventListener(ev,e=>{ if(e.cancelable) e.preventDefault(); },{passive:false}));
+['gesturestart','gesturechange','gestureend','contextmenu','selectstart','dblclick'].forEach(ev=>document.addEventListener(ev,e=>e.preventDefault(),{passive:false}));
+
+load();
+layout();
+startLoop();
+// test hook (read-only snapshot helpers for automated checks)
+window.__gf14={S,R,worn,items,toys,bigs,SITES,POS,get U(){return U;},keyPos,slotPoints,structPos,heldPos,craneGeo,save,SAVE_KEY,get invite(){return S.invite;},get busy(){return R.busy;}};
+})();
+</script>
+</body>
+</html>

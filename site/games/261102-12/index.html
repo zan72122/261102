@@ -1,0 +1,2654 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="robots" content="noindex,nofollow">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="format-detection" content="telephone=no">
+<meta name="theme-color" content="#9fe3f2">
+<title>くるくる屋台</title>
+<style>
+html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#9fe3f2;
+  touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;
+  overscroll-behavior:none;-webkit-tap-highlight-color:transparent;position:fixed;inset:0}
+canvas{position:fixed;left:0;top:0;display:block;touch-action:none;-webkit-touch-callout:none;
+  -webkit-user-select:none;user-select:none;outline:none}
+#bg,#bgn{pointer-events:none}#bgn{opacity:0}#c{z-index:2}
+#sa{position:fixed;left:0;top:0;width:0;height:0;visibility:hidden;pointer-events:none;
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+</style>
+</head>
+<body>
+<canvas id="bg"></canvas>
+<canvas id="bgn"></canvas>
+<canvas id="c"></canvas>
+<div id="sa"></div>
+<script>
+(() => {
+'use strict';
+// =====================================================================
+//  いらっしゃい！お代が化けるくるくる屋台
+//  shop_pretend / cel_comic / no_animal_princess
+//  商品をタップ → 客へ → お代が化けて棚へ → 次の客と街が育つ
+// =====================================================================
+const cv = document.getElementById('c');
+let ctx = cv.getContext('2d');
+const saEl = document.getElementById('sa');
+const bgCv = document.getElementById('bg'), bgnCv = document.getElementById('bgn');
+let dprCap = 2;
+
+// ---------------------------------------------------------------- utils
+const TAU = Math.PI * 2;
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const lerp = (a, b, t) => a + (b - a) * t;
+const inv = (a, b, v) => clamp((v - a) / (b - a), 0, 1);
+const eOut = t => 1 - (1 - t) * (1 - t);
+const eOut3 = t => 1 - Math.pow(1 - t, 3);
+const eIn = t => t * t;
+const eIO = t => t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+const eBack = t => { const c = 1.9; t -= 1; return 1 + (c + 1) * t * t * t + c * t * t; };
+const eElastic = t => t <= 0 ? 0 : t >= 1 ? 1 : Math.pow(2, -9 * t) * Math.sin((t * 9 - .75) * TAU / 3) + 1;
+const NO = {};
+let QS = null;
+try { QS = new URLSearchParams(location.search); } catch (e) { QS = { get: () => null }; }
+const SPEED = clamp(parseFloat(QS.get('speed')) || 1, .25, 8);
+let seed = ((parseInt(QS.get('seed'), 10) || (Date.now() & 0x7fffffff)) >>> 0) || 1;
+function rnd() {
+  seed = (seed + 0x6D2B79F5) | 0;
+  let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+const pick = a => a[Math.floor(rnd() * a.length) % a.length];
+const hex2rgb = h => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+const MIXC = new Map();
+function mix(a, b, t) {
+  t = clamp(t, 0, 1);
+  let A = MIXC.get(a); if (!A) { A = hex2rgb(a); MIXC.set(a, A); }
+  let B = MIXC.get(b); if (!B) { B = hex2rgb(b); MIXC.set(b, B); }
+  return 'rgb(' + Math.round(lerp(A[0], B[0], t)) + ',' + Math.round(lerp(A[1], B[1], t)) + ',' + Math.round(lerp(A[2], B[2], t)) + ')';
+}
+
+// ---------------------------------------------------------------- palette (平面塗り)
+const INK = '#221c22';
+const C = {
+  cream: '#fff3d4', street: '#ffeac0', streetN: '#f6dcaa', road: '#f6d9a2', roadN: '#e9c993',
+  verm: '#e8442b', vermL: '#ff7a5c', vermD: '#c4351f',
+  teal: '#18a597', tealL: '#86dccf', tealD: '#0e6a66', tealDD: '#0b4d4f',
+  yel: '#ffd23c', yelL: '#fff1a6', yelD: '#f2a91c',
+  pink: '#ff8db0', pinkL: '#ffc7d8', pinkD: '#e2567f',
+  white: '#ffffff', off: '#fbfbf4',
+  skin: '#ffd8b5', skin2: '#e8b088', skin3: '#b97a52',
+  hair: '#4a3024', hair2: '#2c2226', hair3: '#8a4b2a',
+  dough: '#f1b468', choc: '#5c3a28', cookie: '#f0c06a',
+  grey: '#d8e4e9', greyM: '#a3b5bd', greyD: '#6c7f89', tire: '#4a4552',
+  tan: '#e7b877', brown: '#a8693e',
+  skyD: '#9fe3f2', skyN: '#22506f',
+  gold: '#ffc83a', goldL: '#ffe58a', goldD: '#e8a21a',
+  glass: '#e6f7fb', mouth: '#a8323c', glow: '#fff6b8',
+};
+
+// ---------------------------------------------------------------- layout templates (仮想座標)
+// P: 縦画面 400x800 / L: 横画面 800x520
+const TPL = {
+  P: {
+    id: 'P', VW: 400, VH: 800, cx: 200, ground: 452,
+    sign: { x: 200, y: 60, w: 150, h: 60 },
+    awn: { x0: 12, x1: 388, y0: 92, y1: 150 },
+    posts: [28, 372], postW: 16,
+    wall: { x0: 36, x1: 364, y0: 150, y1: 350 },
+    boards: [[40, 118, 241], [40, 118, 323], [282, 360, 241], [282, 360, 323]],
+    counter: { x0: 22, x1: 378, y0: 350, y1: 440 },
+    tray: { x: 200, y: 412 },
+    shop: { x: 200, y: 350 },
+    slots: [[140, 317], [260, 317], [79, 207], [321, 207], [79, 289], [321, 289]],
+    itemSize: 66, hitR: 46,
+    spots: [[70, 724], [200, 724], [330, 724]], custS: .95, bubbleDY: -214,
+    road: { y0: 734, lane: 774 },
+    gateX: 393,
+    cartSlots: [[322, 786], [234, 788], [146, 786], [58, 788]],
+    roofSlots: [[52, 74], [348, 74], [98, 40], [302, 40]],
+    lanterns: [[42, 114], [92, 122], [308, 122], [358, 114]],
+    medals: [[86, 398], [314, 398]],
+    cartS: .82, roofS: .88,
+  },
+  L: {
+    id: 'L', VW: 800, VH: 520, cx: 228, ground: 420,
+    sign: { x: 228, y: 44, w: 160, h: 60 },
+    awn: { x0: 28, x1: 428, y0: 78, y1: 134 },
+    posts: [44, 412], postW: 16,
+    wall: { x0: 52, x1: 404, y0: 134, y1: 330 },
+    boards: [[56, 134, 226], [56, 134, 304], [322, 400, 226], [322, 400, 304]],
+    counter: { x0: 34, x1: 422, y0: 330, y1: 410 },
+    tray: { x: 228, y: 390 },
+    shop: { x: 228, y: 330 },
+    slots: [[176, 297], [280, 297], [95, 193], [361, 193], [95, 271], [361, 271]],
+    itemSize: 68, hitR: 46,
+    spots: [[524, 440], [634, 440], [744, 440]], custS: 1, bubbleDY: -218,
+    road: { y0: 450, lane: 486 },
+    gateX: 796,
+    cartSlots: [[700, 500], [588, 500], [476, 500], [364, 500]],
+    roofSlots: [[512, 124], [640, 100], [768, 128], [84, 52]],
+    lanterns: [[60, 100], [118, 108], [338, 108], [396, 100]],
+    medals: [[112, 372], [344, 372]],
+    cartS: 1, roofS: 1,
+  }
+};
+const L = { W: 390, H: 844, dpr: 1, S: 1, ox: 0, oy: 0, t: TPL.P, portrait: true, vx0: 0, vx1: 400, vy0: 0, vy1: 800, ver: 0 };
+let layoutDirty = true;
+function readInsets() {
+  try {
+    const cs = getComputedStyle(saEl);
+    return { t: parseFloat(cs.paddingTop) || 0, r: parseFloat(cs.paddingRight) || 0, b: parseFloat(cs.paddingBottom) || 0, l: parseFloat(cs.paddingLeft) || 0 };
+  } catch (e) { return { t: 0, r: 0, b: 0, l: 0 }; }
+}
+function doLayout() {
+  layoutDirty = false;
+  const W = Math.max(200, window.innerWidth || document.documentElement.clientWidth || 390);
+  const H = Math.max(200, window.innerHeight || document.documentElement.clientHeight || 844);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2, dprCap);
+  const cw = Math.round(W * dpr), ch = Math.round(H * dpr);
+  if (cv.width !== cw || cv.height !== ch) { cv.width = cw; cv.height = ch; }
+  cv.style.width = W + 'px'; cv.style.height = H + 'px';
+  const ins = readInsets();
+  const portrait = W < H;
+  const t = portrait ? TPL.P : TPL.L;
+  const aw = Math.max(100, W - ins.l - ins.r), ah = Math.max(100, H - ins.t - ins.b);
+  const S = Math.min(aw / t.VW, ah / t.VH);
+  const ox = ins.l + (aw - t.VW * S) / 2, oy = ins.t + (ah - t.VH * S) / 2;
+  Object.assign(L, { W, H, dpr, S, ox, oy, t, portrait, ins,
+    vx0: -ox / S, vx1: (W - ox) / S, vy0: -oy / S, vy1: (H - oy) / S });
+  L.ver++;
+}
+const v2s = (x, y) => ({ x: L.ox + x * L.S, y: L.oy + y * L.S });
+const s2v = (x, y) => ({ x: (x - L.ox) / L.S, y: (y - L.oy) / L.S });
+function setV(c) { (c || ctx).setTransform(L.dpr * L.S, 0, 0, L.dpr * L.S, L.dpr * L.ox, L.dpr * L.oy); }
+
+// ---------------------------------------------------------------- 描画プリミティブ（黒の太輪郭・平面塗り）
+let LW = 3.6;
+function ink(w) { ctx.strokeStyle = INK; ctx.lineWidth = w; ctx.lineJoin = 'round'; ctx.lineCap = 'round'; }
+const bp = () => ctx.beginPath();
+function fs(f) { ctx.fillStyle = f; ctx.fill(); ctx.stroke(); }
+function fo(f) { ctx.fillStyle = f; ctx.fill(); }
+function cir(x, y, r) { r = Math.max(.01, r); ctx.moveTo(x + r, y); ctx.arc(x, y, r, 0, TAU); }
+function ell(x, y, rx, ry, rot) {
+  rot = rot || 0; rx = Math.max(.01, rx); ry = Math.max(.01, ry);
+  ctx.moveTo(x + rx * Math.cos(rot), y + rx * Math.sin(rot)); ctx.ellipse(x, y, rx, ry, rot, 0, TAU);
+}
+function rr(x, y, w, h, r) {
+  if (w < 0) { x += w; w = -w; } if (h < 0) { y += h; h = -h; }
+  r = Math.max(0, Math.min(r, w / 2, h / 2));
+  ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.arcTo(x + w, y, x + w, y + r, r);
+  ctx.lineTo(x + w, y + h - r); ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+  ctx.lineTo(x + r, y + h); ctx.arcTo(x, y + h, x, y + h - r, r);
+  ctx.lineTo(x, y + r); ctx.arcTo(x, y, x + r, y, r); ctx.closePath();
+}
+const Cf = (x, y, r, f) => { bp(); cir(x, y, r); fs(f); };
+const Co = (x, y, r, f) => { bp(); cir(x, y, r); fo(f); };
+const Ef = (x, y, rx, ry, f, rot) => { bp(); ell(x, y, rx, ry, rot); fs(f); };
+const Eo = (x, y, rx, ry, f, rot) => { bp(); ell(x, y, rx, ry, rot); fo(f); };
+const Rf = (x, y, w, h, r, f) => { bp(); rr(x, y, w, h, r); fs(f); };
+const Ro = (x, y, w, h, r, f) => { bp(); rr(x, y, w, h, r); fo(f); };
+function seg(x1, y1, x2, y2) { bp(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); }
+function arcS(x, y, r, a0, a1) { bp(); ctx.arc(x, y, Math.max(.01, r), a0, a1); ctx.stroke(); }
+// 輪郭付きの太い線（手足など）
+function limb(pts, w, col) {
+  bp(); ctx.moveTo(pts[0], pts[1]);
+  if (pts.length === 6) ctx.quadraticCurveTo(pts[2], pts[3], pts[4], pts[5]);
+  else for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1]);
+  const lw = ctx.lineWidth;
+  ctx.strokeStyle = INK; ctx.lineWidth = w + lw * 2; ctx.stroke();
+  ctx.strokeStyle = col; ctx.lineWidth = w; ctx.stroke();
+  ctx.strokeStyle = INK; ctx.lineWidth = lw;
+}
+// 円の和集合を一つの輪郭で（雲・綿あめ）
+function blob(cs, fill) {
+  const lw = ctx.lineWidth;
+  ctx.lineWidth = lw * 2; ctx.strokeStyle = INK;
+  bp(); for (const c of cs) cir(c[0], c[1], c[2]); ctx.stroke();
+  ctx.lineWidth = lw;
+  bp(); for (const c of cs) cir(c[0], c[1], c[2]); fo(fill);
+}
+function star4(x, y, r, col) {
+  bp(); ctx.moveTo(x, y - r); ctx.quadraticCurveTo(x, y, x + r, y); ctx.quadraticCurveTo(x, y, x, y + r);
+  ctx.quadraticCurveTo(x, y, x - r, y); ctx.quadraticCurveTo(x, y, x, y - r); ctx.closePath(); fo(col);
+}
+function star5(x, y, r, col, stroke) {
+  bp();
+  for (let i = 0; i < 10; i++) {
+    const a = -Math.PI / 2 + i * Math.PI / 5, rr2 = i % 2 ? r * .45 : r;
+    const px = x + Math.cos(a) * rr2, py = y + Math.sin(a) * rr2;
+    if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py);
+  }
+  ctx.closePath(); if (stroke) fs(col); else fo(col);
+}
+function heart(x, y, r, col, stroke) {
+  bp(); ctx.moveTo(x, y + r * .9);
+  ctx.bezierCurveTo(x - r * 1.3, y, x - r * .7, y - r * 1.1, x, y - r * .35);
+  ctx.bezierCurveTo(x + r * .7, y - r * 1.1, x + r * 1.3, y, x, y + r * .9);
+  ctx.closePath(); if (stroke) fs(col); else fo(col);
+}
+
+// =====================================================================
+//  商品・お代（64x64の箱で描く。底は y=+28）
+// =====================================================================
+const CANDY_C = [[-12, -9, 12], [0, -18, 13], [12, -9, 12], [-7, 0, 11], [7, 0, 11], [0, -7, 13]];
+const CLOUD_C = [[-15, 4, 12], [-3, -6, 15], [12, -2, 13], [21, 8, 9], [-23, 10, 8], [4, 8, 13]];
+const SPRK = [[.3, C.teal], [1.1, C.yel], [1.9, C.white], [2.7, C.teal], [3.5, C.yel], [4.3, C.white], [5.1, C.teal], [5.8, C.yel]];
+function berry(x, y, s) {
+  bp(); ctx.moveTo(x, y + 9 * s);
+  ctx.bezierCurveTo(x - 10 * s, y + 2 * s, x - 8 * s, y - 8 * s, x, y - 6 * s);
+  ctx.bezierCurveTo(x + 8 * s, y - 8 * s, x + 10 * s, y + 2 * s, x, y + 9 * s);
+  ctx.closePath(); fs(C.verm);
+  Co(x - 3 * s, y - 1 * s, 1.2 * s, C.yelL); Co(x + 3 * s, y, 1.2 * s, C.yelL); Co(x, y + 4 * s, 1.2 * s, C.yelL);
+  bp(); ctx.moveTo(x - 5 * s, y - 6 * s); ctx.lineTo(x, y - 3.5 * s); ctx.lineTo(x + 5 * s, y - 6 * s); ctx.lineTo(x, y - 9.5 * s); ctx.closePath(); fs(C.teal);
+}
+function glassPath() {
+  bp(); ctx.moveTo(-18, -22); ctx.lineTo(18, -22); ctx.lineTo(14, 23); ctx.quadraticCurveTo(13.5, 28, 9, 28);
+  ctx.lineTo(-9, 28); ctx.quadraticCurveTo(-13.5, 28, -14, 23); ctx.closePath();
+}
+function springZ(x, y0, y1, hw, n, col) {
+  const pts = [x - hw * .2, y0], h = (y1 - y0) / (n * 2 + 1);
+  for (let i = 0; i < n * 2; i++) pts.push(x + (i % 2 ? -hw : hw), y0 + h * (i + 1));
+  pts.push(x + hw * .2, y1);
+  limb(pts, 3.4, col || C.greyM);
+}
+function shoe(x, y, s, back) {
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  springZ(0, 9, 23, 9, 2);
+  Rf(-11, 21, 22, 6, 3, C.yel);
+  bp(); ctx.moveTo(-15, 3); ctx.lineTo(17, 3); ctx.quadraticCurveTo(21, 8, 15, 10); ctx.lineTo(-13, 10); ctx.quadraticCurveTo(-18, 8, -15, 3); ctx.closePath(); fs(C.white);
+  bp(); ctx.moveTo(-14, 4); ctx.lineTo(-13, -13); ctx.quadraticCurveTo(-6, -16, 0, -11); ctx.quadraticCurveTo(4, -3, 12, -2); ctx.quadraticCurveTo(18, -1, 17, 4); ctx.closePath(); fs(back ? C.pinkL : C.pink);
+  bp(); ctx.moveTo(8, 4); ctx.quadraticCurveTo(8, -3, 13, -2); ctx.quadraticCurveTo(18, -1, 17, 4); ctx.closePath(); fs(C.white);
+  ctx.save(); ctx.strokeStyle = C.teal; ctx.lineWidth *= .9; seg(-6, -9, 0, -6); seg(-4, -4, 3, -2); ctx.restore();
+  Ef(-7, -13, 6, 2.2, C.white);
+  ctx.restore();
+}
+function donutBase(ri, col) {
+  bp(); cir(0, 0, 27); ctx.moveTo(ri, 0); ctx.arc(0, 0, ri, 0, TAU, true); fs(col || C.dough);
+}
+function donutTop() {
+  bp();
+  for (let i = 0; i <= 56; i++) {
+    const a = i / 56 * TAU, r = 22.5 + Math.sin(a * 7) * 2.2;
+    if (i) ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r); else ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r);
+  }
+  ctx.closePath(); ctx.moveTo(12.5, 0); ctx.arc(0, 0, 12.5, 0, TAU, true); fs(C.pink);
+  ctx.save(); ctx.lineWidth = 3.2;
+  for (const [a, col] of SPRK) {
+    const px = Math.cos(a) * 17.5, py = Math.sin(a) * 17.5, dx = Math.cos(a + 1.2) * 3, dy = Math.sin(a + 1.2) * 3;
+    ctx.strokeStyle = col; seg(px - dx, py - dy, px + dx, py + dy);
+  }
+  ctx.restore();
+}
+function cookieBody(r0, amp, col) {
+  bp();
+  for (let i = 0; i <= 44; i++) {
+    const a = i / 44 * TAU, r = r0 + Math.sin(a * 9) * amp;
+    if (i) ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r); else ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r);
+  }
+  ctx.closePath(); fs(col);
+}
+function flame(x, y, r) {
+  bp(); ctx.moveTo(x, y - r * 2.1);
+  ctx.bezierCurveTo(x + r * 1.1, y - r * .8, x + r, y + r * .7, x, y + r * .7);
+  ctx.bezierCurveTo(x - r, y + r * .7, x - r * 1.1, y - r * .8, x, y - r * 2.1);
+  ctx.closePath(); fs(C.yel);
+  Eo(x, y + r * .05, r * .38, r * .55, C.vermL);
+}
+function lanternShape(col, sc) {
+  sc = sc || 1;
+  ctx.save(); ctx.scale(sc, sc);
+  seg(0, -30, 0, -21);
+  Rf(-8, -23, 16, 6, 2, C.tealDD);
+  Ef(0, 0, 17, 20, col);
+  ctx.save(); ctx.lineWidth *= .7;
+  bp(); ctx.ellipse(0, 0, 8, 20, 0, 0, TAU); ctx.stroke();
+  seg(-16, -7, 16, -7); seg(-16, 7, 16, 7);
+  ctx.restore();
+  Rf(-8, 17, 16, 6, 2, C.tealDD);
+  ctx.save(); ctx.strokeStyle = C.yel; ctx.lineWidth *= 1.1; seg(0, 23, 0, 31); ctx.restore();
+  ctx.restore();
+}
+const ITEM = {
+  cake() {
+    Ef(0, 27, 31, 6.5, C.tealL);
+    Rf(-25, -6, 50, 32, 7, C.cream);
+    bp(); ctx.rect(-24, 7, 48, 7); fo(C.pink);
+    seg(-25, 7, 25, 7); seg(-25, 14, 25, 14);
+    bp(); rr(-25, -6, 50, 32, 7); ctx.stroke();
+    bp(); ctx.moveTo(-27, -4);
+    ctx.quadraticCurveTo(-27, -14, 0, -14); ctx.quadraticCurveTo(27, -14, 27, -4);
+    ctx.lineTo(27, 0); ctx.quadraticCurveTo(22, 7, 18, 0); ctx.quadraticCurveTo(13, -3, 9, 2); ctx.quadraticCurveTo(5, 9, 1, 1);
+    ctx.quadraticCurveTo(-4, -3, -8, 2); ctx.quadraticCurveTo(-12, 8, -16, 0); ctx.quadraticCurveTo(-20, -3, -23, 2);
+    ctx.quadraticCurveTo(-27, 4, -27, -4); ctx.closePath(); fs(C.white);
+    berry(-13, -16, 1); berry(13, -16, 1); berry(0, -21, 1.15);
+  },
+  juice() {
+    limb([5, -8, 10, -30, 22, -36], 5, C.pink);
+    glassPath(); fs(C.glass);
+    ctx.save(); glassPath(); ctx.clip();
+    bp(); ctx.moveTo(-20, -11); ctx.quadraticCurveTo(-10, -15, 0, -11); ctx.quadraticCurveTo(10, -7, 20, -11);
+    ctx.lineTo(20, 30); ctx.lineTo(-20, 30); ctx.closePath(); fs(C.yel);
+    Co(-6, 6, 2.8, C.yelL); Co(4, 15, 2.1, C.yelL); Co(7, -1, 1.7, C.yelL);
+    ctx.restore();
+    glassPath(); ctx.stroke();
+    bp(); ctx.moveTo(-24, -21); ctx.arc(-15, -21, 9, Math.PI, TAU); ctx.closePath(); fs(C.yelL);
+    ctx.save(); ctx.lineWidth *= .6; seg(-15, -21, -21, -26); seg(-15, -21, -15, -29); seg(-15, -21, -9, -26); ctx.restore();
+  },
+  candy() {
+    Rf(-3, 0, 6, 29, 3, C.cream);
+    blob(CANDY_C, C.pink);
+    ctx.save(); ctx.lineWidth *= .6; ctx.strokeStyle = C.pinkD;
+    arcS(-2, -10, 7, 3.6, 5.6); arcS(4, -6, 10, .2, 1.5); arcS(-6, -3, 5, 1.8, 3.2);
+    ctx.restore();
+  },
+  shoes() { shoe(9, -5, .9, true); shoe(-6, -1, 1, false); },
+  donut() { donutBase(9); donutTop(); },
+  bigdonut() { ctx.translate(0, -9); ctx.scale(1.34, 1.34); ctx.lineWidth /= 1.34; donutBase(9); donutTop(); star4(-20, -22, 6, C.yel); star4(22, -18, 4, C.white); },
+  cookie() {
+    cookieBody(25, 1.4, C.cookie);
+    for (const [x, y, r] of [[-8, -8, .3], [8, -8, -.4], [-8, 8, .6], [8, 8, -.2]]) Ef(x, y, 4.3, 3.6, C.choc, r);
+    Co(0, -17, 2, C.choc); Co(16, 1, 2, C.choc); Co(-16, 1, 1.8, C.choc); Co(1, 17, 2, C.choc);
+  },
+  // ---- お代
+  cloud() { blob(CLOUD_C, C.white); },
+  spring(t, o) {
+    const c = (o && o.comp) || 0, top = -22 + c * 16;
+    Rf(-15, 19, 30, 7, 3, C.yel);
+    springZ(0, top + 6, 19, 13, 3);
+    Rf(-15, top, 30, 7, 3, C.yel);
+  },
+  wheel(t, o) {
+    ctx.save(); ctx.rotate((o && o.spin) || 0);
+    bp(); cir(0, 0, 27); ctx.moveTo(19, 0); ctx.arc(0, 0, 19, 0, TAU, true); fs(C.tire);
+    bp(); cir(0, 0, 19); ctx.moveTo(15, 0); ctx.arc(0, 0, 15, 0, TAU, true); fs(C.yel);
+    for (let i = 0; i < 6; i++) { const a = i / 6 * TAU; seg(Math.cos(a) * 6, Math.sin(a) * 6, Math.cos(a) * 15, Math.sin(a) * 15); }
+    Cf(0, 0, 6, C.pink);
+    ctx.save(); ctx.strokeStyle = C.greyD; ctx.lineWidth *= .7;
+    for (let i = 0; i < 8; i++) { const a = i / 8 * TAU; seg(Math.cos(a) * 21, Math.sin(a) * 21, Math.cos(a) * 25, Math.sin(a) * 25); }
+    ctx.restore(); ctx.restore();
+  },
+  bigwheel(t, o) { ctx.translate(0, -9); ctx.scale(1.34, 1.34); ctx.lineWidth /= 1.34; ITEM.wheel(t, o); },
+  button() {
+    Cf(0, 0, 23, C.pink);
+    ctx.save(); ctx.strokeStyle = C.pinkD; ctx.lineWidth *= .8; arcS(0, 0, 17.5, 0, TAU); ctx.restore();
+    for (const [x, y] of [[-6, -6], [6, -6], [-6, 6], [6, 6]]) Cf(x, y, 3.6, C.cream);
+  },
+  toycart(t, o) {
+    const sp = (o && o.spin) || 0;
+    Rf(-20, -23, 40, 10, 5, C.pinkL);
+    ctx.save(); ctx.strokeStyle = C.pink; ctx.lineWidth *= 1.1; seg(-10, -21, -10, -15); seg(0, -21, 0, -15); seg(10, -21, 10, -15); ctx.restore();
+    Rf(-25, -14, 50, 25, 4, C.teal);
+    bp(); ctx.rect(-24, -5, 48, 6); fo(C.yel); seg(-25, -5, 25, -5); seg(-25, 1, 25, 1);
+    limb([24, -8, 34, -21], 3.6, C.brown);
+    for (const wx of [-13, 13]) {
+      Cf(wx, 14, 8.5, C.yel);
+      ctx.save(); ctx.translate(wx, 14); ctx.rotate(sp); seg(-5, 0, 5, 0); seg(0, -5, 0, 5); ctx.restore();
+    }
+  },
+  candle() {
+    Ef(0, 24, 15, 4.5, C.tealL);
+    Rf(-7, -5, 14, 29, 3, C.cream);
+    seg(0, -5, 0, -10);
+    flame(0, -13, 6.5 + Math.sin(G.T * 17) * .5);
+  },
+  lantern(t, o) {
+    const col = (o && o.col) || C.verm;
+    if (o && o.lit) { ctx.save(); ctx.globalAlpha *= .4; Co(0, 0, 30, C.glow); ctx.restore(); }
+    lanternShape(col);
+  },
+  model(t, o) { drawMini(0, 28, .56, (o && o.fold) || FOLD0, o && o.lit, o && o.sync); },
+};
+const FOLD0 = { roof: 0, shelf: 0, wall: 0, disc: 0 };
+// ---------------------------------------------------------------- スプライト（静止した絵はビットマップにして使い回す）
+const SPR = new Map();
+let sprK = 0, sprVer = -1;
+function spr(key, w, h, ax, ay, paint, scl) {
+  const k0 = L.S * L.dpr * 1.15;
+  if (k0 !== sprK || sprVer !== L.ver) { SPR.clear(); sprK = k0; sprVer = L.ver; }
+  let s = SPR.get(key);
+  if (!s) {
+    const k = k0 * (scl || 1);
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.ceil(w * k)); c.height = Math.max(1, Math.ceil(h * k));
+    const c2 = c.getContext('2d'), saved = ctx; ctx = c2;
+    try { c2.setTransform(k, 0, 0, k, ax * k, ay * k); paint(); } catch (e) { if (typeof G !== 'undefined') G.errors.push(String(e && e.stack || e)); } finally { ctx = saved; }
+    s = { c, w, h, ax, ay }; SPR.set(key, s);
+  }
+  return s;
+}
+function blit(s, x, y) { ctx.drawImage(s.c, x - s.ax, y - s.ay, s.w, s.h); }
+const ITEM_SPR = { cake: 1, juice: 1, candy: 1, shoes: 1, donut: 1, bigdonut: 1, cookie: 1, cloud: 1, button: 1, lantern: 1, wheel: 1, bigwheel: 1, toycart: 1, spring: 1 };
+const IREF = 72, IBOX = IREF * 1.7;
+function drawItem(kind, x, y, size, o) {
+  o = o || NO;
+  if (ITEM_SPR[kind] && !(kind === 'spring' && o.comp) && !(kind === 'toycart' && o.spin)) {
+    const key = 'i:' + kind + (kind === 'lantern' ? (o.col || '') + (o.lit ? 1 : 0) : '');
+    const s = spr(key, IBOX, IBOX, IBOX / 2, IBOX / 2, () => drawItemVec(kind, 0, 0, IREF, o.col || o.lit ? { col: o.col, lit: o.lit } : NO));
+    const sc = size / IREF;
+    ctx.save(); ctx.translate(x, y);
+    if (o.rot) ctx.rotate(o.rot);
+    if (o.spin && (kind === 'wheel' || kind === 'bigwheel')) ctx.rotate(o.spin);
+    ctx.scale(sc, sc);
+    if (o.sx || o.sy) { const by = 28 * IREF / 64; ctx.translate(0, by); ctx.scale(o.sx || 1, o.sy || 1); ctx.translate(0, -by); }
+    if (o.alpha != null && o.alpha < 1) ctx.globalAlpha *= Math.max(0, o.alpha);
+    blit(s, 0, 0);
+    ctx.restore();
+    return;
+  }
+  drawItemVec(kind, x, y, size, o);
+}
+function drawItemVec(kind, x, y, size, o) {
+  o = o || NO;
+  const k = size / 64;
+  ctx.save();
+  ctx.translate(x, y);
+  if (o.rot) ctx.rotate(o.rot);
+  ctx.scale(k, k);
+  if (o.sx || o.sy) { ctx.translate(0, 28); ctx.scale(o.sx || 1, o.sy || 1); ctx.translate(0, -28); }
+  if (o.alpha != null && o.alpha < 1) ctx.globalAlpha *= Math.max(0, o.alpha);
+  ink(clamp(size * .056, 1.15, 4) / k);
+  const f = ITEM[kind]; if (f) f(o.t || 0, o);
+  ctx.restore();
+}
+
+// ---------------------------------------------------------------- お代 → 商品 の変身（形と動きを残す）
+const MORPH = {
+  // 雲は巻き取られて綿あめに
+  cloud(t) {
+    const e = eIO(inv(.12, .85, t));
+    const sl = eOut(inv(.08, .5, t));
+    if (sl > 0) Rf(-3, 0, 6, Math.max(1, 29 * sl), 3, C.cream);
+    const a = (1 - e) * 7.5, ca = Math.cos(a), sa = Math.sin(a);
+    const cs = CLOUD_C.map((c, i) => {
+      const d = CANDY_C[i], rx = c[0] * ca - c[1] * sa, ry = c[0] * sa + c[1] * ca;
+      return [lerp(rx, d[0], e), lerp(ry * .8, d[1], e), lerp(c[2], d[2], e)];
+    });
+    blob(cs, mix(C.white, C.pink, e));
+    if (e > .15) {
+      ctx.save(); ctx.strokeStyle = C.pinkD; ctx.lineWidth *= .6;
+      for (let i = 0; i < 3; i++) arcS(0, -8, 4 + i * 4.5, a * 1.3 + i * 1.7, a * 1.3 + i * 1.7 + 1.9);
+      ctx.restore();
+    }
+  },
+  // ばねは縮んで跳ね、靴の底に残る
+  spring(t) {
+    if (t < .42) { const u = t / .42; ITEM.spring(0, { comp: Math.abs(Math.sin(u * Math.PI * 2)) * .75 }); return; }
+    const u = inv(.42, 1, t), e = eBack(u);
+    if (u < .5) {
+      ctx.save(); ctx.globalAlpha *= 1 - u / .5; ctx.translate(0, 10 * u); ctx.scale(1 - u * .6, 1 - u * .6);
+      ITEM.spring(0, { comp: .3 }); ctx.restore();
+    }
+    ctx.save(); ctx.translate(0, 28); ctx.scale(Math.max(.01, e), Math.max(.01, e)); ctx.translate(0, -28); ITEM.shoes(); ctx.restore();
+  },
+  // 車輪は輪のままドーナツに
+  wheel(t, o) {
+    if (o && o.big) { ctx.translate(0, -9); ctx.scale(1.34, 1.34); ctx.lineWidth /= 1.34; }
+    const spin = t * 10;
+    const e2 = eIO(inv(.28, .68, t)), ri = lerp(19, 9, e2);
+    donutBase(ri, mix(C.tire, C.dough, e2));
+    if (e2 < .98) {
+      const k2 = 1 - e2;
+      ctx.save(); ctx.rotate(spin);
+      const rin = Math.max(.5, ri - 4 * k2);
+      bp(); cir(0, 0, ri); ctx.moveTo(rin, 0); ctx.arc(0, 0, rin, 0, TAU, true); fs(C.yel);
+      for (let i = 0; i < 6; i++) { const a = i / 6 * TAU; seg(Math.cos(a) * 6 * k2, Math.sin(a) * 6 * k2, Math.cos(a) * rin, Math.sin(a) * rin); }
+      Cf(0, 0, Math.max(.3, 6 * k2), C.pink);
+      ctx.restore();
+    }
+    const s3 = inv(.6, .95, t);
+    if (s3 > 0) { const e3 = Math.max(.01, eBack(s3)); ctx.save(); ctx.scale(e3, e3); ctx.lineWidth /= e3; donutTop(); ctx.restore(); }
+  },
+  bigwheel(t) { MORPH.wheel(t, { big: true }); },
+  // ボタンの穴がチョコチップに
+  button(t) {
+    const u = inv(0, .45, t), flip = Math.cos(u * Math.PI * 4);
+    const e = eIO(inv(.3, .85, t));
+    ctx.save(); ctx.scale(Math.max(.06, Math.abs(flip)), 1);
+    cookieBody(lerp(23, 25, e), 1.4 * e, mix(C.pink, C.cookie, e));
+    if (e < .6) { ctx.save(); ctx.globalAlpha *= 1 - e / .6; ctx.strokeStyle = C.pinkD; ctx.lineWidth *= .8; arcS(0, 0, 17.5, 0, TAU); ctx.restore(); }
+    for (const [x, y] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      const px = x * lerp(6, 8, e), py = y * lerp(6, 8, e);
+      if (e < .5) Cf(px, py, 3.6, mix(C.cream, C.choc, e * 2)); else Ef(px, py, lerp(3.6, 4.3, e), lerp(3.6, 3.6, e), C.choc, x * y * .4);
+    }
+    if (e > .7) { const k = inv(.7, 1, e); Co(0, -17, 2 * k, C.choc); Co(16, 1, 2 * k, C.choc); Co(-16, 1, 1.8 * k, C.choc); Co(1, 17, 2 * k, C.choc); }
+    ctx.restore();
+  },
+  // ろうそくの灯りがちょうちんに
+  candle(t, o) {
+    const col = (o && o.col) || C.verm;
+    if (t < .35) {
+      ITEM.candle();
+      const k = inv(0, .35, t); ctx.save(); ctx.globalAlpha *= .5 * k; Co(0, -14, 10 + 12 * k, C.glow); ctx.restore();
+      return;
+    }
+    const e = Math.max(.01, eBack(inv(.35, .9, t)));
+    ctx.save(); ctx.globalAlpha *= .4 * e; Co(0, 0, 30, C.glow); ctx.restore();
+    ctx.save(); ctx.scale(e, e); ctx.lineWidth /= e; lanternShape(mix(C.cream, col, inv(.35, .75, t))); ctx.restore();
+  },
+};
+function drawMorph(pay, t, x, y, size, o) {
+  const k = size / 64;
+  ctx.save(); ctx.translate(x, y); ctx.scale(k, k);
+  ink(clamp(size * .056, 1.15, 4) / k);
+  const f = MORPH[pay]; if (f) f(clamp(t, 0, 1), o || NO); else { const g = ITEM[pay]; if (g) g(0, o || NO); }
+  ctx.restore();
+}
+
+// =====================================================================
+//  キャラクター（正面向き・目で追う）
+// =====================================================================
+function drawFace(cx, cy, r, expr, lx, ly, blink) {
+  const ex = r * .37, ey = cy - r * .05;
+  const lw = ctx.lineWidth;
+  if (expr === 'happy' || expr === 'love') {
+    ctx.lineWidth = lw * 1.15;
+    arcS(cx - ex, ey + r * .06, r * .15, Math.PI * 1.1, Math.PI * 1.9);
+    arcS(cx + ex, ey + r * .06, r * .15, Math.PI * 1.1, Math.PI * 1.9);
+    ctx.lineWidth = lw;
+  } else if (blink) {
+    ctx.lineWidth = lw * 1.1; seg(cx - ex - r * .13, ey, cx - ex + r * .13, ey); seg(cx + ex - r * .13, ey, cx + ex + r * .13, ey); ctx.lineWidth = lw;
+  } else {
+    const big = expr === 'wow' ? 1.25 : 1;
+    const wr = r * .17 * big, hr = r * .21 * big;
+    Ef(cx - ex, ey, wr, hr, C.white); Ef(cx + ex, ey, wr, hr, C.white);
+    const px = clamp(lx || 0, -1, 1) * wr * .42, py = clamp(ly || 0, -1, 1) * hr * .38;
+    const pr = r * (expr === 'wow' ? .085 : .1);
+    Co(cx - ex + px, ey + py, pr, INK); Co(cx + ex + px, ey + py, pr, INK);
+    Co(cx - ex + px + pr * .35, ey + py - pr * .4, pr * .32, C.white); Co(cx + ex + px + pr * .35, ey + py - pr * .4, pr * .32, C.white);
+  }
+  Eo(cx - r * .62, cy + r * .3, r * .15, r * .09, C.pink); Eo(cx + r * .62, cy + r * .3, r * .15, r * .09, C.pink);
+  const my = cy + r * .38;
+  if (expr === 'happy' || expr === 'love') {
+    bp(); ctx.moveTo(cx - r * .26, my - r * .04); ctx.quadraticCurveTo(cx, my + r * .5, cx + r * .26, my - r * .04); ctx.closePath(); fs(C.mouth);
+    bp(); ctx.moveTo(cx - r * .12, my + r * .2); ctx.quadraticCurveTo(cx, my + r * .12, cx + r * .12, my + r * .2); ctx.quadraticCurveTo(cx, my + r * .3, cx - r * .12, my + r * .2); fo(C.pink);
+  } else if (expr === 'wow') {
+    Ef(cx, my + r * .06, r * .1, r * .13, C.mouth);
+  } else if (expr === 'want') {
+    Ef(cx, my + r * .02, r * .09, r * .07, C.mouth);
+  } else {
+    arcS(cx, my - r * .16, r * .2, Math.PI * .22, Math.PI * .78);
+  }
+}
+function jumpShoe(x, y, d) {
+  springZ(x, y + 3, y + 15, 6, 2);
+  Rf(x - 8, y + 13, 16, 5, 2, C.yel);
+  Ef(x + d * 2, y - 1, 11, 6.5, C.pink);
+  Ef(x + d * 7, y, 4.5, 4.5, C.white);
+}
+// 手の位置（胴の上端 ty 基準）
+function handPos(pose, ty, sw, ph) {
+  switch (pose) {
+    case 'hold': return [-17, ty + 34, 17, ty + 34];
+    case 'offer': return [-11, ty - 30, 11, ty - 30];
+    case 'cheer': return [-37, ty - 28 + Math.sin(ph) * 5, 37, ty - 28 - Math.sin(ph) * 5];
+    case 'hatfix': return [-31, ty + 52, 16, ty - 50];
+    case 'wave': return [-31, ty + 52, 38, ty - 26 + Math.sin(ph * 2) * 7];
+    case 'tool': return [-31, ty + 52, 30, ty + 6 + Math.sin(ph) * 6];
+    default: return [-31, ty + 52 + sw, 31, ty + 52 - sw];
+  }
+}
+const PK = {
+  fire: { skin: C.skin, hair: C.hair2, top: C.tealD, pants: C.tealD, shoe: '#3a3440', hat: 'helmet' },
+  deliv: { skin: C.skin2, hair: C.hair, top: C.yel, pants: C.teal, shoe: C.white, hat: 'cap' },
+  chef: { skin: C.skin, hair: C.hair3, top: C.white, pants: C.greyD, shoe: '#3a3440', hat: 'chef' },
+  painter: { skin: C.skin3, hair: C.hair2, top: C.yelL, pants: C.tealD, shoe: C.pink, hat: 'beret' },
+  music: { skin: C.skin2, hair: C.hair2, top: C.pink, pants: C.tealDD, shoe: '#3a3440', hat: 'bowler' },
+  carp: { skin: C.skin3, hair: C.hair2, top: C.yelD, pants: C.tealD, shoe: C.brown, hat: 'band' },
+};
+function topDetail(kind, ty) {
+  if (kind === 'fire') {
+    bp(); ctx.rect(-27, ty + 34, 54, 7); fo(C.yel); seg(-27, ty + 34, 27, ty + 34); seg(-27, ty + 41, 27, ty + 41);
+    bp(); ctx.rect(-27, ty + 46, 54, 5); fo(C.yel); seg(-27, ty + 46, 27, ty + 46); seg(-27, ty + 51, 27, ty + 51);
+    bp(); ctx.moveTo(-12, ty); ctx.lineTo(0, ty + 14); ctx.lineTo(12, ty); ctx.stroke();
+    bp(); rr(-27, ty, 54, 60, 15); ctx.stroke();
+  } else if (kind === 'deliv') {
+    bp(); ctx.moveTo(-13, ty); ctx.lineTo(0, ty + 12); ctx.lineTo(13, ty); ctx.closePath(); fs(C.teal);
+    Cf(-12, ty + 26, 5, C.pink);
+  } else if (kind === 'chef') {
+    bp(); ctx.moveTo(-14, ty); ctx.lineTo(0, ty + 16); ctx.lineTo(14, ty); ctx.closePath(); fs(C.pink);
+    for (let i = 0; i < 3; i++) { Co(-8, ty + 24 + i * 11, 2.6, INK); Co(8, ty + 24 + i * 11, 2.6, INK); }
+  } else if (kind === 'painter') {
+    Co(-12, ty + 30, 4, C.pink); Co(10, ty + 22, 3.5, C.teal); Co(4, ty + 42, 4, C.verm); Co(-6, ty + 48, 3, C.teal);
+    bp(); ctx.moveTo(-14, ty); ctx.quadraticCurveTo(0, ty + 12, 14, ty); ctx.stroke();
+  } else if (kind === 'music') {
+    bp(); ctx.moveTo(-10, ty); ctx.lineTo(0, ty + 30); ctx.lineTo(10, ty); ctx.closePath(); fs(C.white);
+    bp(); ctx.moveTo(0, ty + 6); ctx.lineTo(-9, ty + 1); ctx.lineTo(-9, ty + 11); ctx.closePath(); ctx.moveTo(0, ty + 6); ctx.lineTo(9, ty + 1); ctx.lineTo(9, ty + 11); ctx.closePath(); fs(C.yel);
+  } else if (kind === 'carp') {
+    Rf(-20, ty + 18, 14, 12, 3, C.yel); Rf(6, ty + 18, 14, 12, 3, C.yel);
+    bp(); ctx.rect(-27, ty + 47, 54, 8); fs(C.brown);
+    Rf(16, ty + 40, 7, 20, 2, C.tan); Rf(10, ty + 36, 20, 8, 2, C.greyM);
+  }
+}
+function drawHat(kind, hc, K, st) {
+  const tilt = st.hatTilt || 0;
+  if (kind === 'helmet') {
+    ctx.save(); ctx.translate(0, hc); ctx.rotate(tilt); ctx.translate(0, -hc);
+    Ef(0, hc - 15, 37, 7.5, C.verm);
+    bp(); ctx.moveTo(-28, hc - 16); ctx.quadraticCurveTo(-29, hc - 46, 0, hc - 47); ctx.quadraticCurveTo(29, hc - 46, 28, hc - 16); ctx.closePath(); fs(C.verm);
+    seg(0, hc - 46, 0, hc - 20);
+    bp(); ctx.moveTo(-9, hc - 40); ctx.lineTo(9, hc - 40); ctx.lineTo(9, hc - 27); ctx.quadraticCurveTo(0, hc - 20, -9, hc - 27); ctx.closePath(); fs(C.yel);
+    star5(0, hc - 32, 4.5, C.verm);
+    ctx.restore();
+  } else if (kind === 'cap') {
+    bp(); ctx.moveTo(-27, hc - 13); ctx.quadraticCurveTo(-27, hc - 41, 0, hc - 41); ctx.quadraticCurveTo(27, hc - 41, 27, hc - 13); ctx.closePath(); fs(C.pink);
+    Ef(0, hc - 13, 31, 6, C.pinkD);
+    Cf(0, hc - 28, 5.5, C.teal);
+  } else if (kind === 'chef') {
+    blob([[-15, hc - 44, 12], [0, hc - 50, 14], [15, hc - 44, 12]], C.white);
+    Rf(-21, hc - 40, 42, 20, 4, C.white);
+  } else if (kind === 'beret') {
+    Ef(4, hc - 24, 30, 10, C.pink, -.12);
+    seg(4, hc - 34, 6, hc - 40);
+  } else if (kind === 'bowler') {
+    Ef(0, hc - 22, 30, 6, C.teal);
+    bp(); ctx.moveTo(-18, hc - 23); ctx.quadraticCurveTo(-18, hc - 46, 0, hc - 46); ctx.quadraticCurveTo(18, hc - 46, 18, hc - 23); ctx.closePath(); fs(C.teal);
+    bp(); ctx.rect(-18, hc - 30, 36, 6); fs(C.yel);
+  } else if (kind === 'band') {
+    bp(); ctx.rect(-28, hc - 18, 56, 8); fs(C.teal);
+    bp(); ctx.moveTo(26, hc - 14); ctx.lineTo(38, hc - 22); ctx.lineTo(36, hc - 10); ctx.closePath(); fs(C.teal);
+  }
+}
+function drawHair(kind, hc, K, front) {
+  const h = K.hair;
+  if (!front) {
+    if (kind === 'painter') { bp(); ctx.moveTo(-30, hc + 14); ctx.quadraticCurveTo(-34, hc - 30, 0, hc - 31); ctx.quadraticCurveTo(34, hc - 30, 30, hc + 14); ctx.closePath(); fs(h); }
+    else if (kind !== 'chef') Cf(0, hc - 3, 28.5, h);
+    return;
+  }
+  if (kind === 'carp') {
+    bp(); ctx.moveTo(-24, hc - 14); ctx.lineTo(-20, hc - 30); ctx.lineTo(-10, hc - 22); ctx.lineTo(-2, hc - 33); ctx.lineTo(6, hc - 22); ctx.lineTo(16, hc - 31); ctx.lineTo(20, hc - 18); ctx.lineTo(25, hc - 14); ctx.closePath(); fs(h);
+  } else if (kind === 'painter') {
+    bp(); ctx.moveTo(-26, hc - 6); ctx.quadraticCurveTo(-22, hc - 28, 0, hc - 26); ctx.quadraticCurveTo(22, hc - 28, 26, hc - 6); ctx.quadraticCurveTo(10, hc - 16, 0, hc - 12); ctx.quadraticCurveTo(-12, hc - 18, -26, hc - 6); ctx.closePath(); fs(h);
+  } else if (kind === 'music') {
+    bp(); ctx.moveTo(-26, hc - 8); ctx.quadraticCurveTo(-14, hc - 26, 0, hc - 20); ctx.quadraticCurveTo(14, hc - 26, 26, hc - 8); ctx.quadraticCurveTo(12, hc - 16, 0, hc - 14); ctx.quadraticCurveTo(-12, hc - 16, -26, hc - 8); ctx.closePath(); fs(h);
+  } else if (kind === 'chef') {
+    Ef(-24, hc - 4, 6, 10, h); Ef(24, hc - 4, 6, 10, h);
+  } else {
+    Ef(-24, hc - 6, 6, 9, h); Ef(24, hc - 6, 6, 9, h);
+  }
+}
+// 頭（髪・顔・帽子）は表情・まばたき・視線（3x3）ごとにビットマップ化して使い回す
+const qz = v => v > .33 ? 1 : v < -.33 ? -1 : 0;
+const headKey = (kind, st, s) => kind + ':' + (st.expr || 'idle') + ':' + qz(st.lx || 0) + ',' + qz(st.ly || 0) + ':' + (st.blink ? 1 : 0) + ':' + s.toFixed(2);
+function drawPerson(kind, x, y, s, st) {
+  const K = PK[kind] || PK.fire;
+  ctx.save(); ctx.translate(x, y);
+  if (st.rot) ctx.rotate(st.rot);
+  const sq = st.squash || 0;
+  ctx.scale(s * (1 + sq * .14), s * (1 - sq * .16));
+  ink(LW / s);
+  const bob = st.bob || 0, lift = st.jumpShoes ? 17 : 0, ph = st.ph || 0;
+  const hip = -52 - lift + bob;
+  let lfx = -12, rfx = 12, lfy = -lift - 4, rfy = -lift - 4;
+  if (st.walk != null) { const sw = Math.sin(st.walk); lfx += sw * 5; rfx -= sw * 5; lfy -= Math.max(0, sw) * 7; rfy -= Math.max(0, -sw) * 7; }
+  if (st.legsUp) { lfy -= 10; rfy -= 10; lfx -= 4; rfx += 4; }
+  limb([-11, hip, lfx, lfy], 13, K.pants);
+  limb([11, hip, rfx, rfy], 13, K.pants);
+  if (st.jumpShoes) { jumpShoe(lfx, lfy - 2, -1); jumpShoe(rfx, rfy - 2, 1); }
+  else { Ef(lfx - 2, lfy + 1, 10, 6, K.shoe); Ef(rfx + 2, rfy + 1, 10, 6, K.shoe); }
+  const ty = -110 - lift + bob;
+  Rf(-27, ty, 54, 60, 15, K.top);
+  topDetail(kind, ty);
+  const sway = Math.sin(G.T * 2 + ph) * 2;
+  const hp = handPos(st.pose, ty, sway, G.T * 4 + ph);
+  if (st.hold) drawItem(st.hold, 0, ty + 22, st.holdSize || 46, st.holdO);
+  if (st.pose === 'offer' && st.pay) drawItem(st.pay, 0, ty - 46, st.paySize || 48, st.payO);
+  if (kind === 'deliv' && st.parcel) { Rf(-30, ty + 22, 26, 22, 3, C.tan); seg(-17, ty + 22, -17, ty + 44); }
+  limb([-24, ty + 11, hp[0] - 4, (ty + 11 + hp[1]) / 2, hp[0], hp[1]], 11, K.top);
+  limb([24, ty + 11, hp[2] + 4, (ty + 11 + hp[3]) / 2, hp[2], hp[3]], 11, K.top);
+  Cf(hp[0], hp[1], 6.5, K.skin); Cf(hp[2], hp[3], 6.5, K.skin);
+  if (kind === 'painter' && st.pose !== 'offer' && st.pose !== 'cheer') { limb([hp[2], hp[3], hp[2] + 8, hp[3] - 20], 3, C.brown); Cf(hp[2] + 9, hp[3] - 23, 3.5, C.pink); }
+  if (kind === 'music' && st.pose !== 'offer') { Ef(-20, ty + 50, 13, 9, C.yel); bp(); ctx.moveTo(-31, ty + 48); ctx.lineTo(-25, ty + 54); ctx.lineTo(-19, ty + 48); ctx.lineTo(-13, ty + 54); ctx.lineTo(-9, ty + 49); ctx.strokeStyle = C.pinkD; ctx.stroke(); ctx.strokeStyle = INK; }
+  const hc = ty - 19;
+  if (st.hatTilt || st.noSprite) {
+    drawHair(kind, hc, K, false);
+    Cf(0, hc, 27, K.skin);
+    drawFace(0, hc + 3, 27, st.expr, st.lx, st.ly, st.blink);
+    drawHair(kind, hc, K, true);
+    drawHat(K.hat, hc, K, st);
+  } else {
+    blit(spr('hp:' + headKey(kind, st, s), 96, 108, 48, 72, () => {
+      ink(LW / s); drawHair(kind, 0, K, false); Cf(0, 0, 27, K.skin);
+      drawFace(0, 3, 27, st.expr, qz(st.lx || 0), qz(st.ly || 0), st.blink); drawHair(kind, 0, K, true); drawHat(K.hat, 0, K, NO);
+    }, s), 0, hc);
+  }
+  ctx.restore();
+}
+function robotEyes(x, y, expr, lx, ly, blink) {
+  const ox = clamp(lx || 0, -1, 1) * 3, oy = clamp(ly || 0, -1, 1) * 2.5;
+  const lw = ctx.lineWidth;
+  ctx.save(); ctx.strokeStyle = C.yelL; ctx.lineWidth = 4;
+  for (const d of [-1, 1]) {
+    const ex = x + d * 11 + ox, ey = y + oy;
+    if (expr === 'happy') arcS(ex, ey + 4, 6, Math.PI * 1.12, Math.PI * 1.88);
+    else if (expr === 'love') heart(ex, ey, 6.5, C.pink);
+    else if (blink) seg(ex - 5, ey, ex + 5, ey);
+    else if (expr === 'wow') { Co(ex, ey, 7.5, C.yelL); Co(ex, ey, 3, C.tealDD); }
+    else if (expr === 'want') { Co(ex, ey, 6, C.yelL); Co(ex + 1.5, ey - 1.5, 2, C.tealDD); }
+    else Co(ex, ey, 5.5, C.yelL);
+  }
+  if (expr === 'happy' || expr === 'love') arcS(x + ox * .5, y + 6, 7, Math.PI * .2, Math.PI * .8);
+  else if (expr === 'wow') { ctx.lineWidth = 3; arcS(x + ox * .5, y + 13, 3, 0, TAU); }
+  else seg(x - 4 + ox * .5, y + 12, x + 4 + ox * .5, y + 12);
+  ctx.restore(); ctx.lineWidth = lw;
+}
+function drawRobot(x, y, s, st) {
+  ctx.save(); ctx.translate(x, y); if (st.rot) ctx.rotate(st.rot);
+  const sq = st.squash || 0; ctx.scale(s * (1 + sq * .14), s * (1 - sq * .16)); ink(LW / s);
+  const bob = st.bob || 0, ph = st.ph || 0;
+  let lo = 0, ro = 0; if (st.walk != null) { lo = Math.max(0, Math.sin(st.walk)) * 7; ro = Math.max(0, -Math.sin(st.walk)) * 7; }
+  Rf(-21, -46 - lo, 14, 40, 5, C.greyM); Rf(7, -46 - ro, 14, 40, 5, C.greyM);
+  Rf(-27, -11 - lo, 24, 11, 4, C.greyD); Rf(3, -11 - ro, 24, 11, 4, C.greyD);
+  const ty = -106 + bob;
+  Rf(-33, ty, 66, 62, 12, C.grey);
+  Rf(-21, ty + 12, 42, 26, 6, C.yel);
+  Cf(-10, ty + 25, 4.5, C.pink); Cf(10, ty + 25, 4.5, C.teal);
+  seg(-22, ty + 50, 22, ty + 50);
+  const sway = Math.sin(G.T * 2.4 + ph) * 2;
+  const hp = handPos(st.pose, ty, sway, G.T * 4 + ph);
+  if (st.hold) drawItem(st.hold, 0, ty + 22, st.holdSize || 46, st.holdO);
+  if (st.pose === 'offer' && st.pay) drawItem(st.pay, 0, ty - 46, st.paySize || 48, st.payO);
+  limb([-31, ty + 12, hp[0], hp[1]], 9, C.greyM); limb([31, ty + 12, hp[2], hp[3]], 9, C.greyM);
+  Cf(hp[0], hp[1], 7.5, C.grey); Cf(hp[2], hp[3], 7.5, C.grey);
+  seg(hp[0] - 4, hp[1] + 3, hp[0] + 4, hp[1] + 3); seg(hp[2] - 4, hp[3] + 3, hp[2] + 4, hp[3] + 3);
+  Rf(-7, ty - 10, 14, 12, 3, C.greyM);
+  const h0 = ty - 56;
+  const aw = Math.sin(G.T * 3 + ph) * .18 + (st.antenna || 0);
+  ctx.save(); ctx.translate(0, h0); ctx.rotate(aw); seg(0, 0, 0, -14); Cf(0, -19, 5.5, C.pink); ctx.restore();
+  const head = (yy, lx, ly) => {
+    Rf(-39, yy + 14, 8, 18, 3, C.greyM); Rf(31, yy + 14, 8, 18, 3, C.greyM);
+    Rf(-33, yy, 66, 48, 13, C.grey);
+    Rf(-25, yy + 8, 50, 32, 9, C.tealDD);
+    robotEyes(0, yy + 20, st.expr, lx, ly, st.blink);
+  };
+  if (st.noSprite) head(h0, st.lx, st.ly);
+  else blit(spr('hr:' + headKey('robot', st, s), 88, 60, 44, 6, () => { ink(LW / s); head(0, qz(st.lx || 0), qz(st.ly || 0)); }, s), 0, h0);
+  ctx.restore();
+}
+function drawAstro(x, y, s, st) {
+  ctx.save(); ctx.translate(x, y); if (st.rot) ctx.rotate(st.rot);
+  const sq = st.squash || 0; ctx.scale(s * (1 + sq * .14), s * (1 - sq * .16)); ink(LW / s);
+  const bob = st.bob || 0, ph = st.ph || 0;
+  let lfy = -5, rfy = -5, lfx = -13, rfx = 13;
+  if (st.walk != null) { const sw = Math.sin(st.walk); lfx += sw * 5; rfx -= sw * 5; lfy -= Math.max(0, sw) * 7; rfy -= Math.max(0, -sw) * 7; }
+  if (st.legsUp) { lfy -= 9; rfy -= 9; }
+  const hip = -52 + bob;
+  limb([-12, hip, lfx, lfy], 15, C.white); limb([12, hip, rfx, rfy], 15, C.white);
+  Rf(lfx - 11, lfy - 4, 20, 11, 4, C.greyM); Rf(rfx - 9, rfy - 4, 20, 11, 4, C.greyM);
+  const ty = -110 + bob;
+  Rf(-37, ty + 4, 74, 46, 10, C.tealL);
+  Rf(-29, ty, 58, 62, 18, C.white);
+  Rf(-14, ty + 16, 28, 17, 4, C.yel); Co(-6, ty + 24.5, 3, C.pink); Co(6, ty + 24.5, 3, C.teal);
+  star5(-17, ty + 45, 5.5, C.pink, true);
+  seg(-27, ty + 40, 27, ty + 40);
+  const sway = Math.sin(G.T * 2 + ph) * 2;
+  const hp = handPos(st.pose, ty, sway, G.T * 4 + ph);
+  if (st.hold) drawItem(st.hold, 0, ty + 22, st.holdSize || 46, st.holdO);
+  if (st.pose === 'offer' && st.pay) drawItem(st.pay, 0, ty - 50, st.paySize || 48, st.payO);
+  limb([-25, ty + 12, hp[0] - 4, (ty + 12 + hp[1]) / 2, hp[0], hp[1]], 13, C.white);
+  limb([25, ty + 12, hp[2] + 4, (ty + 12 + hp[3]) / 2, hp[2], hp[3]], 13, C.white);
+  Cf(hp[0], hp[1], 7.5, C.greyM); Cf(hp[2], hp[3], 7.5, C.greyM);
+  const hc0 = ty - 24;
+  const helmet = (hc, lx, ly) => {
+    seg(20, hc - 26, 27, hc - 40); Cf(28, hc - 43, 4.5, C.pink);
+    Cf(0, hc, 35, C.white);
+    Cf(0, hc + 2, 27, C.skin);
+    ctx.save(); bp(); cir(0, hc + 2, 27); ctx.clip();
+    bp(); ctx.moveTo(-28, hc - 2); ctx.quadraticCurveTo(-20, hc - 30, 0, hc - 26); ctx.quadraticCurveTo(20, hc - 30, 28, hc - 2); ctx.quadraticCurveTo(12, hc - 14, 0, hc - 11); ctx.quadraticCurveTo(-14, hc - 14, -28, hc - 2); ctx.closePath(); fs(C.hair3);
+    ctx.restore();
+    drawFace(0, hc + 6, 24, st.expr, lx, ly, st.blink);
+    ctx.save(); ctx.strokeStyle = C.tealL; ctx.lineWidth = 4.5; arcS(0, hc + 2, 29.5, 0, TAU); ctx.restore();
+    arcS(0, hc + 2, 27, 0, TAU); arcS(0, hc + 2, 32, 0, TAU);
+  };
+  if (st.noSprite) helmet(hc0, st.lx, st.ly);
+  else blit(spr('ha:' + headKey('astro', st, s), 84, 96, 42, 54, () => { ink(LW / s); helmet(0, qz(st.lx || 0), qz(st.ly || 0)); }, s), 0, hc0);
+  ctx.restore();
+}
+function drawChar(kind, x, y, s, st) {
+  if (kind === 'robot') drawRobot(x, y, s, st);
+  else if (kind === 'astro') drawAstro(x, y, s, st);
+  else drawPerson(kind, x, y, s, st);
+}
+// 店主の女の子（カウンターの上端が y=0）
+function drawShopkeeper(x, y, s, st) {
+  ctx.save(); ctx.translate(x, y - (st.up || 0));
+  const lean = st.lean || 0;
+  ctx.translate(0, lean * 10); ctx.rotate((st.tilt || 0) * lean);
+  const sq = st.squash || 0;
+  ctx.scale(s * (1 + lean * .08 + sq * .1), s * (1 + lean * .08 - sq * .12));
+  ink(LW / s);
+  const ph = G.T * 4;
+  if ((st.up || 0) > 2 || st.showLegs) {
+    const kick = st.legsUp ? -8 : 0;
+    limb([-11, 4, -14, 60 + kick], 12, C.white); limb([11, 4, 14, 60 + kick], 12, C.white);
+    if (st.shoes) { jumpShoe(-15, 63 + kick, -1); jumpShoe(15, 63 + kick, 1); }
+    else { Ef(-17, 64 + kick, 10, 6, C.pink); Ef(17, 64 + kick, 10, 6, C.pink); }
+  }
+  bp(); ctx.moveTo(-27, -94); ctx.lineTo(27, -94); ctx.lineTo(40, 16); ctx.quadraticCurveTo(0, 24, -40, 16); ctx.closePath(); fs(C.pink);
+  bp(); ctx.moveTo(-19, -70); ctx.lineTo(19, -70); ctx.lineTo(28, 13); ctx.quadraticCurveTo(0, 19, -28, 13); ctx.closePath(); fs(C.yel);
+  seg(-19, -70, -24, -93); seg(19, -70, 24, -93);
+  Rf(-11, -42, 22, 16, 5, C.teal);
+  const hand = st.hands || 'counter';
+  let hl, hr;
+  if (hand === 'up') { hl = [-40, -150 + Math.sin(ph) * 6]; hr = [40, -150 - Math.sin(ph) * 6]; }
+  else if (hand === 'lean') { hl = [-32, -2]; hr = [32, -2]; }
+  else if (hand === 'cheek') { hl = [-22, -112]; hr = [22, -112]; }
+  else if (hand === 'reachL') { hl = [-62, -40]; hr = [36, -6]; }
+  else if (hand === 'reachR') { hl = [-36, -6]; hr = [62, -40]; }
+  else { hl = [-40, -6 + Math.sin(G.T * 1.7) * 1.5]; hr = [40, -6 - Math.sin(G.T * 1.7) * 1.5]; }
+  limb([-24, -86, hl[0] - 4, (hl[1] - 86) / 2, hl[0], hl[1]], 11, C.pink);
+  limb([24, -86, hr[0] + 4, (hr[1] - 86) / 2, hr[0], hr[1]], 11, C.pink);
+  Cf(hl[0], hl[1], 7, C.skin); Cf(hr[0], hr[1], 7, C.skin);
+  const hc0 = -128;
+  const headS = (hc, lx, ly) => {
+  Cf(0, hc + 3, 39, C.hair);
+  Cf(-35, hc - 27, 15, C.hair); Cf(35, hc - 27, 15, C.hair);
+  for (const d of [-1, 1]) {
+    bp(); const bx = d * 30, by = hc - 15;
+    ctx.moveTo(bx, by); ctx.lineTo(bx + d * 12, by - 9); ctx.lineTo(bx + d * 13, by + 7); ctx.closePath();
+    ctx.moveTo(bx, by); ctx.lineTo(bx - d * 10, by - 10); ctx.lineTo(bx - d * 11, by + 6); ctx.closePath(); fs(C.pink);
+    Cf(bx, by, 3.5, C.pinkD);
+  }
+  Cf(0, hc, 34, C.skin);
+  drawFace(0, hc + 6, 34, st.expr, lx, ly, st.blink);
+  bp(); ctx.moveTo(-34, hc - 2); ctx.quadraticCurveTo(-32, hc - 38, 0, hc - 36); ctx.quadraticCurveTo(32, hc - 38, 34, hc - 2);
+  ctx.quadraticCurveTo(26, hc - 20, 14, hc - 16); ctx.quadraticCurveTo(6, hc - 24, 0, hc - 16); ctx.quadraticCurveTo(-10, hc - 24, -16, hc - 15); ctx.quadraticCurveTo(-26, hc - 20, -34, hc - 2); ctx.closePath(); fs(C.hair);
+  ctx.save(); ctx.strokeStyle = C.yel; ctx.lineWidth = 6; arcS(0, hc + 4, 37, Math.PI * 1.15, Math.PI * 1.85); ctx.restore();
+  arcS(0, hc + 4, 40, Math.PI * 1.16, Math.PI * 1.84);
+  };
+  if (st.noSprite || Math.abs(s - 1) > .001) headS(hc0, st.lx, st.ly);
+  else blit(spr('hs:' + headKey('shop', st, 1), 112, 96, 56, 50, () => { ink(LW); headS(0, qz(st.lx || 0), qz(st.ly || 0)); }), 0, hc0);
+  ctx.restore();
+}
+// お手本の手
+function drawHand(x, y, s, press, alpha) {
+  ctx.save(); ctx.globalAlpha = alpha; ctx.translate(x, y + press * 6);
+  ctx.scale(s, s * (1 - press * .08)); ctx.rotate(-.32); ink(LW / s);
+  Rf(-14, 24, 42, 36, 14, C.skin);
+  Ef(-15, 40, 7, 12, C.skin, -.5);
+  Rf(-8, -2, 16, 42, 8, C.skin);
+  Ef(0, 5, 4.5, 3.5, C.pinkL);
+  Ef(9, 28, 8, 6, C.skin); Ef(20, 32, 7, 6, C.skin);
+  Rf(-14, 56, 44, 22, 6, C.teal);
+  ctx.restore();
+}
+
+// =====================================================================
+//  屋台（たたみ・コイン・模型）
+// =====================================================================
+const foldK = v => 1 - eIO(clamp(v, 0, 1));
+function swirlVec(x, y, r, col, w, a0) {
+  ctx.save(); ctx.strokeStyle = col || C.verm; ctx.lineWidth = w || r * .28; ctx.lineCap = 'round';
+  bp();
+  for (let i = 0; i <= 40; i++) {
+    const a = i / 40 * TAU * 1.6, rr2 = r * (.12 + .88 * i / 40);
+    const px = x + Math.cos(a + a0) * rr2, py = y + Math.sin(a + a0) * rr2;
+    if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py);
+  }
+  ctx.stroke(); ctx.restore();
+}
+function swirl(x, y, r, col, w) {
+  const b = r * 2 + (w || r * .28) * 2 + 4;
+  const s = spr('sw:' + r.toFixed(1) + (col || '') + (w || 0), b, b, b / 2, b / 2, () => swirlVec(0, 0, r, col, w, 0));
+  ctx.save(); ctx.translate(x, y); ctx.rotate(G.T * .6); blit(s, 0, 0); ctx.restore();
+}
+function drawSlotItems(st, idxs) {
+  const T = L.t, sz = T.itemSize;
+  for (const i of idxs) {
+    const sl = st.shelf[i], x = T.slots[i][0], y = T.slots[i][1];
+    if (!st.bgStall) Ef(x, y + sz * .44, sz * .38, sz * .07, C.pinkL);
+    const n = sl.stack.length;
+    if (!n) continue;
+    let sx = 1, sy = 1, rot = 0, dy = 0, sc = 1;
+    const tp = G.T - sl.popT; if (tp < .45) { const e = eBack(clamp(tp / .45, 0, 1)); sc *= Math.max(.05, e); }
+    const tq = G.T - sl.squishT; if (tq < .3) { const u = tq / .3; const a = Math.sin(u * Math.PI) * (1 - u * .4); sx += a * .25; sy -= a * .25; }
+    const tw = G.T - sl.wigT; if (tw < .5) { rot = Math.sin(tw * 32) * .16 * (1 - tw / .5); }
+    const g = G.guide;
+    if (g && g.slot === i && st === G.st && !G.cine) {
+      const ph = (G.T - g.t0) % 1.5;
+      if (ph < .55) { const u = ph / .55; dy = -Math.sin(u * Math.PI) * 12; if (u > .85) { sx += .06; sy -= .06; } }
+      sc *= 1.1;
+      ctx.save(); ctx.globalAlpha = .55 + .25 * Math.sin(G.T * 5); Co(x, y + 2, sz * .62, C.glow); ctx.restore();
+      ink(LW * .7); ctx.save(); ctx.strokeStyle = C.yel; ctx.lineWidth = 3.5; arcS(x, y + 2, sz * .62 + Math.sin(G.T * 5) * 2, 0, TAU); ctx.restore(); ink(LW);
+    }
+    const d = G.demo;
+    if (d && d.slot === i && st === G.st) { const u = G.T - d.t0; if (u > .62 && u < 1.05) { const a = Math.sin(inv(.62, 1.05, u) * Math.PI); sx += a * .16; sy -= a * .16; } }
+    if (n >= 3) drawItem(sl.stack[n - 3], x + 12, y - 4, sz * .82 * sc, { sx, sy, rot });
+    if (n >= 2) drawItem(sl.stack[n - 2], x - 12, y - 4, sz * .82 * sc, { sx, sy, rot });
+    drawItem(sl.stack[n - 1], x, y + dy, sz * sc, { sx, sy, rot });
+  }
+}
+function stallStatic(st) { const f = st.fold; return f.roof <= 0 && f.shelf <= 0 && f.wall <= 0 && f.disc <= 0; }
+// 静止中の屋台は背景レイヤーに焼き込み（毎フレームは品物・店主など動く物だけ描く）
+function stallInBG(st) { return !G.cine && stallStatic(st); }
+function drawStallBack(st) {
+  const f = st.fold; if (f.disc > 0) return;
+  if (st.bgStall) { drawSlotItems(st, [2, 4, 3, 5]); return; }
+  drawStallBackVec(st, true);
+}
+const FOLDST = { fold: FOLD0, shelf: [] };
+function drawStallBackVec(st, items) {
+  const T = L.t, f = st.fold;
+  const wk = foldK(f.wall), sk = foldK(f.shelf), w = T.wall;
+  ink(LW);
+  if (wk > .01) {
+    ctx.save(); ctx.translate(0, w.y1); ctx.scale(1, wk); ctx.translate(0, -w.y1);
+    bp(); ctx.rect(w.x0, w.y0, w.x1 - w.x0, w.y1 - w.y0); fs(C.yelL);
+    ctx.save(); ctx.strokeStyle = '#ffe58c'; ctx.lineWidth = 2.5; for (let x = w.x0 + 41; x < w.x1 - 10; x += 41) seg(x, w.y0 + 34, x, w.y1 - 4); ctx.restore();
+    const n = 6, pw = (w.x1 - w.x0) / n;
+    for (let i = 0; i < n; i++) { bp(); rr(w.x0 + i * pw + 1.5, w.y0 - 6, pw - 3, 36, 5); fs(i % 2 ? C.teal : C.tealD); }
+    if (sk > .01) {
+      for (let side = 0; side < 2; side++) {
+        const b0 = T.boards[side * 2], b1 = T.boards[side * 2 + 1];
+        const hx = side === 0 ? b0[0] - 4 : b0[1] + 4;
+        ctx.save(); ctx.translate(hx, 0); ctx.scale(sk, 1); ctx.translate(-hx, 0);
+        for (const b of [b0, b1]) { Rf(b[0], b[2], b[1] - b[0], 10, 3, C.teal); Rf(side ? b[1] - 10 : b[0], b[2] + 8, 10, 12, 2, C.tealD); }
+        if (items) drawSlotItems(st, side === 0 ? [2, 4] : [3, 5]);
+        else for (const i of side === 0 ? [2, 4] : [3, 5]) { const sz = T.itemSize; Ef(T.slots[i][0], T.slots[i][1] + sz * .44, sz * .38, sz * .07, C.pinkL); }
+        ctx.restore();
+      }
+    }
+    ctx.restore();
+  }
+  for (const px of T.posts) {
+    const top = lerp(w.y1, T.awn.y0 + 16, wk);
+    Rf(px - T.postW / 2, top, T.postW, T.ground - top, 4, C.verm);
+  }
+}
+function trayPos() { const t = L.t.tray; return { x: t.x, y: t.y - 36 }; }
+function drawTray(st) {
+  const t = L.t.tray;
+  let rot = 0; const tw = G.T - (st.trayWig || -9); if (tw < .5) rot = Math.sin(tw * 30) * .08 * (1 - tw / .5);
+  ctx.save(); ctx.translate(t.x, t.y); ctx.rotate(rot);
+  Rf(-7, -2, 14, 26, 3, C.yel);
+  bp(); ctx.moveTo(-46, -8); ctx.quadraticCurveTo(0, 30, 46, -8); ctx.closePath(); fs(C.teal);
+  Ef(0, -8, 46, 10, C.tealL);
+  Eo(0, -8, 34, 5.5, C.teal);
+  ctx.restore();
+}
+function counterVec(mats) {
+  const T = L.t, c = T.counter;
+  ink(LW);
+  Rf(c.x0 + 12, c.y1 - 6, 14, T.ground - c.y1 + 6, 3, C.vermD); Rf(c.x1 - 26, c.y1 - 6, 14, T.ground - c.y1 + 6, 3, C.vermD);
+  Rf(c.x0, c.y0, c.x1 - c.x0, c.y1 - c.y0, 6, C.verm);
+  for (let x = c.x0 + 24; x < c.x1 - 12; x += 32) Co(x, c.y1 - 13, 5.5, C.vermL);
+  Rf(c.x0 - 7, c.y0 - 7, c.x1 - c.x0 + 14, 13, 5, C.yel);
+  if (mats) for (const i of [0, 1]) { const sz = T.itemSize; Ef(T.slots[i][0], T.slots[i][1] + sz * .44, sz * .38, sz * .07, C.pinkL); }
+}
+function drawStallFront(st, withItems) {
+  const T = L.t, f = st.fold; if (f.disc > 0) return;
+  const c = T.counter, sk = foldK(f.shelf);
+  if (!st.bgStall) counterVec(false);
+  ink(LW);
+  drawMedals(st);
+  drawTray(st);
+  if (withItems !== false && sk > .01) {
+    ctx.save(); const cy = c.y0 - 6; ctx.translate(T.cx, cy); ctx.scale(sk, sk); ctx.translate(-T.cx, -cy);
+    drawSlotItems(st, [0, 1]);
+    ctx.restore();
+  }
+}
+function signLamps(s) {
+  const pts = [], n = 9;
+  for (let i = 0; i < n; i++) {
+    const u = i / (n - 1);
+    if (u < .2) pts.push([s.x - s.w / 2 - 1, s.y + s.h / 2 - 6 - (u / .2) * (s.h - 12)]);
+    else if (u > .8) pts.push([s.x + s.w / 2 + 1, s.y - s.h / 2 + 6 + ((u - .8) / .2) * (s.h - 12)]);
+    else pts.push([s.x - s.w / 2 + 6 + ((u - .2) / .6) * (s.w - 12), s.y - s.h / 2 - 1]);
+  }
+  return pts;
+}
+function drawSign(st, rk, sync) {
+  const T = L.t, s = T.sign, tw = st.town;
+  const k = Math.max(.05, eIO(clamp(rk * 1.3 - .3, 0, 1)));
+  const by = s.y + s.h / 2;
+  ctx.save(); ctx.translate(s.x, by); ctx.scale(1, k);
+  if (sync) ctx.rotate(Math.sin(sync * Math.PI * 4) * .06 * Math.sin(sync * Math.PI));
+  const sw = G.T - (st.signWig || -9); if (sw < .5) ctx.rotate(Math.sin(sw * 30) * .05 * (1 - sw / .5));
+  ctx.translate(-s.x, -by);
+  ink(LW);
+  const lit = tw.signLit;
+  if (lit) {
+    const pul = .2 + .08 * Math.sin(G.T * 3);
+    ctx.save(); ctx.globalAlpha = pul; Eo(s.x, s.y, s.w * .64, s.h * .95, C.yel); ctx.restore();
+    ctx.save(); ctx.strokeStyle = C.yel; ctx.lineWidth = 4;
+    for (let i = 0; i < 10; i++) { const a = i / 10 * TAU + .3; seg(s.x + Math.cos(a) * s.w * .6, s.y + Math.sin(a) * s.h * .85, s.x + Math.cos(a) * s.w * .68, s.y + Math.sin(a) * s.h * .98); }
+    ctx.restore();
+  }
+  Rf(s.x - s.w / 2, s.y - s.h / 2, s.w, s.h, 13, C.yel);
+  Rf(s.x - s.w / 2 + 8, s.y - s.h / 2 + 8, s.w - 16, s.h - 16, 8, lit ? C.white : C.cream);
+  if (st.emblem) { drawItem(st.emblem, s.x - s.w * .2, s.y - 1, s.h * .6); swirl(s.x + s.w * .2, s.y, s.h * .22, C.verm, 5); }
+  else { swirl(s.x - s.w * .18, s.y, s.h * .24, C.verm, 6); swirl(s.x + s.w * .18, s.y, s.h * .24, C.teal, 6); }
+  const lp = signLamps(s);
+  for (let i = 0; i < lp.length; i++) {
+    const on = lit && G.T > tw.signT + i * .09;
+    if (on) { ctx.save(); ctx.globalAlpha = .5; Co(lp[i][0], lp[i][1], 10, C.glow); ctx.restore(); }
+    Cf(lp[i][0], lp[i][1], 5.5, on ? (i % 2 ? C.pink : C.yel) : C.cream);
+  }
+  ctx.restore();
+}
+function drawLanterns(st, rk) {
+  const T = L.t, tw = st.town;
+  if (tw.night < .05 && !st.lanterns.length) return;
+  for (let i = 0; i < T.lanterns.length; i++) {
+    const p = T.lanterns[i], ln = st.lanterns[i];
+    if (!ln) {
+      if (tw.night > .2) { ctx.save(); ctx.globalAlpha = tw.night; Cf(p[0], p[1] - 22, 4, C.cream); ctx.restore(); }
+      continue;
+    }
+    const tp = clamp((G.T - ln.t0) / .45, 0, 1), e = Math.max(.02, eBack(tp));
+    const sw = Math.sin(G.T * 2.2 + i * 1.7) * .09 + (tp < 1 ? Math.sin(tp * 20) * .2 * (1 - tp) : 0);
+    ctx.save(); ctx.translate(p[0], p[1] - 24); ctx.rotate(sw); ctx.scale(e * rk + .001, e);
+    drawItem('lantern', 0, 24, 40, { col: ln.col, lit: tw.night > .3 });
+    ctx.restore();
+  }
+}
+function drawAwning(st, sync) {
+  const T = L.t, f = st.fold; if (f.disc > 0) return;
+  const a = T.awn, wk = foldK(f.wall), rk = foldK(f.roof);
+  const drop = (1 - wk) * (T.wall.y1 - a.y0 - 16);
+  ctx.save(); ctx.translate(0, drop);
+  drawSign(st, rk, sync);
+  ink(LW);
+  if (st.bgStall && !sync) { drawLanterns(st, rk); ctx.restore(); return; }
+  ctx.save(); ctx.translate(0, a.y0);
+  if (sync) ctx.rotate(Math.sin(sync * Math.PI * 4) * .025 * Math.sin(sync * Math.PI));
+  ctx.scale(1, Math.max(.06, rk)); ctx.translate(0, -a.y0);
+  const n = 8, sw = (a.x1 - a.x0) / n, r = sw / 2;
+  for (let i = 0; i < n; i++) {
+    const x0 = a.x0 + i * sw;
+    bp(); ctx.moveTo(x0, a.y0); ctx.lineTo(x0 + sw, a.y0); ctx.lineTo(x0 + sw, a.y1 - r); ctx.arc(x0 + r, a.y1 - r, r, 0, Math.PI); ctx.closePath();
+    fs(i % 2 ? C.cream : C.verm);
+  }
+  Rf(a.x0 - 6, a.y0 - 9, a.x1 - a.x0 + 12, 15, 6, C.vermD);
+  ctx.restore();
+  drawLanterns(st, rk);
+  ctx.restore();
+}
+function awningVec(T) {
+  const a = T.awn, n = 8, sw = (a.x1 - a.x0) / n, r = sw / 2;
+  ink(LW);
+  for (let i = 0; i < n; i++) {
+    const x0 = a.x0 + i * sw;
+    bp(); ctx.moveTo(x0, a.y0); ctx.lineTo(x0 + sw, a.y0); ctx.lineTo(x0 + sw, a.y1 - r); ctx.arc(x0 + r, a.y1 - r, r, 0, Math.PI); ctx.closePath();
+    fs(i % 2 ? C.cream : C.verm);
+  }
+  Rf(a.x0 - 6, a.y0 - 9, a.x1 - a.x0 + 12, 15, 6, C.vermD);
+}
+// たたまれた板 → コイン
+function coinGeom() {
+  const T = L.t, c = T.counter;
+  const D = Math.min(c.x1 - c.x0, T.ground - T.sign.y) * .74;
+  return { x: T.cx, y: (T.sign.y + T.ground) / 2 + 6, r: D / 2 };
+}
+function drawFoldCard(st) {
+  const T = L.t, c = T.counter, f = st.fold, e = eIO(clamp(f.disc, 0, 1)), g = coinGeom();
+  const w0 = c.x1 - c.x0, h0 = c.y1 - c.y0 + 28, cx0 = T.cx, cy0 = (c.y0 - 28 + c.y1) / 2;
+  const w = lerp(w0, g.r * 2, e), h = lerp(h0, g.r * 2, e), x = lerp(cx0, g.x, e), y = lerp(cy0, g.y, e);
+  ink(LW * 1.2);
+  if (e < .999) {
+    Rf(x - w / 2, y - h / 2, w, h, lerp(8, g.r, e), mix(C.verm, C.gold, e));
+    ctx.save(); ctx.globalAlpha = 1 - e;
+    bp(); rr(x - w / 2 + 4, y - h / 2 + 3, w - 8, Math.max(2, h * .28), 6); fo(C.cream);
+    ctx.restore();
+  }
+  if (e > .5) {
+    ctx.save(); ctx.globalAlpha = inv(.5, 1, e);
+    drawCoin(x, y, h / 2, 1, st);
+    ctx.restore();
+  }
+}
+function coinEmblem(rec, r) {
+  drawMini(0, r * .5, r / 175, FOLD0, rec.lit, 0, rec.emblem);
+  const nR = Math.min(7, rec.roofs), nC = Math.min(7, rec.carts);
+  for (let i = 0; i < nR; i++) {
+    const a = -Math.PI / 2 + (i - (nR - 1) / 2) * .3;
+    ctx.save(); ctx.translate(Math.cos(a) * r * .66, Math.sin(a) * r * .66); ctx.scale(r / 170, r / 170);
+    drawItem('lantern', 0, 0, 44, { col: i % 2 ? C.pink : C.verm, lit: true }); ctx.restore();
+  }
+  for (let i = 0; i < nC; i++) {
+    const a = Math.PI / 2 - (i - (nC - 1) / 2) * .3;
+    ctx.save(); ctx.translate(Math.cos(a) * r * .68, Math.sin(a) * r * .68); ctx.scale(r / 170, r / 170);
+    drawItem('toycart', 0, 0, 50); ctx.restore();
+  }
+}
+function streetRec(st) { return { lit: st.town.signLit, roofs: st.town.roofs.length, carts: st.town.carts.length, emblem: st.emblem }; }
+function drawCoin(x, y, r, sx, st, rec) {
+  ctx.save(); ctx.translate(x, y); ctx.scale(Math.max(.04, Math.abs(sx)), 1);
+  const lw0 = ctx.lineWidth;
+  ctx.lineWidth = Math.max(2, lw0);
+  Cf(0, 0, r, C.gold);
+  ctx.save(); ctx.strokeStyle = C.goldL; ctx.lineWidth = r * .06; arcS(0, 0, r * .87, 0, TAU); ctx.restore();
+  arcS(0, 0, r * .81, 0, TAU);
+  if (sx >= 0) coinEmblem(rec || streetRec(st), r);
+  else { swirl(0, 0, r * .5, C.goldD, r * .1); }
+  ctx.restore();
+}
+// 模型（本物と同じたたみ方をする小さな屋台）
+function drawMini(x, y, s, f, lit, sync, emblem) {
+  f = f || FOLD0;
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  const lw0 = ctx.lineWidth; ctx.lineWidth = lw0 * (s < .3 ? .55 : .72) / Math.max(.02, s);
+  const lw = ctx.lineWidth;
+  if (f.disc > 0) {
+    const e = eIO(clamp(f.disc, 0, 1));
+    const w = lerp(196, 120, e), h = lerp(70, 120, e);
+    Rf(-w / 2, -40 - h / 2 - e * 40, w, h, lerp(6, 60, e), mix(C.verm, C.gold, e));
+    if (e > .6) { ctx.save(); ctx.globalAlpha = inv(.6, 1, e); ctx.strokeStyle = C.goldL; ctx.lineWidth = lw * 2; arcS(0, -80, 48, 0, TAU); ctx.restore(); }
+    ctx.restore(); return;
+  }
+  const wk = foldK(f.wall), sk = foldK(f.shelf), rk = foldK(f.roof);
+  if (wk > .02) {
+    ctx.save(); ctx.translate(0, -36); ctx.scale(1, wk); ctx.translate(0, 36);
+    bp(); ctx.rect(-84, -128, 168, 92); fs(C.yelL);
+    for (let i = 0; i < 4; i++) { bp(); ctx.rect(-84 + i * 42, -128, 42, 18); fs(i % 2 ? C.teal : C.tealD); }
+    for (const sd of [-1, 1]) {
+      ctx.save(); ctx.translate(sd * 84, 0); ctx.scale(sk, 1); ctx.translate(-sd * 84, 0);
+      for (const by of [-92, -58]) { bp(); ctx.rect(sd > 0 ? 44 : -84, by, 40, 6); fs(C.teal); Co(sd * 64, by - 9, 8, sd > 0 ? C.pink : C.yel); }
+      ctx.restore();
+    }
+    Cf(0, -88, 18, C.skin); Cf(0, -97, 14, C.hair);
+    ctx.restore();
+  }
+  for (const px of [-90, 90]) { const top = lerp(-36, -132, wk); bp(); rr(px - 6, top, 12, -top, 3); fs(C.verm); }
+  Rf(-98, -40, 196, 40, 5, C.verm); Rf(-102, -46, 204, 10, 4, C.yel);
+  for (let i = 0; i < 5; i++) Co(-72 + i * 36, -14, 5, C.vermL);
+  if (sk > .02) { Co(-30, -54, 10 * sk, C.white); Co(30, -54, 10 * sk, C.yel); }
+  const drop = (1 - wk) * 100;
+  ctx.save(); ctx.translate(0, drop);
+  const kk = Math.max(.05, eIO(clamp(rk * 1.3 - .3, 0, 1)));
+  ctx.save(); ctx.translate(0, -164); ctx.scale(1, kk);
+  if (sync) ctx.rotate(Math.sin(sync * Math.PI * 4) * .06 * Math.sin(sync * Math.PI));
+  ctx.translate(0, 164);
+  if (lit) { ctx.save(); ctx.globalAlpha = .45; Eo(0, -182, 70, 36, C.glow); ctx.restore(); }
+  Rf(-46, -200, 92, 36, 9, C.yel);
+  if (emblem) drawItem(emblem, 0, -183, 30); else swirl(0, -182, 11, C.verm, 4);
+  for (let i = 0; i < 5; i++) Cf(-36 + i * 18, -201, 4.5, lit ? (i % 2 ? C.pink : C.yel) : C.cream);
+  ctx.restore();
+  ctx.save(); ctx.translate(0, -160);
+  if (sync) ctx.rotate(Math.sin(sync * Math.PI * 4) * .025 * Math.sin(sync * Math.PI));
+  ctx.scale(1, Math.max(.06, rk)); ctx.translate(0, 160);
+  for (let i = 0; i < 6; i++) {
+    const x0 = -104 + i * 34.67, r = 17.33;
+    bp(); ctx.moveTo(x0, -160); ctx.lineTo(x0 + 34.67, -160); ctx.lineTo(x0 + 34.67, -136 - r); ctx.arc(x0 + r, -136 - r, r, 0, Math.PI); ctx.closePath();
+    fs(i % 2 ? C.cream : C.verm);
+  }
+  ctx.restore();
+  ctx.restore();
+  ctx.restore();
+}
+function drawMedals(st) {
+  const T = L.t;
+  const ms = st.medals || [];
+  for (let i = 0; i < ms.length && i < 2; i++) {
+    const m = ms[i], p = T.medals[i];
+    const tp = clamp((G.T - (m.t0 || -9)) / .6, 0, 1), e = Math.max(.02, eBack(tp));
+    let rot = 0; const tw = G.T - (m.wig || -9); if (tw < .5) rot = Math.sin(tw * 30) * .2 * (1 - tw / .5);
+    ctx.save(); ctx.translate(p[0], p[1]); ctx.rotate(rot); ctx.scale(e, e);
+    blit(spr('medal:' + m.idx, 64, 64, 32, 32, () => { ink(LW * .8); drawCoin(0, 0, 27, 1, null, m); }), 0, 0);
+    ctx.restore();
+  }
+}
+
+// =====================================================================
+//  背景（通りごとのテーマ）とキャッシュ
+// =====================================================================
+const THEMES = [
+  { sky: '#9fe3f2', skyN: '#234f6e', kind: 'town' },
+  { sky: '#b6ecf6', skyN: '#1f4766', kind: 'harbor' },
+  { sky: '#ffdcc6', skyN: '#2c3f68', kind: 'hill' },
+];
+function lcg(s) { return () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return s / 0x7fffffff; }; }
+function windows(x, y, w, h, night, r) {
+  const cols = Math.max(1, Math.floor(w / 22)), rows = Math.max(1, Math.floor(h / 30));
+  const gx = w / cols, gy = h / rows;
+  for (let i = 0; i < cols; i++) for (let j = 0; j < rows; j++) {
+    const on = night && r() < .75;
+    Rf(x + i * gx + gx * .25, y + j * gy + gy * .22, gx * .5, gy * .46, 3, on ? C.yel : C.cream);
+  }
+}
+function building(x, top, w, base, col, night, r, roofKind) {
+  Rf(x - w / 2, top, w, base - top + 20, 4, col);
+  if (roofKind === 'tri') { bp(); ctx.moveTo(x - w / 2 - 6, top + 2); ctx.lineTo(x, top - w * .32); ctx.lineTo(x + w / 2 + 6, top + 2); ctx.closePath(); fs(C.verm); }
+  else Rf(x - w / 2 - 5, top - 6, w + 10, 10, 3, C.tealDD);
+  windows(x - w / 2 + 4, top + 14, w - 8, Math.min(120, base - top - 30), night, r);
+}
+function paintBG(st, night, withStall) {
+  const T = L.t, th = THEMES[st.theme % THEMES.length], r = lcg(77 + st.theme * 1000 + (L.portrait ? 0 : 500));
+  const x0 = L.vx0 - 10, x1 = L.vx1 + 10, y0 = L.vy0 - 10, y1 = L.vy1 + 10;
+  ink(LW);
+  bp(); ctx.rect(x0, y0, x1 - x0, y1 - y0); fo(night ? th.skyN : th.sky);
+  const sunX = L.portrait ? 360 : Math.min(x1 - 70, 760), sunY = L.portrait ? Math.max(y0 + 30, 10) : 40;
+  if (night) {
+    const sr = lcg(9);
+    for (let i = 0; i < 26; i++) { const sx = lerp(x0, x1, sr()), sy = lerp(y0, T.ground - 200, sr()); star4(sx, sy, 3 + sr() * 4, i % 3 ? C.yelL : C.yel); }
+    Cf(sunX, sunY, 22, C.yelL); Co(sunX + 10, sunY - 7, 19, th.skyN);
+  } else if (th.kind === 'hill') {
+    Cf(sunX, sunY + 4, 26, C.yel);
+  } else {
+    ctx.save(); ctx.strokeStyle = C.yel; ctx.lineWidth = 5;
+    for (let i = 0; i < 10; i++) { const a = i / 10 * TAU; seg(sunX + Math.cos(a) * 32, sunY + Math.sin(a) * 32, sunX + Math.cos(a) * 42, sunY + Math.sin(a) * 42); }
+    ctx.restore(); ink(LW); Cf(sunX, sunY, 25, C.yel);
+  }
+  const base = T.ground;
+  const cols = [C.tealL, C.pinkL, '#ffe7a0', '#9fd8ef', C.teal, C.pink];
+  if (th.kind === 'town') {
+    for (let x = x0 - 20; x < x1 + 60;) { const w = 64 + r() * 40; const top = base - 150 - r() * 150; building(x + w / 2, top, w - 6, base, cols[Math.floor(r() * cols.length)], night, r); x += w; }
+    if (!night) blob([[x0 + 60, y0 + 70, 18], [x0 + 85, y0 + 62, 22], [x0 + 110, y0 + 72, 16]], C.white);
+  } else if (th.kind === 'harbor') {
+    const sy = L.portrait ? 60 : base - 170;
+    bp(); ctx.rect(x0, sy, x1 - x0, base - sy + 10); fs(night ? '#145c69' : C.teal);
+    ctx.save(); ctx.strokeStyle = night ? C.tealL : C.tealL; ctx.lineWidth = 3;
+    for (let i = 0; i < 18; i++) { const wx = lerp(x0, x1, r()), wy = sy + 12 + r() * (L.portrait ? 30 : 120); arcS(wx, wy, 8, Math.PI * 1.15, Math.PI * 1.85); }
+    ctx.restore(); ink(LW);
+    for (let i = 0; i < 3; i++) {
+      const bx = L.portrait ? (i === 1 ? x1 - 30 : x0 + 20 + i * 8) : lerp(x0 + 80, x1 - 80, (i + .5) / 3) + (r() - .5) * 60, by = L.portrait ? sy + 22 + i * 4 : sy + 40 + r() * 50;
+      bp(); ctx.moveTo(bx - 22, by); ctx.lineTo(bx + 22, by); ctx.lineTo(bx + 14, by + 12); ctx.lineTo(bx - 14, by + 12); ctx.closePath(); fs(C.verm);
+      bp(); ctx.moveTo(bx, by - 2); ctx.lineTo(bx, by - 40); ctx.lineTo(bx + 20, by - 4); ctx.closePath(); fs(i % 2 ? C.yel : C.white);
+    }
+    const lx = L.portrait ? 30 : x1 - 40;
+    Rf(lx - 16, base - 300, 32, 300, 6, C.white);
+    for (let k = 0; k < 4; k++) { bp(); ctx.rect(lx - 16, base - 280 + k * 60, 32, 22); fs(C.pink); }
+    Rf(lx - 22, base - 330, 44, 32, 6, night ? C.yel : C.yelL);
+    bp(); ctx.moveTo(lx - 26, base - 330); ctx.lineTo(lx, base - 356); ctx.lineTo(lx + 26, base - 330); ctx.closePath(); fs(C.verm);
+    if (night) { ctx.save(); ctx.globalAlpha = .35; bp(); ctx.moveTo(lx, base - 314); ctx.lineTo(lx - 160, base - 360); ctx.lineTo(lx - 160, base - 280); ctx.closePath(); fo(C.glow); ctx.restore(); }
+  } else {
+    for (let i = 0; i < 4; i++) { const hx = lerp(x0, x1, i / 3), hr = 160 + r() * 80; Ef(hx, base + 40, hr, 150 + r() * 60, i % 2 ? C.tealL : '#a7e8c9'); }
+    for (let i = 0; i < 10; i++) {
+      const tx = lerp(x0, x1, r()), ty = base - 60 - r() * 110;
+      Rf(tx - 4, ty, 8, 30, 2, C.brown); Cf(tx, ty - 8, 16, night ? C.tealD : C.teal);
+    }
+    for (let i = 0; i < 30; i++) Co(lerp(x0, x1, r()), base - 10 - r() * 120, 3.5, i % 2 ? C.pink : C.yel);
+  }
+  for (let i = 0; i < T.roofSlots.length; i++) {
+    const p = T.roofSlots[i], w = 92 * T.roofS;
+    if (th.kind === 'harbor') {
+      const tw2 = w * .62;
+      Rf(p[0] - tw2 / 2, p[1] + 2, tw2, base - p[1], 6, C.white);
+      for (let k = 0; k < 6; k++) { bp(); ctx.rect(p[0] - tw2 / 2 + 1.5, p[1] + 22 + k * 44, tw2 - 3, 18); fs(C.pink); }
+      Rf(p[0] - w / 2, p[1] - 2, w, 10, 4, C.tealDD);
+    } else if (th.kind === 'hill') {
+      Ef(p[0], p[1] + 150, w * .95, 152, i % 2 ? '#a7e8c9' : C.tealL);
+      Cf(p[0] - w * .45, p[1] + 26, 11, night ? C.tealD : C.teal); Co(p[0] + w * .4, p[1] + 34, 4, C.pink); Co(p[0] + w * .3, p[1] + 44, 4, C.yel);
+    } else building(p[0], p[1] + 2, w, base, cols[(i * 2 + 1) % cols.length], night, r);
+  }
+  const sy0 = base - 16;
+  bp(); ctx.rect(x0, sy0, x1 - x0, T.road.y0 - sy0); fs(night ? C.streetN : C.street);
+  ctx.save(); ctx.strokeStyle = night ? '#e3c58e' : C.yelL; ctx.lineWidth = 3;
+  for (let x = x0 + 30; x < x1; x += 70) seg(x, sy0 + 40, x - 20, T.road.y0 - 10);
+  ctx.restore(); ink(LW);
+  bp(); ctx.rect(x0, T.road.y0, x1 - x0, y1 - T.road.y0); fs(night ? C.roadN : C.road);
+  ctx.save(); ctx.strokeStyle = C.white; ctx.lineWidth = 5;
+  for (let x = x0; x < x1; x += 60) seg(x, T.road.lane + 22, x + 26, T.road.lane + 22);
+  ctx.restore();
+  if (withStall) { drawStallBackVec(FOLDST, false); counterVec(true); awningVec(T); }
+}
+const BGC = { day: null, night: null, key: '', nextKey: '', next: null };
+function makeCanvas() { const c = document.createElement('canvas'); c.width = cv.width; c.height = cv.height; return c; }
+function renderBG(st, night) {
+  const c = makeCanvas(), c2 = c.getContext('2d');
+  const saved = ctx; ctx = c2;
+  try { setV(c2); paintBG(st, night); } finally { ctx = saved; }
+  return c;
+}
+function paintLayer(c, st, night, ws) {
+  if (c.width !== cv.width || c.height !== cv.height) { c.width = cv.width; c.height = cv.height; }
+  c.style.width = L.W + 'px'; c.style.height = L.H + 'px';
+  const c2 = c.getContext('2d'), saved = ctx; ctx = c2;
+  try { c2.setTransform(1, 0, 0, 1, 0, 0); c2.clearRect(0, 0, c.width, c.height); setV(c2); paintBG(st, night, ws); } finally { ctx = saved; }
+}
+let bgnOp = -1;
+function syncBG(st) {
+  const ws = stallInBG(st);
+  const key = L.ver + ':' + st.theme + ':' + st.idx + (ws ? ':S' : ':N');
+  if (BGC.key !== key) { BGC.key = key; BGC.nightKey = ''; paintLayer(bgCv, st, false, ws); }
+  const n = st.town.night;
+  if (n > 0 && BGC.nightKey !== key) { BGC.nightKey = key; paintLayer(bgnCv, st, true, ws); }
+  st.bgStall = ws;
+  const op = n > 0 && BGC.nightKey === key ? Math.round(clamp(n, 0, 1) * 50) / 50 : 0;
+  if (op !== bgnOp) {
+    bgnOp = op; bgnCv.style.opacity = String(op);
+    bgnCv.style.visibility = op > 0 ? 'visible' : 'hidden';
+    bgCv.style.visibility = op >= 1 ? 'hidden' : 'visible';
+  }
+}
+function nextBG(st) {
+  const key = L.ver + ':' + st.theme + ':' + st.idx;
+  if (BGC.nextKey !== key) { BGC.nextKey = key; BGC.next = renderBG(st, false); }
+  return BGC.next;
+}
+
+// ---------------------------------------------------------------- 屋上の屋台・道の出店・門・荷車・夜市の人々
+function drawRoofStall(x, y, s, col, e, night, i) {
+  ctx.save(); ctx.translate(x, y); ctx.scale(s * e, s * e);
+  blit(spr('roofst:' + col + s, 100, 80, 50, 70, () => { ctx.scale(1, 1); roofStallVec(s, col); }), 0, 0);
+  if (night) { ctx.save(); ctx.translate(40, -48); ctx.rotate(Math.sin(G.T * 2 + i) * .1); drawItem('lantern', 0, 14, 26, { col: i % 2 ? C.verm : C.pink, lit: true }); ctx.restore(); }
+  ctx.restore();
+}
+function roofStallVec(s, col) {
+  ink(LW / s);
+  Rf(-34, -26, 6, 26, 2, C.vermD); Rf(28, -26, 6, 26, 2, C.vermD);
+  Rf(-36, -20, 72, 20, 4, C.cream);
+  Co(-16, -26, 7, C.pink); Co(0, -27, 7, C.yel); Co(16, -26, 7, C.tealL);
+  for (let k = 0; k < 4; k++) { bp(); ctx.moveTo(-38 + k * 19, -50); ctx.lineTo(-19 + k * 19, -50); ctx.lineTo(-19 + k * 19, -40); ctx.arc(-28.5 + k * 19, -40, 9.5, 0, Math.PI); ctx.closePath(); fs(k % 2 ? C.cream : col); }
+}
+function drawCartStall(x, y, s, col, e, night, i) {
+  ctx.save(); ctx.translate(x, y); ctx.scale(s * e, s * e);
+  blit(spr('cartst:' + col + s, 100, 100, 50, 86, () => cartStallVec(s, col)), 0, 0);
+  if (night) { ctx.save(); ctx.translate(-38, -70); ctx.rotate(Math.sin(G.T * 2 + i) * .1); drawItem('lantern', 0, 14, 26, { col: i % 2 ? C.yel : C.verm, lit: true }); ctx.restore(); }
+  ctx.restore();
+}
+function cartStallVec(s, col) {
+  ink(LW / s);
+  Rf(-30, -64, 6, 46, 2, C.brown); Rf(24, -64, 6, 46, 2, C.brown);
+  Rf(-36, -34, 72, 26, 4, col === C.teal ? C.teal : C.verm);
+  bp(); ctx.rect(-35, -26, 70, 5); fo(C.yel);
+  Co(-16, -40, 7, C.pink); Co(0, -41, 7, C.white); Co(16, -40, 7, C.yel);
+  for (let k = 0; k < 4; k++) { bp(); ctx.moveTo(-38 + k * 19, -76); ctx.lineTo(-19 + k * 19, -76); ctx.lineTo(-19 + k * 19, -66); ctx.arc(-28.5 + k * 19, -66, 9.5, 0, Math.PI); ctx.closePath(); fs(k % 2 ? C.cream : (col === C.teal ? C.pink : C.teal)); }
+  Cf(-22, -6, 9, C.yel); Cf(22, -6, 9, C.yel); Co(-22, -6, 3, INK); Co(22, -6, 3, INK);
+}
+function drawGate(st) {
+  const T = L.t, tw = st.town, x = T.gateX, y = T.road.lane + 6, s = L.portrait ? .8 : 1;
+  const open = tw.gate;
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s); ink(LW / s);
+  Rf(-6, -62, 12, 64, 3, C.greyM);
+  ctx.save(); ctx.translate(0, -46); ctx.rotate(-open * 1.45 - (open > 0 ? Math.sin(G.T * 3) * .02 : 0));
+  Rf(-84, -6, 86, 12, 5, C.white);
+  ctx.save(); bp(); rr(-84, -6, 86, 12, 5); ctx.clip();
+  for (let k = 0; k < 5; k++) { bp(); ctx.moveTo(-84 + k * 18, 8); ctx.lineTo(-76 + k * 18, -8); ctx.lineTo(-68 + k * 18, -8); ctx.lineTo(-76 + k * 18, 8); ctx.closePath(); fo(C.verm); }
+  ctx.restore(); bp(); rr(-84, -6, 86, 12, 5); ctx.stroke();
+  ctx.restore();
+  Cf(0, -46, 7, C.yel);
+  ctx.restore();
+}
+function drawRoadThings(st) {
+  const T = L.t, tw = st.town, nt = tw.night > .4;
+  for (const c of tw.carts) {
+    const p = T.cartSlots[c.slot]; if (!p) continue;
+    const e = Math.max(.02, eBack(clamp((G.T - c.t0) / .5, 0, 1)));
+    drawCartStall(p[0], p[1], T.cartS, c.col, e, nt, c.slot);
+  }
+  drawGate(st);
+}
+function drawRoofThings(st) {
+  const T = L.t, tw = st.town, nt = tw.night > .4;
+  for (const rf of tw.roofs) {
+    const p = T.roofSlots[rf.slot]; if (!p) continue;
+    const e = Math.max(.02, eBack(clamp((G.T - rf.t0) / .5, 0, 1)));
+    drawRoofStall(p[0], p[1], T.roofS, rf.col, e, nt, rf.slot);
+  }
+}
+function drawCrowd(st) {
+  const tw = st.town; if (tw.night < .05) return;
+  ctx.save(); ctx.globalAlpha = clamp(tw.night * 1.3, 0, 1);
+  const T = L.t;
+  for (const p of tw.crowd) {
+    let base;
+    if (p.home === 'roof') { const r = T.roofSlots[p.slot]; if (!r) continue; base = [r[0] + p.dx * T.roofS, r[1] + 2]; }
+    else { const r = T.cartSlots[p.slot]; if (!r) continue; base = [r[0] + p.dx * T.cartS, r[1] + 6]; }
+    const hop = Math.max(0, Math.sin(G.T * 3 + p.ph)) * (p.jumpy ? 8 : 2);
+    const s = (p.home === 'roof' ? T.roofS : T.cartS) * .55;
+    ctx.save(); ctx.translate(base[0], base[1] - hop); ctx.scale(s, s);
+    blit(spr('crowd:' + p.col + p.skin + (p.arm ? 1 : 0) + s, 60, 90, 30, 82, () => {
+      ink(LW / s);
+      limb([-6, -20, -7, -2], 8, C.tealDD); limb([6, -20, 7, -2], 8, C.tealDD);
+      Rf(-14, -48, 28, 30, 9, p.col);
+      if (p.arm) limb([12, -44, 22, -66], 7, p.col);
+      Cf(0, -60, 13, p.skin);
+      Co(-4.5, -61, 2.2, INK); Co(4.5, -61, 2.2, INK);
+      arcS(0, -58, 4.5, .3, 2.8);
+    }), 0, 0);
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+// =====================================================================
+//  画面の組み立て
+// =====================================================================
+const SLOTK = ['cake', 'juice', 'candy', 'shoes', 'donut', 'cookie'];
+const SLOT_OF = { cake: 0, juice: 1, candy: 2, shoes: 3, donut: 4, bigdonut: 4, cookie: 5 };
+const BASE = { cake: 1, juice: 1 };
+const BK = k => k === 'bigdonut' ? 'donut' : k;
+const HEADY = { robot: -142, astro: -134 };
+function slotP(i) { const s = L.t.slots[i]; return { x: s[0], y: s[1] }; }
+function custPos(c) {
+  const T = L.t, sp = T.spots[c.spot] || T.spots[0];
+  if (c.ov) {
+    const o = c.ov, u = clamp((G.T - o.t0) / o.dur, 0, 1), e = o.ease ? o.ease(u) : u;
+    const a = o.a(), b = o.b();
+    return { x: lerp(a.x, b.x, e), y: lerp(a.y, b.y, e) - Math.sin(u * Math.PI) * (o.h || 0), u, s: lerp(o.sA || 1, o.sB || 1, e) };
+  }
+  let x = sp[0], y = sp[1];
+  if (c.state === 'enter') {
+    const u = clamp((G.T - c.t0) / c.enterDur, 0, 1);
+    if (c.from === 'roof') {
+      const r = T.roofSlots[c.fromSlot] || T.roofSlots[0], e = eIO(u);
+      x = lerp(r[0], sp[0], e); y = lerp(r[1], sp[1], e) - Math.sin(u * Math.PI) * 110;
+    } else if (c.from === 'road') {
+      const lx = L.vx1 + 50, ly = T.road.lane + 8, u1 = .72;
+      if (u < u1) { x = lerp(lx, sp[0], eIO(u / u1)); y = ly; } else { y = lerp(ly, sp[1], eIO((u - u1) / (1 - u1))); }
+    } else y = lerp(L.vy1 + 60, sp[1], eOut(u));
+  } else if (c.state === 'leave') {
+    const u = clamp((G.T - c.t0) / .9, 0, 1);
+    y = lerp(sp[1], L.vy1 + 220, eIn(u));
+  }
+  return { x, y };
+}
+const custS = () => L.t.custS;
+function custHands(c) { const p = custPos(c), s = custS(); return { x: p.x, y: p.y - (c.kind === 'robot' ? 84 : 88) * s }; }
+function custHead(c) { const p = custPos(c), s = custS(); return { x: p.x, y: p.y + (HEADY[c.kind] || -129) * s }; }
+function shopBaseY() { const T = L.t; return lerp(T.shop.y, T.counter.y0 - 76, G.shop.onCounter || 0); }
+function shopHead() { const T = L.t; return { x: T.shop.x, y: shopBaseY() - 122 - (G.shop.up || 0) }; }
+function shopFeet() { const T = L.t; return { x: T.shop.x, y: shopBaseY() + 62 - (G.shop.up || 0) }; }
+function flyerPos(f) {
+  const a = f.from(), dt = G.T - f.t0;
+  if (dt < (f.sq || 0)) return { x: a.x, y: a.y, u: 0, sq: dt / f.sq };
+  const b = f.to(), u = clamp((dt - (f.sq || 0)) / f.dur, 0, 1), e = (f.ease || eIO)(u);
+  const h = f.arc != null ? f.arc : Math.min(170, 50 + Math.hypot(b.x - a.x, b.y - a.y) * .35);
+  return { x: lerp(a.x, b.x, e), y: lerp(a.y, b.y, e) - Math.sin(u * Math.PI) * h, u };
+}
+function lookVec(from, to) {
+  if (!to) return [0, 0];
+  const dx = to.x - from.x, dy = to.y - from.y, d = Math.hypot(dx, dy) || 1;
+  return [dx / d, dy / d];
+}
+function custLook(c) {
+  for (const f of G.flyers) if (f.toC === c) return flyerPos(f);
+  if (G.tray && (G.tray.phase === 'morph' || G.tray.phase === 'model' || G.tray.phase === 'land')) return trayPos();
+  if (G.flyers.length) return flyerPos(G.flyers[G.flyers.length - 1]);
+  if (G.guide && G.guide.c === c) return slotP(G.guide.slot);
+  if (G.st.fold.disc > 0) return coinGeom();
+  return shopHead();
+}
+function custState(c) {
+  const st = { expr: c.expr, pose: c.pose, hold: c.hold, pay: c.pay, ph: c.ph, jumpShoes: c.jumpShoes, parcel: c.kind === 'deliv' && !c.hold && !c.jumpShoes && c.pose !== 'offer' };
+  const hp = custHead(c), lk = lookVec(hp, custLook(c));
+  st.lx = lk[0]; st.ly = lk[1];
+  if (G.T > c.blinkT) { if (G.T > c.blinkT + .13) c.blinkT = G.T + 2 + rnd() * 3; else st.blink = true; }
+  const moving = c.state === 'enter' || c.state === 'leave' || (c.ov && custPos(c).u < 1);
+  if (moving && !c.ov) { st.walk = G.T * 13 + c.ph; st.bob = -Math.abs(Math.sin(G.T * 13 + c.ph)) * 4; }
+  if (c.ov && custPos(c).u < 1) { st.legsUp = true; st.pose = c.pose === 'offer' ? 'offer' : 'cheer'; }
+  if (c.kind === 'astro' && (c.state === 'wait' || c.state === 'served') && !c.ov) {
+    const sp = c.state === 'served' ? 5 : 2.6, hh = c.state === 'served' ? 22 : 11;
+    const b = Math.abs(Math.sin(G.T * sp + c.ph)); st.bob = -b * hh; if (b > .5) st.legsUp = true;
+  }
+  if (c.kind === 'fire') { const ht = G.T - c.hatT; if (ht < .8) { st.pose = 'hatfix'; st.hatTilt = Math.sin(ht / .8 * Math.PI * 3) * .22; } }
+  if (c.state === 'wait' && G.guide && G.guide.c === c && c.kind !== 'astro') st.bob = (st.bob || 0) - Math.abs(Math.sin(G.T * 4)) * 2.5;
+  const tw = G.T - c.wig; if (tw < .5) st.rot = Math.sin(tw * 28) * .09 * (1 - tw / .5);
+  const sq = G.T - (c.sqT || -9); if (sq < .35) st.squash = Math.sin(sq / .35 * Math.PI) * .8;
+  if (c.kind === 'robot' && (c.expr === 'happy' || c.expr === 'love')) st.antenna = Math.sin(G.T * 18) * .3;
+  if (c.pose === 'cheer') st.bob = (st.bob || 0) - Math.abs(Math.sin(G.T * 6 + c.ph)) * 8;
+  return st;
+}
+function drawCustomer(c) {
+  const p = custPos(c), s = custS() * (p.s || 1);
+  if (p.y < L.vy0 - 260 || p.y > L.vy1 + 260) return;
+  const st = custState(c);
+  if (p.s && Math.abs(p.s - 1) > .001) st.noSprite = true;
+  drawChar(c.kind, p.x, p.y, s, st);
+}
+function bubbleRect(c) {
+  const p = custPos(c), n = c.order.length;
+  const w = n > 1 ? 128 : 94, h = n > 1 ? 76 : 80;
+  return { x: p.x, y: p.y + L.t.bubbleDY, w, h };
+}
+function drawBubble(c) {
+  if (G.st.carpServed && c.kind !== 'carp') return;
+  if (c.state !== 'wait' && !(c.state === 'enter' && G.T - c.t0 > c.enterDur * .6)) return;
+  const r = bubbleRect(c), T = L.t;
+  const tb = G.T - (c.state === 'enter' ? c.t0 + c.enterDur * .6 : c.bubT);
+  let sc = c.state === 'enter' ? Math.max(.02, eBack(clamp((G.T - c.t0 - c.enterDur * .6) / (c.enterDur * .4), 0, 1))) : 1;
+  if (c.state === 'wait' && c.bubT > 0 && tb < .35) sc = Math.max(sc, eBack(clamp(tb / .35, 0, 1)));
+  const gd = G.guide && G.guide.c === c;
+  if (gd) sc *= 1.04 + Math.sin(G.T * 6) * .035;
+  const tp = G.T - c.bubP; if (tp < .5) sc *= 1 + Math.sin(tp / .5 * Math.PI) * .12;
+  const d = G.demo; if (d && d.c === c) { const u = G.T - d.t0; if (u > .62 && u < 1.2) sc *= 1 + Math.sin(inv(.62, 1.2, u) * Math.PI) * .1; }
+  const p = custPos(c), headTop = p.y - (c.kind === 'robot' ? 172 : 166) * custS();
+  ctx.save(); ctx.translate(r.x, r.y); ctx.scale(sc, sc); ink(LW);
+  const hw = r.w / 2, hh = r.h / 2;
+  const ty = Math.round(Math.max(hh + 6, Math.min(hh + 26, headTop - r.y)));
+  blit(spr('bub:' + r.w + 'x' + r.h + ':' + ty, r.w + 12, r.h / 2 + ty + 10, hw + 6, hh + 6, () => {
+    ink(LW);
+    bp(); ctx.moveTo(-12, hh - 3); ctx.lineTo(4, ty); ctx.lineTo(12, hh - 3); ctx.closePath(); fs(C.white);
+    Rf(-hw, -hh, r.w, r.h, 22, C.white);
+    Ro(-12, hh - 8, 24, 10, 0, C.white);
+  }), 0, 0);
+  const n = c.order.length;
+  for (let i = 0; i < n; i++) {
+    const o = c.order[i], ix = n > 1 ? (i ? 28 : -28) : 0, isz = n > 1 ? 46 : 56;
+    if (o.done) { drawItem(o.k, ix, 0, isz * .8, { alpha: .3 }); star5(ix + 12, -14, 9, C.yel, true); }
+    else drawItem(o.k, ix, 2, isz, { alpha: o.inc ? .45 : 1 });
+  }
+  ctx.restore();
+}
+function drawPanel(pn) {
+  const u = (G.T - pn.t0) / 1.05; if (u >= 1 || u < 0) return;
+  const c = pn.c, p = custPos(c), T = L.t;
+  const sc = u < .22 ? Math.max(.02, eBack(u / .22)) : u > .82 ? 1 - eIn((u - .82) / .18) : 1;
+  const w = 118, h = 100, x = p.x, y = p.y + T.bubbleDY - 8;
+  ctx.save(); ctx.translate(x, y); ctx.rotate(pn.rot || -.06); ctx.scale(sc, sc); ink(LW * 1.3);
+  Rf(-w / 2, -h / 2, w, h, 3, C.yelL);
+  ctx.save(); bp(); ctx.rect(-w / 2, -h / 2, w, h); ctx.clip();
+  ctx.lineWidth = 2; ctx.strokeStyle = INK;
+  for (let i = 0; i < 22; i++) { const a = i / 22 * TAU + .1; seg(Math.cos(a) * 46, Math.sin(a) * 40, Math.cos(a) * 90, Math.sin(a) * 90); }
+  const s2 = 1.45, hy = HEADY[c.kind] || -129;
+  drawChar(c.kind, 0, -hy * s2 + 6, s2, { expr: c.kind === 'robot' && c.expr === 'love' ? 'love' : 'happy', pose: 'cheer', ph: c.ph, jumpShoes: false, lx: 0, ly: 0, noSprite: true });
+  ctx.restore();
+  ink(LW * 1.3); bp(); ctx.rect(-w / 2, -h / 2, w, h); ctx.stroke();
+  star5(w / 2 - 6, -h / 2 + 4, 13, C.yel, true);
+  ctx.restore();
+}
+function drawFlyer(f) {
+  const q = flyerPos(f);
+  let size = f.size, o = f.o ? Object.assign({}, f.o) : {};
+  if (q.sq != null) { const a = Math.sin(clamp(q.sq, 0, 1) * Math.PI * .5); o.sx = 1 + a * .3; o.sy = 1 - a * .32; }
+  else {
+    size = lerp(f.size, f.size2 || f.size, q.u);
+    o.rot = (f.spin ? q.u * 12 : Math.sin(q.u * Math.PI) * .35 * (f.dir || 1));
+    if (f.spin && (f.kind === 'wheel' || f.kind === 'bigwheel')) { o.spin = q.u * 12; o.rot = 0; }
+    if (q.u < .2 && !f.noStretch) { o.sy = 1 + (.2 - q.u) * 1.2; o.sx = 1 - (.2 - q.u) * .8; }
+  }
+  if (f.morph) drawMorph(f.kind, 1, q.x, q.y, size, o);
+  else drawItem(f.kind, q.x, q.y, size, o);
+}
+// ---------------------------------------------------------------- 粒子（上限つき）
+const PMAX = 150;
+const PT = [];
+function part(x, y, vx, vy, life, size, col, type) {
+  if (PT.length >= PMAX) PT.shift();
+  PT.push({ x, y, vx, vy, life, t: 0, size, col, type: type || 'dot', r: rnd() * TAU });
+}
+function burst(x, y, n, cols, type, spd, size) {
+  for (let i = 0; i < n; i++) {
+    const a = rnd() * TAU, v = (spd || 160) * (.45 + rnd() * .55);
+    part(x, y, Math.cos(a) * v, Math.sin(a) * v - (spd || 160) * .35, .45 + rnd() * .4, (size || 5) * (.7 + rnd() * .6), cols[i % cols.length], type);
+  }
+}
+function partsUpdate(dt) {
+  for (let i = PT.length - 1; i >= 0; i--) {
+    const p = PT[i]; p.t += dt;
+    if (p.t >= p.life) { PT.splice(i, 1); continue; }
+    p.x += p.vx * dt; p.y += p.vy * dt;
+    if (p.type === 'puff') { p.vx *= .9; p.vy *= .9; } else p.vy += 420 * dt;
+    p.r += dt * 6;
+  }
+}
+function drawParts() {
+  for (const p of PT) {
+    const a = 1 - p.t / p.life;
+    ctx.globalAlpha = clamp(a * 1.4, 0, 1);
+    if (p.type === 'star') {
+      const s = spr('p:s' + p.col, 22, 22, 11, 11, () => star4(0, 0, 10, p.col)), k = p.size * 1.4 / 10;
+      ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.r); ctx.scale(k, k); blit(s, 0, 0); ctx.restore();
+    } else if (p.type === 'puff') {
+      const s = spr('p:p' + p.col, 24, 24, 12, 12, () => { ink(2); Cf(0, 0, 10, p.col); }), k = p.size * (1 + p.t / p.life * 1.2) / 10;
+      ctx.drawImage(s.c, p.x - 12 * k, p.y - 12 * k, 24 * k, 24 * k);
+    } else {
+      const s = spr('p:d' + p.col, 22, 22, 11, 11, () => Co(0, 0, 10, p.col)), k = p.size * .7 / 10;
+      ctx.drawImage(s.c, p.x - 11 * k, p.y - 11 * k, 22 * k, 22 * k);
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+// ---------------------------------------------------------------- 店主の描画
+function shopState() {
+  const sh = G.shop, T = L.t;
+  const lk = lookVec(shopHead(), sh.look);
+  const s = { expr: sh.expr, lx: lk[0], ly: lk[1], up: sh.up, lean: sh.lean, tilt: sh.tilt || 0, shoes: sh.shoes, hands: sh.hands, squash: sh.squash, legsUp: sh.legsUp };
+  if (G.T > sh.blinkT) { if (G.T > sh.blinkT + .13) sh.blinkT = G.T + 2.5 + rnd() * 3; else s.blink = true; }
+  const tw = G.T - sh.wig; if (tw < .6) { s.tilt = Math.sin(tw * 20) * .5; s.lean = Math.max(s.lean, .4 * (1 - tw / .6)); s.expr = 'happy'; }
+  return s;
+}
+function drawShopAt(where) {
+  const T = L.t, sh = G.shop;
+  if (sh.into >= 1 && where !== 'next') return;
+  let x = T.shop.x, y = T.shop.y, s = 1;
+  const st = shopState();
+  if (where === 'next') {
+    const pt = G.T - (sh.popT || -9); s = pt < .5 ? Math.max(.02, eBack(clamp(pt / .5, 0, 1))) : 1;
+    st.expr = 'happy'; st.hands = 'up'; st.up = 0; st.lean = 0;
+  } else if (sh.onCounter > 0 && sh.out <= 0) {
+    const oc = sh.onCounter;
+    y = shopBaseY() - Math.sin(clamp(oc, 0, 1) * Math.PI) * 30;
+    st.showLegs = true; st.hands = 'up'; st.lean = 0;
+  } else if (sh.out > 0) {
+    const fx = T.tray.x - (L.portrait ? 112 : 128), fy = T.ground + (L.portrait ? 14 : 4);
+    const e = sh.out, hop = Math.sin(e * Math.PI) * 60;
+    x = lerp(x, fx, e); y = lerp(y, fy, e) - hop; st.showLegs = e > .5 || hop > 10;
+    if (sh.into > 0) { const g = coinGeom(); const e2 = sh.into; x = lerp(x, g.x, e2); y = lerp(y, g.y + 40, e2) - Math.sin(e2 * Math.PI) * 80; s = 1 - e2 * .85; }
+    st.up = 0; st.lean = 0; st.hands = 'up';
+  }
+  ctx.save();
+  if (where === 'back' && G.st.bgStall) { bp(); ctx.rect(L.vx0, L.vy0, L.vx1 - L.vx0, T.counter.y0 - 1 - L.vy0); ctx.clip(); }
+  drawShopkeeper(x, y, s, st);
+  ctx.restore();
+}
+// ---------------------------------------------------------------- 世界の描画
+function drawWorld(st, main) {
+  const sync = st.syncT > 0 && G.T - st.syncT < 1.2 ? (G.T - st.syncT) / 1.2 : 0;
+  drawRoofThings(st);
+  drawCrowd(st);
+  const out = main && (G.shop.out > 0 || G.shop.onCounter > .02);
+  if (st.fold.disc > 0) {
+    if (st.fold.disc >= 1) {
+      const g = coinGeom();
+      let sx = 1; if (st.spinT > 0) { const u = clamp((G.T - st.spinT) / 1.25, 0, 1); sx = Math.cos(eIO(u) * TAU); }
+      if (!(G.zoom > 0)) { ink(LW * 1.2); drawCoin(g.x, g.y + Math.sin(G.T * 2.5) * 3, g.r, sx, st); }
+    } else drawFoldCard(st);
+  } else {
+    drawStallBack(st);
+    if (!out) { if (main) drawShopAt('back'); else drawShopAt('next'); }
+    drawStallFront(st);
+    if (main) drawTrayThing();
+    drawAwning(st, sync);
+  }
+  drawRoadThings(st);
+  if (!main) return;
+  for (const m of G.movers) drawMover(m);
+  if (out) drawShopAt('front');
+  const cs = G.cust.filter(Boolean).concat(G.extra);
+  cs.sort((a, b) => custPos(a).y - custPos(b).y);
+  for (const c of cs) drawCustomer(c);
+  for (const c of G.cust) if (c) drawBubble(c);
+  if (st.fold.disc > 0 && G.tray) drawTrayThing();
+}
+function drawTrayThing() {
+  const tr = G.tray; if (!tr) return;
+  const p = trayPos(), T = L.t;
+  if (tr.phase === 'land') {
+    const u = clamp((G.T - tr.t0) / .3, 0, 1), a = Math.sin(u * Math.PI);
+    drawItem(tr.kind, p.x, p.y, 54, { sx: 1 + a * .25, sy: 1 - a * .25, col: tr.col });
+  } else if (tr.phase === 'morph') {
+    const u = (G.T - tr.t0) / tr.dur;
+    if (tr.kind === 'toycart') drawItem('toycart', p.x, p.y, 54, { rot: Math.sin(G.T * 30) * .06, spin: G.T * 8 });
+    else drawMorph(tr.kind, u, p.x, p.y, 54, { col: tr.col, big: tr.kind === 'bigwheel' });
+    if (tr.kind === 'bigwheel' && u < 1) { /* 特大 */ }
+  } else if (tr.phase === 'model') {
+    const sync = G.st.syncT > 0 && G.T - G.st.syncT < 1.2 ? (G.T - G.st.syncT) / 1.2 : 0;
+    ctx.save(); ctx.globalAlpha = .45 + .2 * Math.sin(G.T * 5); Co(p.x, p.y, 46, C.glow); ctx.restore();
+    drawItem('model', p.x, p.y - 4, 70, { fold: G.modelFold, lit: G.st.town.signLit, sync });
+  }
+}
+function drawMover(m) {
+  const T = L.t;
+  let x = m.x, y = m.y, s = m.s;
+  if (m.hop) {
+    const u = clamp((G.T - m.hop.t0) / m.hop.dur, 0, 1), e = eIO(u);
+    x = lerp(m.hop.x0, m.hop.x1, e); y = lerp(m.hop.y0, m.hop.y1, e) - Math.sin(u * Math.PI) * 70; s = lerp(m.hop.s0, m.hop.s1, eOut(u));
+  }
+  drawItem('toycart', x, y, 64 * s, { spin: m.spin || 0, rot: m.hop ? 0 : Math.sin(G.T * 20) * .02 });
+  if (m.big) star4(x + 30 * s, y - 34 * s, 8 * s, C.yel);
+}
+
+// =====================================================================
+//  ゲームの状態
+// =====================================================================
+const NEED_LANTERNS = 4, CARP_ROWS = 2;
+const G = {
+  T: 0, frame: 0, st: null, next: null,
+  cust: [null, null, null], extra: [], flyers: [], panels: [], movers: [],
+  tray: null, trayClaimed: false, payWait: 0,
+  shop: { up: 0, lean: 0, leanT: -9, leanDur: 1, tilt: 0, expr: 'idle', lookP: null, look: null, lookUntil: 0, shoes: false, hands: 'counter', squash: 0, legsUp: false,
+    blinkT: 1.5, wig: -9, jumpT: -9, jumpH: 0, jumpDur: .56, out: 0, into: 0, popT: -9, onCounter: 0 },
+  cine: false, guide: null, lastInput: 0, demo: null, demoN: 0,
+  disc: [0, 0, 0, 0, 0, 0], log: [], scripts: [], tweens: [], errors: [],
+  memory: { streets: [] }, spawnAt: [-1, -1, -1], nextId: 1,
+  zoom: 0, zoomT: -9, modelFold: { roof: 0, shelf: 0, wall: 0, disc: 0 },
+  stats: { sales: 0, wrong: 0, taps: 0, other: 0 },
+};
+// ---------------------------------------------------------------- スクリプト（ジェネレーターで順番に演出）
+function run(gen, tag) { const s = { gen, wait: -1, until: null, done: false, tag: tag || '' }; G.scripts.push(s); stepS(s); return s; }
+function stepS(s) {
+  for (let guard = 0; guard < 60; guard++) {
+    let r;
+    try { r = s.gen.next(); } catch (e) { s.done = true; G.errors.push(String(e && e.stack || e)); return; }
+    if (r.done) { s.done = true; return; }
+    const v = r.value;
+    if (typeof v === 'number') { if (v <= 0) continue; s.wait = G.T + v; s.until = null; return; }
+    if (typeof v === 'function') { let ok = false; try { ok = v(); } catch (e) { ok = true; } if (ok) continue; s.until = v; return; }
+  }
+}
+function stepScripts() {
+  const list = G.scripts;
+  for (let i = 0; i < list.length; i++) {
+    const s = list[i]; if (s.done) continue;
+    if (s.until) { let ok = false; try { ok = s.until(); } catch (e) { ok = true; } if (ok) { s.until = null; stepS(s); } }
+    else if (G.T >= s.wait) stepS(s);
+  }
+  if (list.some(s => s.done)) G.scripts = list.filter(s => !s.done);
+}
+const dealCount = () => G.scripts.reduce((n, s) => n + (s.tag === 'deal' && !s.done ? 1 : 0), 0);
+function tween(o, k, to, dur, ease) {
+  for (let i = G.tweens.length - 1; i >= 0; i--) if (G.tweens[i].o === o && G.tweens[i].k === k) G.tweens.splice(i, 1);
+  G.tweens.push({ o, k, a: o[k], b: to, t0: G.T, dur: Math.max(.001, dur), ease: ease || eIO });
+}
+function tweenUpdate() {
+  for (let i = G.tweens.length - 1; i >= 0; i--) {
+    const w = G.tweens[i], u = clamp((G.T - w.t0) / w.dur, 0, 1);
+    w.o[w.k] = lerp(w.a, w.b, w.ease(u));
+    if (u >= 1) { w.o[w.k] = w.b; G.tweens.splice(i, 1); }
+  }
+}
+const rmFlyer = f => { const i = G.flyers.indexOf(f); if (i >= 0) G.flyers.splice(i, 1); };
+const rmMover = m => { const i = G.movers.indexOf(m); if (i >= 0) G.movers.splice(i, 1); };
+function disc(i) {
+  if (G.disc[i]) return;
+  G.disc[i] = G.T || .001;
+  G.log.push({ t: +G.T.toFixed(2), d: i + 1, street: G.st ? G.st.idx : 0 });
+}
+// ---------------------------------------------------------------- 通り（サイクル）
+function makeStreet(idx, prev) {
+  const st = {
+    idx, theme: idx % THEMES.length,
+    shelf: SLOTK.map(k => ({ kind: k, stack: [], popT: -9, squishT: -9, wigT: -9, refillAt: -1 })),
+    fold: { roof: 0, shelf: 0, wall: 0, disc: 0 },
+    town: { signLit: false, signT: -9, night: 0, nightOn: false, roofs: [], carts: [], roadOpen: false, gate: 0, crowd: [], first: null },
+    lanterns: [], lanternFly: 0, res: {}, transit: {}, did: {},
+    sales: [], nightServed: 0, nightCount: 0, carpPending: false, carpSpawned: false, carpServed: false,
+    emblem: prev ? (prev.best[0] || null) : null,
+    best: prev ? prev.best.slice() : [],
+    prefer: prev ? (prev.first === 'cart' ? 'shoes' : prev.first === 'roof' ? 'donut' : null) : null,
+    medals: G.memory.streets.slice(-2).reverse().map(m => Object.assign({}, m, { t0: G.T + 1.6, wig: -9 })),
+    astroSales: 0, trayWig: -9, signWig: -9, syncT: -9, spinT: -9, t0: G.T,
+  };
+  st.shelf[0].stack.push('cake'); st.shelf[1].stack.push('juice');
+  for (const k of st.best) st.shelf[SLOT_OF[k]].stack.push(k);
+  // 前回と逆の育ち方を試せるよう、前回あとに売った方（靴/ドーナツ）も最初の棚に置く
+  if (st.prefer && !st.best.includes(st.prefer)) st.shelf[SLOT_OF[st.prefer]].stack.push(st.prefer);
+  return st;
+}
+const lanternCount = st => st.lanterns.reduce((n, l) => n + (l ? 1 : 0), 0);
+function finishStreet(st) {
+  const counts = {};
+  for (const k of st.sales) if (!BASE[k]) counts[k] = (counts[k] || 0) + 1;
+  const ks = Object.keys(counts).sort((a, b) => counts[b] - counts[a] || st.sales.lastIndexOf(b) - st.sales.lastIndexOf(a));
+  const best = ks.slice(0, 2);
+  if (!best.length) best.push('candy');
+  const rec = { idx: st.idx, theme: st.theme, best, counts, first: st.town.first, roofs: st.town.roofs.length, carts: st.town.carts.length,
+    lit: st.town.signLit, emblem: best[0], sales: st.sales.slice(), t: +G.T.toFixed(1) };
+  G.memory.streets.push(rec);
+  return rec;
+}
+// ---------------------------------------------------------------- お客さん
+function newCust(spec, spot) {
+  return { id: G.nextId++, kind: spec.kind, order: spec.order.map(k => ({ k, done: false, inc: false })), spot,
+    from: spec.from || 'bottom', fromSlot: spec.fromSlot == null ? -1 : spec.fromSlot,
+    state: 'enter', t0: G.T, enterDur: spec.from === 'road' ? 1.7 : spec.from === 'roof' ? 1.05 : .95,
+    waitSince: 0, expr: 'idle', exprT: 0, pose: 'idle', hold: null, pay: null, purchase: null, paid: false,
+    ph: rnd() * 10, blinkT: G.T + 1 + rnd() * 3, wig: -9, bubP: -9, bubT: -9, hatT: -9, sqT: -9,
+    resv: [], jumpShoes: false, ov: null, base: !!spec.base, night: !!spec.night,
+    lanternCol: pick([C.verm, C.pink, C.yel, C.teal]) };
+}
+function spawnCust(i, spec) {
+  const st = G.st, c = newCust(spec, i);
+  for (const o of c.order) if (!BASE[o.k]) { st.res[o.k] = (st.res[o.k] || 0) + 1; c.resv.push(o.k); }
+  G.cust[i] = c;
+  if (spec.kind === 'carp') st.carpSpawned = true;
+  if (spec.kind === 'astro' && G.flagCandy && !G.disc[0]) disc(0);
+  SFX.arrive();
+  return c;
+}
+function unreserve(c, k) {
+  const i = c.resv.indexOf(k);
+  if (i >= 0) { c.resv.splice(i, 1); G.st.res[k] = Math.max(0, (G.st.res[k] || 0) - 1); }
+}
+function leave(c) {
+  c.state = 'leave'; c.t0 = G.T; c.ov = null;
+  if (G.cust[c.spot] === c) G.cust[c.spot] = null;
+  if (G.extra.indexOf(c) < 0) G.extra.push(c);
+  for (const k of c.resv.slice()) unreserve(c, k);
+}
+function custUpdate() {
+  for (const c of G.cust) {
+    if (!c) continue;
+    if (c.state === 'enter' && G.T - c.t0 >= c.enterDur) { c.state = 'wait'; c.waitSince = G.T; c.bubT = G.T; c.expr = 'want'; }
+    if (c.state === 'wait') {
+      if (c.exprT && G.T > c.exprT) { c.exprT = 0; c.expr = 'want'; }
+      if (c.kind === 'fire' && G.T - c.hatT > 6 + (c.ph % 3)) c.hatT = G.T;
+    }
+  }
+  for (let i = G.extra.length - 1; i >= 0; i--) {
+    const c = G.extra[i];
+    if ((c.state === 'leave' && G.T - c.t0 > 1) || c.state === 'gone') G.extra.splice(i, 1);
+  }
+}
+// ---------------------------------------------------------------- 来客の采配（必要な客は必ず来る・詰まない）
+function avail(k) { const st = G.st; return st.shelf[SLOT_OF[k]].stack.length - (st.res[k] || 0); }
+function nextFree(arr, n) { for (let i = 0; i < n; i++) if (!arr.some(a => a.slot === i)) return i; return -1; }
+function demandSpec(k) {
+  const st = G.st, tw = st.town;
+  if (k === 'candy') {
+    if (tw.nightOn && tw.roofs.length && rnd() < .35) return { kind: 'painter', order: ['candy'], from: 'roof', fromSlot: pick(tw.roofs).slot, night: true };
+    return { kind: 'astro', order: ['candy'] };
+  }
+  if (k === 'shoes') return { kind: 'deliv', order: ['shoes'] };
+  if (k === 'donut') {
+    if (tw.nightOn && tw.roadOpen && tw.carts.length >= 2 && rnd() < .3) return { kind: 'music', order: ['donut'], from: 'road', night: true };
+    return { kind: 'robot', order: ['donut'] };
+  }
+  if (k === 'cookie') {
+    if (!tw.nightOn) return { kind: 'fire', order: ['cookie'] };
+    return nightSpec(true);
+  }
+  return null;
+}
+function nightSpec(wantCookie) {
+  const st = G.st, tw = st.town;
+  const canRoof = tw.roofs.length > 0, canRoad = tw.roadOpen && tw.carts.length > 0;
+  let from = 'bottom', fromSlot = -1;
+  if (canRoof && canRoad) from = ((st.nightCount % 2 === 0) === (tw.first === 'roof')) ? 'roof' : 'road';
+  else if (canRoof) from = 'roof'; else if (canRoad) from = 'road';
+  st.nightCount++;
+  if (from === 'roof') fromSlot = pick(tw.roofs).slot;
+  const kind = from === 'roof' ? pick(['chef', 'painter']) : from === 'road' ? pick(['music', 'chef']) : pick(['chef', 'painter', 'music']);
+  let order;
+  if (wantCookie || avail('cookie') > 0) order = rnd() < .5 ? ['cookie', from === 'road' ? 'juice' : 'cake'] : ['cookie'];
+  else if (from === 'roof' && avail('candy') > 0) order = ['candy'];
+  else if (from === 'road' && avail('donut') > 0) order = ['donut'];
+  else if (from === 'road') order = rnd() < .45 ? ['juice', 'cake'] : ['juice'];
+  else order = rnd() < .45 ? ['cake', 'juice'] : ['cake'];
+  return { kind, order, from, fromSlot, night: true };
+}
+function baseSpec() {
+  const st = G.st;
+  const have = k => st.shelf[SLOT_OF[k]].stack.length + (st.transit[k] || 0);
+  const nF = G.cust.filter(c => c && c.base && c.kind === 'fire').length, nR = G.cust.filter(c => c && c.base && c.kind === 'robot').length;
+  let fire;
+  if (nF && !nR) fire = false; else if (nR && !nF) fire = true;
+  else { fire = have('candy') + have('donut') <= have('shoes') + have('cookie'); if (rnd() < .3) fire = !fire; }
+  const tw = st.town;
+  if (tw.nightOn) {
+    // 夜市を仕上げるのに足りない列（屋上か道か）を育てる客を呼ぶ
+    const needRoof = tw.roofs.length < CARP_ROWS, needCart = tw.carts.length < CARP_ROWS;
+    if (needRoof && !needCart) fire = false; else if (needCart && !needRoof) fire = true;
+  }
+  return fire ? { kind: 'fire', order: ['cake'], base: true } : { kind: 'robot', order: ['juice'], base: true };
+}
+function carpSpec() {
+  const order = avail('cookie') > 0 ? ['cookie', 'cake'] : ['cake', 'juice'];
+  return { kind: 'carp', order, from: G.st.town.roadOpen ? 'road' : 'bottom' };
+}
+// 最初の通りでは、靴とドーナツは棚に2つそろうと欲しがる客が来る（連続交換で品物が育つ）
+function demandNeed(k) { const st = G.st; return (st.idx === 0 && (k === 'shoes' || k === 'donut') && !st.did[k]) ? 2 : 1; }
+function pickNext() {
+  const st = G.st, tw = st.town;
+  if (st.carpPending && !st.carpSpawned) return carpSpec();
+  const ks = tw.roadOpen ? ['candy', 'shoes', 'cookie', 'donut'] : ['donut', 'candy', 'shoes', 'cookie'];
+  for (const k of ks) if (avail(k) >= demandNeed(k)) { const s = demandSpec(k); if (s) return s; }
+  // 新しい品物を作っている間は、その品物を欲しがる客のために場所を空けておく
+  if (['candy', 'shoes', 'donut', 'cookie'].some(k => (st.transit[k] || 0) > 0) && G.cust.some(Boolean)) return null;
+  const nBase = G.cust.filter(c => c && c.base).length;
+  if (tw.nightOn) {
+    const needRows = tw.roofs.length < CARP_ROWS || tw.carts.length < CARP_ROWS;
+    const lanIn = lanternCount(st) + (st.lanternFly || 0) + G.cust.filter(c => c && c.night).length;
+    if (nBase < (needRows ? 2 : 1) && (needRows || lanIn >= NEED_LANTERNS || rnd() < .4)) return baseSpec();
+    return nightSpec(false);
+  }
+  if (nBase >= 2) return null;
+  return baseSpec();
+}
+function directorUpdate() {
+  const st = G.st;
+  if (G.cine || st.carpSpawned || st.fold.disc > 0) return;
+  for (let i = 0; i < 3; i++) {
+    if (G.cust[i]) { G.spawnAt[i] = -1; continue; }
+    if (G.spawnAt[i] < 0) { G.spawnAt[i] = G.T + (st.town.nightOn ? .7 : 1.1); continue; }
+    if (G.T < G.spawnAt[i]) continue;
+    const spec = pickNext();
+    if (spec) { spawnCust(i, spec); G.spawnAt[i] = -1; } else G.spawnAt[i] = G.T + .4;
+  }
+}
+function seedCustomers(st) {
+  if (st.idx === 0) {
+    spawnCust(0, { kind: 'fire', order: ['cake'], base: true });
+    spawnCust(1, { kind: 'robot', order: ['juice'], base: true });
+    for (const c of G.cust) if (c) { c.state = 'wait'; c.waitSince = G.T; c.expr = 'want'; }
+    return;
+  }
+  const b = st.best;
+  const first = st.prefer && st.shelf[SLOT_OF[st.prefer]].stack.length ? st.prefer : b[0];
+  spawnCust(0, demandSpec(first) || { kind: 'fire', order: ['cake'], base: true });
+  spawnCust(1, rnd() < .5 ? { kind: 'fire', order: ['cake'], base: true } : { kind: 'robot', order: ['juice'], base: true });
+  const second = b.find(k => k && k !== first);
+  if (second) { const s2 = demandSpec(second); if (s2) spawnCust(2, s2); }
+  G.cust.forEach((c, i) => { if (c) c.t0 = G.T + i * .35; });
+}
+// ---------------------------------------------------------------- 売る
+function trySell(i) {
+  const st = G.st, sl = st.shelf[i];
+  if (!sl.stack.length) return false;
+  if (st.carpServed || G.cine) { sl.wigT = G.T; SFX.nope(); return false; }
+  const kind = BK(sl.stack[sl.stack.length - 1]);
+  let best = null, bs = -1e9, comp = null;
+  for (const c of G.cust) {
+    if (!c || c.state !== 'wait') continue;
+    const o = c.order.find(o2 => o2.k === kind && !o2.done && !o2.inc); if (!o) continue;
+    let s = G.T - c.waitSince; if (G.guide && G.guide.c === c) s += 1000;
+    if (s > bs) { bs = s; best = c; comp = o; }
+  }
+  if (!best) { sl.wigT = G.T; SFX.nope(); G.stats.wrong++; return false; }
+  const variant = sl.stack.pop();
+  if (BASE[kind] && !sl.stack.length) sl.refillAt = G.T + .9;
+  run(saleScript(i, variant, best, comp), 'deal');
+  G.stats.sales++;
+  return true;
+}
+function* saleScript(i, variant, c, comp) {
+  const st = G.st, kind = BK(variant), T = L.t;
+  comp.inc = true;
+  const sp = slotP(i);
+  const fl = { kind: variant, from: () => slotP(i), to: () => custHands(c), toC: c, t0: G.T, sq: .12, dur: .46,
+    size: T.itemSize * (G.guide && G.guide.slot === i ? 1.1 : 1), size2: 46, dir: custPos(c).x > sp.x ? 1 : -1 };
+  G.flyers.push(fl);
+  c.expr = 'wow';
+  SFX.squish(kind);
+  burst(sp.x, sp.y + 22, 5, [C.white, C.cream], 'puff', 70, 6);
+  yield .12;
+  SFX.whoosh();
+  yield .46;
+  rmFlyer(fl);
+  comp.done = true; comp.inc = false;
+  unreserve(c, kind);
+  c.hold = variant; c.purchase = variant; c.pose = 'hold'; c.sqT = G.T;
+  const hp = custHands(c);
+  burst(hp.x, hp.y, 7, [C.yel, C.pink, C.white], 'star', 190, 5);
+  SFX.catch(kind);
+  st.sales.push(kind); st.did[kind] = true;
+  if (!c.order.every(o => o.done)) { c.expr = 'happy'; c.exprT = G.T + .7; return; }
+  yield* completeScript(c);
+}
+const RESULT = { cloud: 'candy', spring: 'shoes', wheel: 'donut', bigwheel: 'bigdonut', button: 'cookie', candle: 'lantern', toycart: 'cart', model: 'coin' };
+const MDUR = { cloud: 1.1, spring: 1.15, wheel: 1.2, bigwheel: 1.4, button: 1.05, candle: .9, toycart: .5 };
+const MCOL = { cloud: [C.pink, C.white], spring: [C.yel, C.greyM, C.pink], wheel: [C.pink, C.teal, C.yel], bigwheel: [C.pink, C.teal, C.yel], button: [C.choc, C.cookie, C.yel], candle: [C.yel, C.glow], toycart: [C.teal, C.yel] };
+function payFor(c) {
+  const st = G.st;
+  switch (c.kind) {
+    case 'fire': return 'cloud';
+    case 'robot': return c.purchase === 'juice' ? 'spring' : 'toycart';
+    case 'astro': { st.astroSales++; return (st.astroSales === 2 || (st.astroSales > 2 && rnd() < .3)) ? 'bigwheel' : 'wheel'; }
+    case 'carp': return 'model';
+    default: return 'candle';
+  }
+}
+function* completeScript(c) {
+  const st = G.st;
+  c.state = 'served';
+  c.expr = c.kind === 'robot' && c.purchase === 'bigdonut' ? 'love' : 'happy';
+  G.panels.push({ c, t0: G.T, rot: (rnd() - .5) * .16 });
+  SFX.success();
+  const hd = custHead(c);
+  burst(hd.x, hd.y - 30, 8, [C.yel, C.pink, C.tealL], 'star', 220, 6);
+  if (c.night) st.nightServed++;
+  yield .5;
+  if (c.kind === 'fire') { c.hatT = G.T; SFX.hat(); yield .6; }
+  if (c.kind === 'astro') yield .25;
+  if (c.kind === 'deliv') { yield* delivScript(c); return; }
+  const pay = payFor(c);
+  c.hold = null; c.pose = 'offer'; c.pay = pay; c.paid = false;
+  c.payO = pay === 'model' ? { fold: FOLD0, lit: st.town.signLit } : pay === 'candle' ? {} : null;
+  if (pay === 'bigwheel') c.paySize = 62;
+  SFX.offer();
+  const isCarp = c.kind === 'carp';
+  if (isCarp) st.carpServed = true;
+  const big = pay === 'toycart' && c.purchase === 'bigdonut';
+  run(payScript(pay, () => { const h = custHead(c); return { x: h.x, y: h.y - 46 }; }, c, { col: c.lanternCol, big }), 'deal');
+  yield () => c.paid;
+  yield .3;
+  if (isCarp) { c.pose = 'cheer'; c.expr = 'happy'; return; }
+  leave(c);
+}
+function* payScript(pay, fromFn, owner, opt) {
+  opt = opt || NO;
+  const st = G.st;
+  G.payWait++;
+  yield () => G.st !== st || (!G.tray && !G.trayClaimed);
+  G.payWait--;
+  if (G.st !== st) return;
+  G.trayClaimed = true;
+  const p0 = fromFn();
+  if (owner) { owner.pay = null; owner.paid = true; owner.pose = owner.purchase ? 'hold' : 'idle'; owner.hold = owner.purchase; }
+  const pf = { kind: pay, from: () => p0, to: () => trayPos(), t0: G.T, sq: 0, dur: opt.fall ? .55 : .44, size: pay === 'bigwheel' ? 60 : 50, size2: 54,
+    spin: pay === 'wheel' || pay === 'bigwheel', o: { col: opt.col, fold: FOLD0, lit: st.town.signLit }, arc: opt.fall ? 20 : null };
+  G.flyers.push(pf);
+  SFX.toss(pay);
+  yield pf.dur;
+  rmFlyer(pf);
+  G.tray = { kind: pay, t0: G.T, phase: 'land', col: opt.col, dur: 1 };
+  const res = RESULT[pay];
+  if (SLOT_OF[res] != null) st.transit[BK(res)] = (st.transit[BK(res)] || 0) + 1;
+  SFX.land(pay);
+  const tp = trayPos();
+  burst(tp.x, tp.y + 20, 6, [C.white, C.cream], 'puff', 90, 7);
+  yield .3;
+  if (pay === 'model') { G.tray.phase = 'model'; yield () => dealCount() <= 1; run(coinScript(), 'coin'); return; }
+  G.tray.phase = 'morph'; G.tray.t0 = G.T; G.tray.dur = MDUR[pay] * (G.payWait > 0 ? .75 : 1);
+  G.shop.leanT = G.T; G.shop.leanDur = G.tray.dur + .4;
+  SFX.morph(pay);
+  yield G.tray.dur * .55;
+  burst(tp.x, tp.y, 7, MCOL[pay] || [C.yel], 'star', 160, 5);
+  yield G.tray.dur * .45;
+  if (pay === 'toycart') { yield* cartScript(opt.big); return; }
+  if (pay === 'candle') { yield* lanternScript(opt.col); return; }
+  yield* shelfScript(res);
+}
+function* shelfScript(res) {
+  const st = G.st;
+  let fromFn = () => trayPos();
+  if (res === 'shoes') {
+    // 店主がカウンターに飛び乗って試し履き（ばねで跳ねる）
+    G.shop.expr = 'wow'; G.shop.leanT = -9;
+    tween(G.shop, 'onCounter', 1, .35, eOut); SFX.jump();
+    yield .35;
+    const tf = { kind: 'shoes', from: () => trayPos(), to: () => shopFeet(), t0: G.T, dur: .36, size: 54, size2: 40, arc: 30 };
+    G.tray = null; G.trayClaimed = false;
+    G.flyers.push(tf); SFX.toss('shoes');
+    yield .36;
+    rmFlyer(tf);
+    G.shop.shoes = true;
+    for (let k = 0; k < 3; k++) {
+      G.shop.jumpT = G.T; G.shop.jumpH = (L.portrait ? 36 : 44) + k * 16; G.shop.jumpDur = .52; SFX.boing(k);
+      yield .52;
+      const f = shopFeet(); burst(f.x, f.y + 6, 4, [C.white, C.cream], 'puff', 80, 6);
+    }
+    G.shop.expr = 'happy';
+    yield .2;
+    G.shop.shoes = false;
+    const pf = shopFeet();
+    fromFn = () => pf;
+    tween(G.shop, 'onCounter', 0, .35, eIO);
+  } else { G.tray = null; G.trayClaimed = false; }
+  const si = SLOT_OF[res];
+  const fl = { kind: res, from: fromFn, to: () => slotP(si), t0: G.T, dur: .5, size: 54, size2: L.t.itemSize, arc: 70 };
+  G.flyers.push(fl); SFX.hop();
+  yield .5;
+  rmFlyer(fl);
+  if (G.st !== st) return;
+  const sl = st.shelf[si]; sl.stack.push(res); sl.popT = G.T;
+  st.transit[BK(res)] = Math.max(0, (st.transit[BK(res)] || 0) - 1);
+  const p = slotP(si); burst(p.x, p.y, 8, [C.yel, C.white, C.pink], 'star', 180, 5);
+  SFX.shelf(res);
+  G.shop.leanT = G.T; G.shop.leanDur = 1.1; G.shop.look = p; G.shop.lookUntil = G.T + 1.2;
+  if (res === 'candy') G.flagCandy = true;
+  if (res === 'shoes') disc(1);
+  if (res === 'cookie' && st.town.signLit) disc(2);
+  if (BK(res) === 'donut') disc(3);
+  for (let i = 0; i < 3; i++) if (!G.cust[i] && G.spawnAt[i] > G.T + .35) G.spawnAt[i] = G.T + .35;
+}
+function* delivScript(c) {
+  const st = G.st, tw = st.town;
+  c.hold = null; c.jumpShoes = true; c.expr = 'wow'; c.sqT = G.T;
+  const f0 = custPos(c); burst(f0.x, f0.y - 10, 6, [C.yel, C.pink], 'star', 150, 5);
+  SFX.boing(0);
+  yield .45;
+  c.sqT = G.T;
+  yield .22;
+  const side = custPos(c).x < L.t.sign.x ? -1 : 1;
+  const roofP = () => { const t = L.t; return { x: t.sign.x + side * (t.sign.w / 2 + 30), y: t.awn.y0 - 2 }; };
+  const rs = () => L.portrait ? .55 : .78;   // 屋根の上は遠くに見えるよう小さく
+  const p0 = custPos(c);
+  if (G.cust[c.spot] === c) G.cust[c.spot] = null;
+  G.extra.push(c);
+  for (const k of c.resv.slice()) unreserve(c, k);
+  c.state = 'jump';
+  c.ov = { a: () => p0, b: roofP, t0: G.T, dur: .75, h: L.portrait ? 70 : 130, ease: eIO, sA: 1, sB: rs() };
+  SFX.jump();
+  yield .75;
+  c.ov = { a: roofP, b: roofP, t0: G.T, dur: .001, sA: rs(), sB: rs() };
+  c.sqT = G.T; c.pose = 'cheer'; c.expr = 'happy';
+  if (!tw.signLit) { tw.signLit = true; tw.signT = G.T; SFX.signOn(); startNight(); }
+  else { st.signWig = G.T; SFX.signBlink(); }
+  burst(L.t.sign.x, L.t.sign.y, 12, [C.yel, C.white, C.pink], 'star', 260, 6);
+  yield .4;
+  const rp = roofP();
+  run(payScript('button', () => ({ x: rp.x, y: rp.y - 60 }), null, { fall: true }), 'deal');
+  yield .5;
+  const ri = nextFree(tw.roofs, L.t.roofSlots.length);
+  let dir = side;
+  if (ri >= 0) {
+    // 屋上へ跳ねて、屋上の屋台が開く（屋上列が育つ）
+    const rsP = () => { const r = L.t.roofSlots[ri]; return { x: r[0], y: r[1] + 4 }; };
+    const s2 = rs() * .85;
+    c.ov = { a: roofP, b: rsP, t0: G.T, dur: .6, h: L.portrait ? 40 : 80, ease: eIO, sA: rs(), sB: s2 }; SFX.jump();
+    yield .6;
+    c.ov = { a: rsP, b: rsP, t0: G.T, dur: .001, sA: s2, sB: s2 };
+    c.sqT = G.T;
+    tw.roofs.push({ slot: ri, t0: G.T, col: [C.pink, C.teal, C.yel, C.verm][ri % 4] });
+    if (!tw.first) tw.first = 'roof';
+    addCrowd('roof', ri);
+    SFX.pop();
+    const r = L.t.roofSlots[ri]; burst(r[0], r[1] - 30, 10, [C.yel, C.pink, C.white], 'star', 200, 6);
+    dir = r[0] < L.t.cx ? -1 : 1;
+    yield .4;
+  }
+  const p2 = custPos(c), s3 = p2.s || 1;
+  const exitP = { x: dir < 0 ? L.vx0 - 70 : L.vx1 + 70, y: Math.min(p2.y - 60, L.vy0 - 40) };
+  c.ov = { a: () => p2, b: () => exitP, t0: G.T, dur: .75, h: 50, sA: s3, sB: s3 * .8 }; SFX.jump();
+  yield .75;
+  c.state = 'gone';
+}
+function startNight() {
+  const tw = G.st.town;
+  if (tw.nightOn) return;
+  tw.nightOn = true; tween(tw, 'night', 1, 3, eIO); SFX.night();
+}
+function addCrowd(home, slot) {
+  const tw = G.st.town, cols = [C.pink, C.teal, C.yel, C.verm, C.tealL, C.pinkL], skins = [C.skin, C.skin2, C.skin3];
+  for (const dx of [-24, 24]) tw.crowd.push({ home, slot, dx, col: pick(cols), skin: pick(skins), ph: rnd() * 6, jumpy: rnd() < .45, arm: rnd() < .5 });
+}
+function* drive(m, x) {
+  const x0 = m.x, dur = Math.max(.3, Math.abs(x - x0) / 330);
+  m.drv = { x0, x1: x, t0: G.T, dur };
+  yield dur;
+  m.x = x; m.drv = null;
+}
+function moversUpdate(dt) {
+  for (const m of G.movers) {
+    if (m.drv) {
+      const u = clamp((G.T - m.drv.t0) / m.drv.dur, 0, 1); m.x = lerp(m.drv.x0, m.drv.x1, eIO(u)); m.spin = (m.spin || 0) + dt * 16 * Math.sign(m.drv.x1 - m.drv.x0);
+      if (G.frame % 9 === 0 && u < 1) part(m.x - 26 * m.s * Math.sign(m.drv.x1 - m.drv.x0), m.y + 14 * m.s, 0, -20, .5, 6, C.white, 'puff');
+    }
+  }
+}
+function* cartScript(big) {
+  const st = G.st, tw = st.town;
+  const tp = trayPos();
+  G.tray = null; G.trayClaimed = false;
+  const lane = L.t.road.lane + 10;
+  const m = { x: tp.x, y: lane, s: big ? 1.35 : 1.1, spin: 0, big, hop: { x0: tp.x, y0: tp.y, x1: tp.x + 30, y1: lane, s0: .85, s1: big ? 1.35 : 1.1, t0: G.T, dur: .6 } };
+  G.movers.push(m); SFX.cartHop();
+  yield .6;
+  m.x = m.hop.x1; m.hop = null;
+  burst(m.x, m.y + 10, 5, [C.white, C.cream], 'puff', 90, 7);
+  SFX.cartGo();
+  if (!tw.roadOpen) {
+    yield* drive(m, L.t.gateX - (L.portrait ? 44 : 56));
+    tw.roadOpen = true; tween(tw, 'gate', 1, .8, eElastic); SFX.gate();
+    burst(L.t.gateX - 20, L.t.road.lane - 40, 10, [C.yel, C.white], 'star', 220, 6);
+    yield .45;
+  }
+  const place = () => {
+    const k = nextFree(tw.carts, L.t.cartSlots.length);
+    if (k < 0) return false;
+    tw.carts.push({ slot: k, t0: G.T, col: k % 2 ? C.teal : C.verm }); addCrowd('cart', k);
+    if (!tw.first) tw.first = 'cart';
+    SFX.pop(); const p = L.t.cartSlots[k]; burst(p[0], p[1] - 40, 10, [C.yel, C.pink, C.white], 'star', 200, 6);
+    return true;
+  };
+  const k1 = nextFree(tw.carts, L.t.cartSlots.length);
+  if (k1 >= 0) {
+    yield* drive(m, L.t.cartSlots[k1][0]);
+    rmMover(m); place();
+    if (big) { yield .35; place(); }
+  } else { yield* drive(m, L.vx1 + 120); rmMover(m); }
+  disc(4);
+}
+function* lanternScript(col) {
+  const st = G.st, n = L.t.lanterns.length;
+  let i = -1; for (let k = 0; k < n; k++) if (!st.lanterns[k] && !(st.lanternRes && st.lanternRes[k])) { i = k; break; }
+  st.lanternRes = st.lanternRes || {};
+  if (i >= 0) st.lanternRes[i] = true;
+  const tp = trayPos(), fx = (rnd() - .5) * 160;
+  G.tray = null; G.trayClaimed = false;
+  const toFn = i >= 0 ? () => { const q = L.t.lanterns[i]; return { x: q[0], y: q[1] }; } : () => ({ x: trayPos().x + fx, y: L.vy0 - 80 });
+  const fl = { kind: 'lantern', from: () => tp, to: toFn, t0: G.T, dur: .85, size: 40, size2: 40, arc: 30, o: { col, lit: true }, noStretch: true, ease: eOut };
+  G.flyers.push(fl); SFX.lanternUp();
+  yield .85;
+  rmFlyer(fl);
+  if (G.st !== st) return;
+  if (i >= 0) {
+    st.lanterns[i] = { t0: G.T, col }; delete st.lanternRes[i];
+    SFX.lanternHang(i);
+    const q = L.t.lanterns[i]; burst(q[0], q[1], 8, [C.yel, C.white], 'star', 150, 5);
+  }
+}
+function checkCarp() {
+  const st = G.st, tw = st.town;
+  if (!st.carpPending && !st.carpSpawned && tw.nightOn && tw.roadOpen && lanternCount(st) >= NEED_LANTERNS &&
+    tw.roofs.length >= CARP_ROWS && tw.carts.length >= CARP_ROWS) st.carpPending = true;
+}
+// ---------------------------------------------------------------- 最大の転換：屋台模型 → 店がコインに → コインの中の次の通り
+function* coinScript() {
+  const st = G.st;
+  G.cine = true; G.guide = null; G.demo = null;
+  G.modelFold = { roof: 0, shelf: 0, wall: 0, disc: 0 };
+  SFX.chime();
+  yield .45;
+  st.syncT = G.T; SFX.sync();
+  burst(L.t.sign.x, L.t.sign.y, 8, [C.yel, C.white], 'star', 160, 5);
+  { const tp = trayPos(); burst(tp.x, tp.y - 20, 8, [C.yel, C.white], 'star', 120, 4); }
+  yield 1.25;
+  tween(G.shop, 'out', 1, .6, eIO); SFX.jump();
+  yield .65;
+  const steps = ['roof', 'shelf', 'wall'];
+  for (let k = 0; k < 3; k++) {
+    tween(G.modelFold, steps[k], 1, .5, eIO);
+    yield .3;
+    tween(st.fold, steps[k], 1, .75, eIO); SFX.fold(k);
+    yield .8;
+  }
+  tween(G.modelFold, 'disc', 1, .45, eIO);
+  yield .2;
+  tween(st.fold, 'disc', 1, .85, eIO); SFX.fold(3);
+  yield .85;
+  SFX.coin();
+  { const g = coinGeom(); burst(g.x, g.y, 18, [C.yel, C.goldL, C.white], 'star', 300, 7); }
+  for (const c of G.cust) if (c) { c.pose = 'cheer'; c.expr = 'happy'; }
+  for (const c of G.extra) { c.pose = 'cheer'; c.expr = 'happy'; }
+  G.shop.expr = 'happy';
+  st.spinT = G.T; SFX.spin();
+  yield 1.3;
+  const mf = { kind: 'model', from: () => trayPos(), to: () => { const g2 = coinGeom(); return { x: g2.x, y: g2.y }; }, t0: G.T, dur: .5, size: 66, size2: 26,
+    o: { fold: G.modelFold, lit: st.town.signLit }, noStretch: true };
+  G.tray = null; G.flyers.push(mf); SFX.toss('model');
+  yield .5;
+  rmFlyer(mf);
+  { const g2 = coinGeom(); burst(g2.x, g2.y, 10, [C.yel, C.white], 'star', 200, 6); }
+  SFX.chime();
+  tween(G.shop, 'into', 1, .6, eIn); SFX.jump();
+  yield .6;
+  const rec = finishStreet(st);
+  G.next = makeStreet(st.idx + 1, rec);
+  G.next.fold = { roof: 1, shelf: 1, wall: 1, disc: 0 };
+  G.shop.popT = G.T + .55;
+  G.zoomT = G.T; G.zoom = .0001; tween(G, 'zoom', 1, 1.65, eIn); SFX.reveal();
+  yield .45;
+  tween(G.next.fold, 'wall', 0, .9, eOut3); SFX.fold(2);
+  yield 1.25;
+  commitNext();
+  const ns = G.st;
+  tween(ns.fold, 'shelf', 0, .6, eOut3); SFX.fold(1);
+  yield .5;
+  tween(ns.fold, 'roof', 0, .7, eBack); SFX.pop();
+  yield .65;
+  for (let i = 0; i < 6; i++) if (ns.shelf[i].stack.length) ns.shelf[i].popT = G.T + i * .1;
+  SFX.shelf('cake');
+  yield .7;
+  G.cine = false;
+  G.lastInput = G.T; G.demoN = 0;
+  seedCustomers(ns);
+  disc(5);
+}
+function commitNext() {
+  const ns = G.next; if (!ns) return;
+  G.st = ns; G.next = null; G.zoom = 0;
+  G.cust = [null, null, null]; G.extra = []; G.flyers = []; G.movers = []; G.panels = [];
+  G.tray = null; G.trayClaimed = false; G.payWait = 0; G.spawnAt = [-1, -1, -1];
+  const sh = G.shop; sh.out = 0; sh.into = 0; sh.shoes = false; sh.up = 0; sh.jumpT = -9; sh.leanT = -9; sh.onCounter = 0;
+  G.scripts = G.scripts.filter(s => s.tag === 'coin');
+  for (let i = G.tweens.length - 1; i >= 0; i--) if (G.tweens[i].o === G) G.tweens.splice(i, 1);
+  BGC.key = '';
+}
+// ---------------------------------------------------------------- 補充・店主・誘い・お手本
+function refillUpdate() {
+  const st = G.st; if (st.fold.disc > 0 || st.fold.shelf > 0) return;
+  for (const i of [0, 1]) {
+    const sl = st.shelf[i];
+    if (sl.stack.length) { sl.refillAt = -1; continue; }
+    if (sl.refillAt < 0) sl.refillAt = G.T + .9;
+    if (G.T >= sl.refillAt) { sl.stack.push(sl.kind); sl.popT = G.T; sl.refillAt = -1; SFX.refill(); const p = slotP(i); burst(p.x, p.y, 4, [C.white, C.yel], 'star', 100, 4); }
+  }
+}
+function shopUpdate() {
+  const sh = G.shop;
+  const jt = G.T - sh.jumpT;
+  if (jt < sh.jumpDur) { const u = jt / sh.jumpDur; sh.up = Math.sin(u * Math.PI) * sh.jumpH; sh.legsUp = u > .25 && u < .75; sh.hands = 'up'; sh.squash = 0; }
+  else { sh.up = 0; sh.legsUp = false; const k = jt - sh.jumpDur; sh.squash = k < .22 ? Math.sin(k / .22 * Math.PI) * .45 : 0; sh.hands = 'counter'; }
+  const lt = G.T - sh.leanT;
+  if (lt < sh.leanDur) { sh.lean = eOut(clamp(lt / .25, 0, 1)) * (1 - inv(sh.leanDur - .3, sh.leanDur, lt)); if (!(sh.up > 0)) sh.hands = 'lean'; if (sh.expr !== 'happy') sh.expr = 'wow'; }
+  else sh.lean = 0;
+  if (lt > sh.leanDur && jt > sh.jumpDur + .3 && !G.cine && !sh.shoes) sh.expr = 'idle';
+  let look = null;
+  if (G.flyers.length) look = flyerPos(G.flyers[G.flyers.length - 1]);
+  else if (G.tray) look = trayPos();
+  else if (sh.lookUntil > G.T && sh.look) look = sh.look;
+  else if (G.guide) look = slotP(G.guide.slot);
+  else { const c = G.cust.find(Boolean); look = c ? custHead(c) : null; }
+  sh.lookP = look;
+  sh.tilt = look ? clamp((look.x - L.t.shop.x) / 320, -.22, .22) : 0;
+}
+function guideScore(kind, c) {
+  const st = G.st;
+  if (c.kind === 'carp') return 95;
+  if (st.idx > 0 && st.sales.length === 0 && st.prefer === kind) return 125;
+  if (st.idx > 0 && st.sales.length === 0 && st.best.includes(kind)) return 120;
+  if (!G.disc[0] && kind === 'cake' && c.kind === 'fire') return 100;
+  if (!G.disc[1] && kind === 'juice' && c.kind === 'robot') return 90;
+  if (kind === 'candy' && !st.did.candy) return 86;
+  if (kind === 'shoes' && !st.did.shoes) return st.prefer === 'shoes' ? 88 : st.prefer === 'donut' ? 80 : 84;
+  if (kind === 'donut' && !st.did.donut) return st.prefer === 'donut' ? 88 : st.prefer === 'shoes' ? 80 : 83;
+  if (kind === 'cookie') return 60;
+  if (!BASE[kind]) return 50;
+  return 20;
+}
+function computeGuide() {
+  if (G.cine || G.st.carpServed) return null;
+  const st = G.st; let best = null, bs = -1, cur = -1;
+  const g = G.guide;
+  for (let i = 0; i < 6; i++) {
+    const sl = st.shelf[i]; if (!sl.stack.length) continue;
+    const kind = BK(sl.stack[sl.stack.length - 1]);
+    for (const c of G.cust) {
+      if (!c || c.state !== 'wait') continue;
+      if (!c.order.some(o => o.k === kind && !o.done && !o.inc)) continue;
+      const s = guideScore(kind, c) + Math.min(6, (G.T - c.waitSince) * .3);
+      if (g && g.c === c && g.slot === i) cur = s;
+      if (s > bs) { bs = s; best = { slot: i, c, t0: G.T }; }
+    }
+  }
+  if (g && cur >= 0 && (bs - cur < 15)) return g;
+  return best;
+}
+function demoUpdate() {
+  if (G.cine || !G.guide) { G.demo = null; G.lastInput = G.T; return; }
+  // 演出が動いている間は「放置」と数えない
+  if (!G.demo && (dealCount() > 0 || G.tray || G.flyers.length || G.movers.length)) G.lastInput = G.T;
+  const d = G.demo;
+  if (d) {
+    const u = G.T - d.t0;
+    if (!d.ticked && u > .66) { d.ticked = true; SFX.demoTap(); }
+    if (u > 2.1 || d.slot !== G.guide.slot) { G.demo = null; G.lastInput = G.T; }
+    return;
+  }
+  if (G.T - G.lastInput > (G.demoN === 0 ? 4 : 7)) { G.demo = { t0: G.T, slot: G.guide.slot, c: G.guide.c, ticked: false }; G.demoN++; }
+}
+function drawDemo() {
+  const d = G.demo; if (!d) return;
+  const u = G.T - d.t0, sp = slotP(d.slot), sy = sp.y + 6;
+  const start = { x: sp.x + 80, y: sp.y + 170 };
+  let x, y, a = 1, press = 0;
+  if (u < .62) { const e = eIO(u / .62); x = lerp(start.x, sp.x, e); y = lerp(start.y, sy, e); a = clamp(u / .2, 0, 1); }
+  else if (u < 1.05) { x = sp.x; y = sy; press = Math.sin(inv(.62, 1.05, u) * Math.PI); }
+  else {
+    const e = eIO(inv(1.05, 1.75, u)), cp = custHands(d.c);
+    x = lerp(sp.x, lerp(sp.x, cp.x, .3), e); y = lerp(sy, lerp(sy, cp.y, .3), e) - Math.sin(e * Math.PI) * 26; a = 1 - inv(1.35, 2.05, u);
+  }
+  drawHand(x, y, L.portrait ? .92 : 1, press, clamp(a, 0, 1));
+}
+
+// =====================================================================
+//  音（Web Audio で合成・最初のタッチで開始）
+// =====================================================================
+const AU = { ctx: null, out: null, noise: null, voices: 0 };
+function auInit() {
+  try {
+    if (!AU.ctx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      const ac = new AC();
+      const comp = ac.createDynamicsCompressor();
+      comp.threshold.value = -16; comp.knee.value = 12; comp.ratio.value = 5; comp.attack.value = .003; comp.release.value = .2;
+      const g = ac.createGain(); g.gain.value = .62;
+      g.connect(comp); comp.connect(ac.destination);
+      const len = Math.floor(ac.sampleRate * .8), b = ac.createBuffer(1, len, ac.sampleRate), d = b.getChannelData(0);
+      for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+      AU.ctx = ac; AU.out = g; AU.noise = b;
+      const s = ac.createBufferSource(); s.buffer = ac.createBuffer(1, 1, 22050); s.connect(ac.destination); s.start(0);
+    }
+    if (AU.ctx.state !== 'running' && !document.hidden) { const p = AU.ctx.resume(); if (p && p.catch) p.catch(() => {}); }
+  } catch (e) { /* 音が使えなくても遊べる */ }
+}
+function tone(f, d, o) {
+  const ac = AU.ctx; if (!ac || ac.state !== 'running' || AU.voices > 30) return;
+  o = o || NO;
+  try {
+    const t = ac.currentTime + (o.dl || 0) + .004;
+    const osc = ac.createOscillator(), g = ac.createGain();
+    osc.type = o.ty || 'sine';
+    osc.frequency.setValueAtTime(f, t);
+    if (o.to) osc.frequency.exponentialRampToValueAtTime(Math.max(20, o.to), t + (o.sl || d));
+    if (o.vib) { const lfo = ac.createOscillator(), lg = ac.createGain(); lfo.frequency.value = o.vib; lg.gain.value = f * .04; lfo.connect(lg); lg.connect(osc.frequency); lfo.start(t); lfo.stop(t + d + .05); }
+    const v = o.v == null ? .18 : o.v, a = o.a || .006;
+    g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(v, t + a); g.gain.exponentialRampToValueAtTime(.0001, t + d);
+    osc.connect(g); g.connect(AU.out);
+    osc.start(t); osc.stop(t + d + .03);
+    AU.voices++; osc.onended = () => { AU.voices = Math.max(0, AU.voices - 1); };
+  } catch (e) { }
+}
+function noise(d, o) {
+  const ac = AU.ctx; if (!ac || ac.state !== 'running' || AU.voices > 30) return;
+  o = o || NO;
+  try {
+    const t = ac.currentTime + (o.dl || 0) + .004;
+    const src = ac.createBufferSource(); src.buffer = AU.noise;
+    const fl = ac.createBiquadFilter(); fl.type = o.ft || 'bandpass'; fl.frequency.setValueAtTime(o.f || 1000, t); fl.Q.value = o.q || 1;
+    if (o.to) fl.frequency.exponentialRampToValueAtTime(o.to, t + d);
+    const g = ac.createGain(), v = o.v == null ? .15 : o.v;
+    g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(v, t + (o.a || .01)); g.gain.exponentialRampToValueAtTime(.0001, t + d);
+    src.connect(fl); fl.connect(g); g.connect(AU.out);
+    src.start(t, Math.random() * .3); src.stop(t + d + .03);
+    AU.voices++; src.onended = () => { AU.voices = Math.max(0, AU.voices - 1); };
+  } catch (e) { }
+}
+const MAT = { cake: 392, juice: 523, candy: 784, shoes: 330, donut: 294, bigdonut: 262, cookie: 659 };
+const SFX = {
+  squish(k) { const f = MAT[k] || 440; tone(f * .8, .15, { ty: 'triangle', to: f * .5, v: .2 }); noise(.07, { f: 1800, q: .8, v: .05 }); if (k === 'juice') tone(f * 1.5, .1, { dl: .05, to: f * 2.2, v: .07 }); if (k === 'shoes') tone(f, .25, { to: f * 2, sl: .1, v: .08, vib: 18 }); },
+  whoosh() { noise(.26, { f: 700, to: 2600, q: 1.4, v: .09 }); },
+  catch(k) { const f = MAT[k] || 440; tone(f * 1.5, .1, { to: f * 2, v: .13 }); },
+  success() { [523, 659, 784, 1047].forEach((f, i) => tone(f, .2, { ty: 'triangle', v: .15, dl: i * .07 })); tone(1568, .35, { v: .06, dl: .3, vib: 6 }); },
+  hat() { tone(880, .06, { ty: 'square', v: .035 }); tone(1175, .06, { ty: 'square', v: .035, dl: .07 }); },
+  offer() { tone(660, .1, { v: .07, to: 880 }); },
+  toss() { noise(.2, { f: 900, to: 2000, q: 1.2, v: .06 }); },
+  land(p) {
+    if (p === 'cloud') noise(.28, { f: 600, q: .6, v: .14, ft: 'lowpass', to: 200 });
+    else if (p === 'spring') tone(220, .35, { to: 440, sl: .08, v: .17, vib: 18 });
+    else if (p === 'wheel' || p === 'bigwheel') { noise(.3, { f: 300, q: 2, v: .12 }); tone(p === 'bigwheel' ? 130 : 180, .14, { ty: 'triangle', v: .14, dl: .25 }); }
+    else if (p === 'button') { tone(1400, .04, { ty: 'square', v: .045 }); tone(1100, .04, { ty: 'square', v: .045, dl: .06 }); }
+    else if (p === 'toycart') { tone(523, .08, { ty: 'square', v: .045 }); tone(659, .1, { ty: 'square', v: .045, dl: .09 }); }
+    else if (p === 'candle') tone(1320, .3, { v: .07 });
+    else if (p === 'model') { tone(1047, .5, { v: .1 }); tone(1568, .6, { v: .06, dl: .05 }); }
+    else tone(300, .1, { ty: 'triangle', v: .12 });
+  },
+  morph(p) {
+    if (p === 'cloud') { tone(400, 1, { to: 1200, sl: 1, v: .1, vib: 9 }); noise(.9, { f: 600, to: 2400, q: 3, v: .05 }); }
+    else if (p === 'spring') { tone(200, .3, { to: 500, sl: .3, v: .14, vib: 14 }); tone(250, .3, { to: 650, sl: .3, v: .12, dl: .3, vib: 14 }); tone(520, .35, { to: 900, v: .1, dl: .65 }); }
+    else if (p === 'wheel' || p === 'bigwheel') { noise(.6, { f: 220, q: 4, v: .12 }); tone(330, .2, { ty: 'triangle', to: 660, v: .12, dl: .65 }); tone(990, .2, { v: .08, dl: .85 }); if (p === 'bigwheel') tone(1319, .4, { v: .07, dl: 1.05 }); }
+    else if (p === 'button') { [0, .12, .24].forEach((d, i) => tone(i % 2 ? 900 : 700, .08, { ty: 'square', v: .035, dl: d })); noise(.25, { f: 3000, q: .8, v: .06, dl: .5 }); tone(1047, .3, { v: .08, dl: .8 }); }
+    else if (p === 'candle') { noise(.4, { f: 1500, q: .5, v: .05 }); tone(660, .5, { to: 990, v: .08, dl: .3 }); }
+    else if (p === 'toycart') { tone(784, .08, { ty: 'square', v: .045 }); tone(784, .08, { ty: 'square', v: .045, dl: .15 }); }
+  },
+  hop() { tone(520, .12, { ty: 'triangle', to: 780, v: .1 }); },
+  shelf(k) { const f = MAT[k] || 600; tone(f * 1.5, .09, { ty: 'triangle', v: .12 }); tone(f * 2, .14, { ty: 'triangle', v: .1, dl: .08 }); },
+  boing(i) { const f = 180 + i * 60; tone(f, .4, { to: f * 2.4, sl: .12, v: .17, vib: 16 }); },
+  jump() { tone(300, .3, { to: 900, sl: .25, v: .11 }); },
+  signOn() { [523, 587, 659, 784, 880, 1047, 1175, 1319, 1568].forEach((f, i) => tone(f, .25, { ty: 'triangle', v: .1, dl: i * .09 })); },
+  signBlink() { tone(1047, .15, { v: .08 }); tone(1319, .2, { v: .08, dl: .1 }); },
+  night() { [262, 330, 392, 523].forEach((f, i) => tone(f, 2.2, { v: .05, a: .6, dl: i * .15 })); },
+  pop() { tone(400, .12, { ty: 'triangle', to: 900, v: .14 }); noise(.08, { f: 2000, q: 1, v: .05 }); },
+  cartHop() { tone(600, .15, { ty: 'square', to: 300, v: .045 }); },
+  cartGo() { noise(.8, { f: 160, q: 1.5, v: .12, ft: 'lowpass' }); tone(523, .12, { ty: 'square', v: .045, dl: .1 }); tone(659, .16, { ty: 'square', v: .045, dl: .24 }); },
+  gate() { tone(392, .1, { ty: 'square', v: .05 }); tone(523, .1, { ty: 'square', v: .05, dl: .1 }); tone(784, .25, { ty: 'triangle', v: .1, dl: .2 }); },
+  lanternUp() { tone(660, .6, { to: 1320, sl: .6, v: .07 }); },
+  lanternHang(i) { const n = [784, 880, 1047, 1175][i % 4]; tone(n, .3, { ty: 'triangle', v: .12 }); tone(n * 2, .4, { v: .05, dl: .05 }); },
+  chime() { tone(1319, .6, { v: .08 }); tone(1760, .7, { v: .06, dl: .08 }); },
+  sync() { [0, .3, .6].forEach(d => { tone(784, .15, { ty: 'triangle', v: .08, dl: d }); tone(1568, .15, { v: .05, dl: d + .02 }); }); },
+  fold(k) { noise(.35, { f: 900 - k * 150, to: 200, q: .8, v: .12, ft: 'lowpass' }); tone(300 - k * 40, .25, { ty: 'triangle', to: 150, v: .1, dl: .1 }); },
+  coin() { [1568, 2093, 2637].forEach((f, i) => tone(f, .5, { v: .08, dl: i * .05 })); tone(523, .4, { ty: 'triangle', v: .1 }); },
+  spin() { tone(600, 1.2, { to: 1200, sl: 1.2, v: .05, vib: 12 }); },
+  reveal() { [392, 494, 587, 784].forEach((f, i) => tone(f, 1.4, { ty: 'triangle', v: .08, a: .1, dl: i * .12 })); noise(1.4, { f: 400, to: 3000, q: .7, v: .05 }); },
+  nope() { tone(240, .12, { to: 200, v: .1 }); },
+  arrive() { tone(1175, .12, { v: .045 }); tone(1568, .16, { v: .04, dl: .09 }); },
+  refill() { tone(880, .08, { ty: 'triangle', v: .045 }); },
+  tap() { tone(700, .06, { ty: 'triangle', v: .06 }); },
+  giggle() { [988, 1175, 988, 1319].forEach((f, i) => tone(f, .07, { ty: 'triangle', v: .06, dl: i * .07 })); },
+  demoTap() { tone(900, .05, { ty: 'triangle', v: .03 }); },
+};
+
+// =====================================================================
+//  入力（Pointer Events・一本指・複数指でも壊れない）
+// =====================================================================
+const PTRS = new Map();
+function handleTap(p) {
+  const st = G.st, T = L.t;
+  let best = -1, bd = 1e9;
+  for (let i = 0; i < 6; i++) { const s = T.slots[i], d = Math.hypot(p.x - s[0], p.y - (s[1] + 2)); if (d < T.hitR && d < bd) { bd = d; best = i; } }
+  if (best >= 0) { if (st.shelf[best].stack.length) trySell(best); else SFX.tap(); return; }
+  const tp = trayPos();
+  if (Math.abs(p.x - tp.x) < 50 && p.y > tp.y - 26 && p.y < tp.y + 56) { st.trayWig = G.T; SFX.tap(); return; }
+  for (const c of G.cust) {
+    if (!c || c.state === 'leave') continue;
+    const cp = custPos(c), s = custS(), b = bubbleRect(c);
+    const inBody = Math.abs(p.x - cp.x) < 44 * s && p.y < cp.y + 6 && p.y > cp.y - 178 * s;
+    const inBub = c.state === 'wait' && Math.abs(p.x - b.x) < b.w / 2 && Math.abs(p.y - b.y) < b.h / 2;
+    if (inBody || inBub) { c.wig = G.T; c.bubP = G.T; SFX.tap(); return; }
+  }
+  const sh = T.shop;
+  if (Math.abs(p.x - sh.x) < 46 && p.y < sh.y && p.y > sh.y - 176) { G.shop.wig = G.T; SFX.giggle(); return; }
+  const sg = T.sign;
+  if (Math.abs(p.x - sg.x) < sg.w / 2 + 10 && Math.abs(p.y - sg.y) < sg.h / 2 + 10) { st.signWig = G.T; SFX.tap(); return; }
+  const ms = st.medals || [];
+  for (let i = 0; i < ms.length && i < 2; i++) { const m = T.medals[i]; if (Math.hypot(p.x - m[0], p.y - m[1]) < 32) { ms[i].wig = G.T; SFX.signBlink(); return; } }
+  G.stats.other++;
+}
+function onDown(e) {
+  if (e.cancelable) e.preventDefault();
+  if (layoutDirty) doLayout();
+  const p = s2v(e.clientX, e.clientY);
+  PTRS.set(e.pointerId, p);
+  G.stats.taps++;
+  G.lastInput = G.T; G.demo = null;
+  try {
+    if (G.cine) burst(p.x, p.y, 3, [C.yel, C.white], 'star', 80, 3);
+    else handleTap(p);
+  } catch (err) { G.errors.push(String(err && err.stack || err)); }
+  auInit();
+}
+function onUp(e) { PTRS.delete(e.pointerId); auInit(); }
+function onCancel(e) { PTRS.delete(e.pointerId); }
+cv.addEventListener('pointerdown', onDown, { passive: false });
+window.addEventListener('pointerup', onUp, { passive: true });
+window.addEventListener('pointercancel', onCancel, { passive: true });
+const stopEv = e => { if (e.cancelable) e.preventDefault(); };
+document.addEventListener('touchstart', stopEv, { passive: false });
+document.addEventListener('touchmove', stopEv, { passive: false });
+document.addEventListener('touchend', e => { stopEv(e); auInit(); }, { passive: false });
+document.addEventListener('gesturestart', stopEv, { passive: false });
+document.addEventListener('gesturechange', stopEv, { passive: false });
+document.addEventListener('gestureend', stopEv, { passive: false });
+document.addEventListener('dblclick', stopEv, { passive: false });
+document.addEventListener('contextmenu', stopEv);
+document.addEventListener('selectstart', stopEv);
+document.addEventListener('wheel', stopEv, { passive: false });
+
+// =====================================================================
+//  ループ（requestAnimationFrame のみ・非表示で停止）
+// =====================================================================
+function drawZoom() {
+  const e = clamp(G.zoom, 0, 1), g = coinGeom();
+  const mx = (L.vx0 + L.vx1) / 2, my = (L.vy0 + L.vy1) / 2;
+  const cx = lerp(g.x, mx, eIO(e)), cy = lerp(g.y, my, eIO(e));
+  const R1 = Math.hypot(L.vx1 - L.vx0, L.vy1 - L.vy0) / 2 / .8 * 1.06;
+  const r = lerp(g.r, R1, e);
+  ctx.save();
+  bp(); cir(cx, cy, r * .8); ctx.clip();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.drawImage(nextBG(G.next), 0, 0);
+  setV();
+  drawWorld(G.next, false);
+  ctx.restore();
+  setV(); ink(LW * 1.3);
+  bp(); cir(cx, cy, r); ctx.moveTo(cx + r * .8, cy); ctx.arc(cx, cy, r * .8, 0, TAU, true); ctx.fillStyle = C.gold; ctx.fill(); ctx.stroke();
+  ctx.save(); ctx.strokeStyle = C.goldL; ctx.lineWidth = r * .05; arcS(cx, cy, r * .9, 0, TAU); ctx.restore();
+  for (let i = 0; i < 12; i++) { const a = i / 12 * TAU + G.T; star4(cx + Math.cos(a) * r * .9, cy + Math.sin(a) * r * .9, 6 + r * .02, C.white); }
+}
+function update(dt) {
+  G.T += dt; G.frame++;
+  stepScripts();
+  tweenUpdate();
+  directorUpdate();
+  refillUpdate();
+  custUpdate();
+  shopUpdate();
+  moversUpdate(dt);
+  partsUpdate(dt);
+  for (let i = G.panels.length - 1; i >= 0; i--) if (G.T - G.panels[i].t0 > 1.1) G.panels.splice(i, 1);
+  checkCarp();
+  G.guide = computeGuide();
+  demoUpdate();
+}
+function draw() {
+  if (layoutDirty) doLayout();
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1;
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  syncBG(G.st);
+  setV();
+  drawWorld(G.st, true);
+  for (const f of G.flyers) drawFlyer(f);
+  for (const pn of G.panels) drawPanel(pn);
+  drawParts();
+  if (G.zoom > 0 && G.next) drawZoom();
+  setV();
+  drawDemo();
+}
+let raf = 0, lastTS = 0, running = !document.hidden, slowT = 0, adaptDpr = true;
+const PERF = { n: 0, sum: 0, max: 0, recent: [], dprDrops: 0 };
+function frame(ts) {
+  raf = 0;
+  if (!running) return;
+  let dt = lastTS ? (ts - lastTS) / 1000 : 1 / 60;
+  lastTS = ts;
+  // 描画が重い端末では内部解像度を段階的に下げて 60fps を目指す（2 → 1.5 → 1.25）
+  if (dt > .024 && dt < .25) slowT += dt; else slowT = Math.max(0, slowT - dt * .6);
+  if (adaptDpr && slowT > 2.5 && dprCap > 1.3 && (window.devicePixelRatio || 1) > 1.3) { dprCap = dprCap > 1.6 ? 1.5 : 1.25; slowT = 0; layoutDirty = true; PERF.dprDrops++; }
+  dt = clamp(dt, 0, 1 / 20) * SPEED;
+  const t0 = performance.now();
+  try { update(dt); draw(); } catch (e) { G.errors.push(String(e && e.stack || e)); try { ctx.restore(); } catch (e2) { } }
+  const ms = performance.now() - t0;
+  PERF.n++; PERF.sum += ms; if (ms > PERF.max) PERF.max = ms;
+  PERF.recent.push(ms); if (PERF.recent.length > 240) PERF.recent.shift();
+  raf = requestAnimationFrame(frame);
+}
+function startLoop() { if (!raf && running) { lastTS = 0; raf = requestAnimationFrame(frame); } }
+function pause() {
+  running = false; if (raf) cancelAnimationFrame(raf); raf = 0;
+  try { if (AU.ctx && AU.ctx.state === 'running') AU.ctx.suspend().catch(() => {}); } catch (e) { }
+}
+function resume() { running = true; lastTS = 0; if (AU.ctx) auInit(); layoutDirty = true; startLoop(); }
+document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); else resume(); });
+window.addEventListener('pagehide', pause);
+window.addEventListener('pageshow', () => { if (!document.hidden) resume(); });
+window.addEventListener('resize', () => { layoutDirty = true; });
+window.addEventListener('orientationchange', () => { layoutDirty = true; });
+if (window.visualViewport) window.visualViewport.addEventListener('resize', () => { layoutDirty = true; });
+
+// ---------------------------------------------------------------- 起動
+doLayout();
+G.st = makeStreet(0, null);
+seedCustomers(G.st);
+startLoop();
+
+// ---------------------------------------------------------------- 自動テスト用の窓口（画面には出ない）
+window.__gf = {
+  G, L, PERF, AU, SLOTK,
+  v2s, s2v,
+  pinDpr(v) { dprCap = v; adaptDpr = false; layoutDirty = true; },
+  slotScreen(i) { const p = slotP(i); return v2s(p.x, p.y); },
+  kindSlot(k) { return SLOT_OF[k]; },
+  guide() { const g = G.guide; return g ? { slot: g.slot, kind: SLOTK[g.slot], spot: g.c.spot, cust: g.c.kind } : null; },
+  trayScreen() { const p = trayPos(); return v2s(p.x, p.y); },
+  custScreen(i) { const c = G.cust[i]; if (!c) return null; const p = custPos(c); return v2s(p.x, p.y - 80 * custS()); },
+  summary() {
+    const st = G.st, tw = st.town;
+    return {
+      T: +G.T.toFixed(2), street: st.idx, theme: st.theme, cine: G.cine,
+      shelf: st.shelf.map(s => s.stack.slice()),
+      cust: G.cust.map(c => c ? { kind: c.kind, order: c.order.map(o => o.k + (o.done ? '*' : '')), state: c.state } : null),
+      night: +tw.night.toFixed(2), signLit: tw.signLit, roofs: tw.roofs.length, carts: tw.carts.length, roadOpen: tw.roadOpen, first: tw.first,
+      lanterns: lanternCount(st), nightServed: st.nightServed, carpPending: st.carpPending, carpSpawned: st.carpSpawned,
+      disc: G.disc.slice(), log: G.log.slice(), memory: G.memory.streets.map(m => ({ best: m.best, first: m.first, roofs: m.roofs, carts: m.carts, t: m.t })),
+      errors: G.errors.slice(), flyers: G.flyers.length, tray: G.tray ? G.tray.kind + ':' + G.tray.phase : null,
+      demo: !!G.demo, scripts: G.scripts.length, sales: st.sales.slice(), best: st.best.slice(), prefer: st.prefer, emblem: st.emblem,
+      res: Object.assign({}, st.res), stats: Object.assign({}, G.stats), particles: PT.length, audio: AU.ctx ? AU.ctx.state : 'none',
+      zoom: G.zoom, fold: Object.assign({}, st.fold),
+    };
+  },
+};
+})();
+</script>
+</body>
+</html>
