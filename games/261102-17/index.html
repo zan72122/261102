@@ -1782,7 +1782,8 @@ function pondSpot(){ const p=L.pond, c=(p.x0+p.x1)/2; return ST.boatX>c?p.x0+L.R
 /* タップ: へこんで、次の対象へ小さく跳ぶ */
 function tapBall(b){
  b.sq.amt=.34; b.face.ex='squish'; b.face.hold=.3;
- const h=HINT.t; let t=null;
+ let h=HINT.t; let t=null;
+ if(b===BALL&&(ST.parkClosing||ST.park)) h=b.mat==='clay'?blkHint('rubber'):null;
  if(h&&h.aim) t=h.aim;
  if(t){ const dist=hyp(t.x-b.x,t.y-b.y); const v=ballistic(b.x,b.y,t.x,t.y,Math.min(b.y,t.y)-clamp(36+dist*.15,36,260)); b.vx=v.vx; b.vy=v.vy; }
  else { b.vy=-420; }
