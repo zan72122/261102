@@ -190,7 +190,7 @@ function layout() {
     { x: sh.x + half * 0.52, y: sh.y1 }, { x: sh.x + half * 1.45, y: sh.y1 },
     { x: sh.x + half * 0.52, y: sh.y2 }, { x: sh.x + half * 1.45, y: sh.y2 },
   ];
-  L.slotR = clamp(Math.min(half * 0.42, (sh.y2 - sh.y1) * 0.42), 18, 46);
+  L.slotR = clamp(Math.min(half * 0.47, (sh.y2 - sh.y1) * 0.42), 20, 46);
   L.cutDist = clamp(S * 1.9, 70, 170);
   L.tree = { bx: L.win.w * L.treeX, by: L.win.h * 0.9, TH: L.win.h * L.treeTH };
 }
@@ -653,9 +653,9 @@ function buildRoom() {
   gg.fillStyle = gd; gg.fillRect(0, 0, w.w, w.h);
   // ゆがみの筋（昔の板ガラスのさざ波）
   const gr2 = mulberry(9);
-  for (let i = 0; i < 9; i++) {
+  for (let i = 0; i < 6; i++) {
     const y0 = gr2() * w.h, a = 1 + gr2() * 3;
-    gg.strokeStyle = 'rgba(235,255,250,' + (0.06 + gr2() * 0.08).toFixed(3) + ')'; gg.lineWidth = 0.8 + gr2() * 1.6;
+    gg.strokeStyle = 'rgba(235,255,250,' + (0.03 + gr2() * 0.04).toFixed(3) + ')'; gg.lineWidth = 0.8 + gr2() * 1.4;
     gg.beginPath();
     for (let x = 0; x <= w.w; x += 6) { const y = y0 + Math.sin(x * 0.03 + i) * a + x * (gr2() * 0.02 - 0.01); x === 0 ? gg.moveTo(x, y) : gg.lineTo(x, y); }
     gg.stroke();
@@ -805,13 +805,13 @@ function brDefault(i, gr) {
   return pts;
 }
 function brFit(pts, x0, y0) {   // 窓からはみ出さないよう、根元を中心に縮める
-  const m = 5, Wd = L.win.w - m, Hh = L.tree.by - 4;
+  const m = Math.max(6, L.win.w * 0.1), Wd = L.win.w - m, Hh = L.tree.by - 4, mt = 6;
   let k = 1;
   for (const p of pts) {
     const dx = p[0] - x0, dy = p[1] - y0;
     if (p[0] < m && dx < 0) k = Math.min(k, (x0 - m) / -dx);
     if (p[0] > Wd && dx > 0) k = Math.min(k, (Wd - x0) / dx);
-    if (p[1] < m && dy < 0) k = Math.min(k, (y0 - m) / -dy);
+    if (p[1] < mt && dy < 0) k = Math.min(k, (y0 - mt) / -dy);
     if (p[1] > Hh && dy > 0) k = Math.min(k, (Hh - y0) / dy);
   }
   k = clamp(k, 0.15, 1);
@@ -1255,8 +1255,8 @@ function drawStand() {
 function glowAt(x, y, r, k, col) {
   if (k <= 0.01) return;
   const c = col || [255, 214, 120];
-  const g = ctx.createRadialGradient(x, y, r * 0.15, x, y, r);
-  g.addColorStop(0, rgb(c, 0.55 * k)); g.addColorStop(0.5, rgb(c, 0.22 * k)); g.addColorStop(1, rgb(c, 0));
+  const g = ctx.createRadialGradient(x, y, r * 0.1, x, y, r);
+  g.addColorStop(0, rgb(c, 0.7 * k)); g.addColorStop(0.45, rgb(c, 0.32 * k)); g.addColorStop(1, rgb(c, 0));
   ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
 }
 function inviteK(id) { return G.invite === id ? 0.65 + 0.35 * Math.sin(G.t * 4.2) : 0; }
@@ -1510,9 +1510,9 @@ function drawSilkBall(x, y, r, spin, alpha) {
   ctx.restore();
 }
 function loopPos(k, n) {   // 巻き玉から伸びる輪の鎖
-  const b = L.ball, dir = L.portrait ? -1 : 1;
-  const a = -Math.PI / 2 - dir * (0.55 + k * 0.32);
-  const d = b.r * (1.55 + k * 0.62);
+  const b = L.ball, dir = L.portrait ? 1 : -1;   // 部屋のまんなかへ向かって輪が並ぶ
+  const a = -Math.PI / 2 - dir * (0.4 + k * 0.24);
+  const d = b.r * (1.5 + k * 0.58);
   return [b.x + Math.cos(a) * d * 1.05, b.y + Math.sin(a) * d * 0.95 + b.r * 0.2];
 }
 function drawLoops(n, rb, alpha) {
@@ -1633,8 +1633,9 @@ function drawMaterial(k, x, y, sz, alpha) {
 }
 function drawShelfItems() {
   const sz = L.slotR * 1.6;
-  // ガラスのびん（飾り）
+  // ガラスのびん（飾り。横長の画面だけ）
   const jx = L.shelf.x + L.shelf.w * 0.93, jy = L.shelf.y1, js = L.slotR * 0.8;
+  if (!L.portrait) {
   ctx.save(); ctx.translate(jx, jy); ctx.rotate(wig('jar'));
   const jg = ctx.createLinearGradient(-js * 0.4, 0, js * 0.4, 0);
   jg.addColorStop(0, rgb(P.glassD, 0.75)); jg.addColorStop(0.35, rgb(P.glassL, 0.6)); jg.addColorStop(1, rgb(P.glassD, 0.8));
@@ -1643,6 +1644,7 @@ function drawShelfItems() {
   ctx.quadraticCurveTo(-js * 0.45, -js * 0.8, -js * 0.2, -js * 0.95); ctx.closePath(); ctx.fill();
   ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.fillRect(-js * 0.28, -js * 0.75, js * 0.07, js * 0.55);
   ctx.restore();
+  }
   ['b', 's', 'd', 'c'].forEach(k => {
     const fl = G.flights.some(f => f.mat === k && f.to === 'shelf' && !f.done);
     if (!shelfShown(k) || fl) return;
@@ -2387,8 +2389,8 @@ function drawRipples(dt) {
   for (let i = G.ripples.length - 1; i >= 0; i--) {
     const r = G.ripples[i]; r.t += dt;
     const k = r.t / 0.9; if (k >= 1) { G.ripples.splice(i, 1); continue; }
-    const rad = L.S * (0.5 + 4.5 * easeOut(k));
-    ctx.save(); ctx.globalAlpha = (1 - k) * 0.8;
+    const rad = L.S * (0.4 + 2.9 * easeOut(k));
+    ctx.save(); ctx.globalAlpha = (1 - k) * 0.6;
     ctx.lineWidth = Math.max(2, L.S * 0.12 * (1 - k));
     ctx.strokeStyle = r.kind === 'fwd' ? 'rgba(255,230,140,0.9)' : 'rgba(150,240,225,0.9)';
     ctx.beginPath(); ctx.arc(r.x, r.y, rad, 0, TAU); ctx.stroke();
@@ -2901,7 +2903,7 @@ function touchFuture(id, x, y) {
 function hitOther(x, y) {
   const e = G.era, B = L.basket;
   const jx = L.shelf.x + L.shelf.w * 0.93, jy = L.shelf.y1 - L.slotR * 0.4;
-  if (Math.hypot(x - jx, y - jy) < L.slotR * 0.9 + 6) return 'jar';
+  if (!L.portrait && Math.hypot(x - jx, y - jy) < L.slotR * 0.9 + 6) return 'jar';
   if (Math.abs(x - B.x) < B.w * 0.5 + 6 && y > B.y - B.h * 0.7 && y < B.y + B.h + 10 && !(AVAIL.silk[e])) return 'knit';
   if (e === 0) {
     if (!(G.creation && G.creation.d) && hitDough(x, y)) return 'cookie0';
@@ -3128,6 +3130,12 @@ function update(dt) {
   G.invite = computeInvite();
   G.inviteAt = anchorOf(G.invite);
   updateHint(dt);
+  G.invSpark = (G.invSpark || 0) + dt;
+  if (G.invite && G.inviteAt && !G.ptr && G.phase === 'play' && G.invSpark > 0.42) {
+    G.invSpark = 0;
+    const a = Math.random() * TAU, d = L.S * (0.25 + Math.random() * 0.45);
+    spark(G.inviteAt[0] + Math.cos(a) * d, G.inviteAt[1] + Math.sin(a) * d * 0.7, 'gold');
+  }
 }
 function render(dt) {
   ctx.setTransform(L.dpr, 0, 0, L.dpr, 0, 0);
