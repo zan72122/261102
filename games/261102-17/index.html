@@ -1115,11 +1115,11 @@ function makeLayout(orient,variant){
    rail:{y:842},
    blocks:{
     glass:{x:104,y:384,w:72,h:46,br:1},
-    wood:{x:398,y:640,w:78,h:50},
+    wood:{x:440,y:640,w:78,h:50},
     rubber:{x:680,y:640,w:80,h:50},
     iron:{x:1060,y:638,w:80,h:52},
-    felt:{x:1184,y:644,w:74,h:46},
-    ice:{x:1304,y:638,w:80,h:52}},
+    felt:{x:1250,y:644,w:74,h:46},
+    ice:{x:1340,y:420,w:80,h:50,br:1}},
    bell:{x:792,y:404,hang:300},
    board:{slots:[822,862,902],y:TY,w:90},
    dests:[{x:720,y:600,ap:430},{x:690,y:288+dv*14,ap:240},{x:1004,y:650,ap:420}],
@@ -1157,7 +1157,7 @@ function buildStatic(){
  sg(10,l.door.y0-4,10,l.rail.y+R+6,'w');                    // 筒の左壁
  sg(l.pil.x1-4,l.door.y1+2,l.pil.x1-4,l.rail.y-R-4,'w');   // 筒の右壁(中)
  // 扉前の踊り場
- sg(l.landing.x0,l.landing.y,l.landing.x1,l.landing.y,'f');
+ sg(l.landing.x0,l.landing.y+3,l.landing.x1,l.landing.y-3,'f');   // 扉のほうへ少し下がる (扉が開くと玉が入っていく)
  sg(l.landing.x1,l.landing.y,l.landing.x1,l.landing.y+16,'w');
  // ガラス台の棚
  const s=l.ledgeS; sg(s.x0,s.y,s.x1,s.y,'f'); sg(s.x0,s.y,s.x0,s.y+18,'w'); sg(s.x0,s.y+18,s.x1,s.y+18,'w');
@@ -1282,7 +1282,8 @@ function collideBall(b){
    if(s.up&&ST.park&&b!==PBALL) continue;
    if(b===PBALL&&li===0&&!s.frame) continue;
    if(s.k==='boat'&&MP[b.mat].dens>2) continue;
-   if((b.mode==='drag'||b.ghost)&&!s.ds&&!(s.k==='park'&&!s.o)){ if(b.mode==='drag'&&(s.k==='blk'||s.k==='ptile')&&(DRAG.fs||0)<260&&b.vx*b.vx+b.vy*b.vy<122500){ const q=closest(s.ax,s.ay,s.bx,s.by,b.x,b.y); if(hyp(b.x-q.x,b.y-q.y)<r&&(s.k==='blk'||b.pw)) wear(b,s.o); } continue; }
+   if(b.ghost&&!s.frame) continue;
+   if(b.mode==='drag'&&!s.ds&&!(s.k==='park'&&!s.o)){ if(b.mode==='drag'&&(s.k==='blk'||s.k==='ptile')&&(DRAG.fs||0)<260&&b.vx*b.vx+b.vy*b.vy<122500){ const q=closest(s.ax,s.ay,s.bx,s.by,b.x,b.y); if(hyp(b.x-q.x,b.y-q.y)<r&&(s.k==='blk'||b.pw)) wear(b,s.o); } continue; }
    const minx=Math.min(s.ax,s.bx)-r, maxx=Math.max(s.ax,s.bx)+r; if(b.x<minx||b.x>maxx) continue;
    const miny=Math.min(s.ay,s.by)-r, maxy=Math.max(s.ay,s.by)+r; if(b.y<miny||b.y>maxy) continue;
    const q=closest(s.ax,s.ay,s.bx,s.by,b.x,b.y); let dx=b.x-q.x, dy=b.y-q.y, d=Math.sqrt(dx*dx+dy*dy);
@@ -1318,9 +1319,9 @@ function onImpact(b,s,nx,ny,imp){
 /* 接触ごとの処理 (継続接触も含む) */
 function onTouch(b,s,nx,ny,imp){
  b.contact=.08; if(ny<-.35){b.cn.x=nx;b.cn.y=ny; b.lastK=(s.k==='park'&&s.o)?'pride':s.k;}
- if(b.aimT&&ny<-.5){ if(now>b.aimT.until) b.aimT=null; else if(hyp(b.x-b.aimT.x,b.y-b.aimT.y)<b.r*1.5){ b.vx*=.15; b.aimT=null; } }
+ if(b.aimT&&ny<-.5){ if(!(now<=b.aimT.until)) b.aimT=null; else if(hyp(b.x-b.aimT.x,b.y-b.aimT.y)<b.r*.45){ b.vx*=(b.mat==='ice'||b.mat==='glass')?0:.15; b.aimT=null; } }
  const k=s.k;
- if(k==='blk'){ if(b.mode!=='held'&&ny<.45){ if(wear(b,s.o)&&ny<-.6&&b.mode==='free'&&!b.ghost) b.vx*=.1; } if(s.o==='rubber'&&ny<-.5) rubberTop(b,imp); }
+ if(k==='blk'){ if(b.mode!=='held'&&ny<.45){ if(wear(b,s.o)&&ny<-.6&&b.mode==='free'&&!b.ghost) b.vx*=(b.mat==='ice'?0:.1); } if(s.o==='rubber'&&ny<-.5) rubberTop(b,imp); }
  else if(k==='ptile'){ if(b.pw) wear(b,s.o); }
  else if(k==='plate'){ if(ny<-.4) b.onPlate=.1; }
  else if(k==='cloth'){ if(imp>40&&b.mode==='free'){ const tx=-ny, ty=nx, vt=b.vx*tx+b.vy*ty; b.vx-=vt*.6*tx; b.vy-=vt*.6*ty; }
@@ -1366,13 +1367,14 @@ function stepBall(b,dt){
  b.x+=b.vx*dt; b.y+=b.vy*dt;
  collideBall(b);
  if(b.ghost){ const g=b.ghost; g.el+=dt;
-  if(g.el>g.T*.5&&b.vy>0&&hyp(b.x-g.x,b.y-g.y)<b.r*1.7&&!overlapAny(b)&&!insideSolid(b)){ b.ghost=null; b.aimT={x:g.x,y:g.y,until:now+.8}; }
-  else if(g.el>g.T+.35){ b.ghost=null; unstick(b); } }
+  if(g.el>g.T*.5&&b.vy>0&&hyp(b.x-g.x,b.y-g.y)<b.r*1.7&&freeSpot(b)){ b.ghost=null; b.aimT={x:g.x,y:g.y,until:now+.8}; }
+  else if(g.el>=g.T){ b.ghost=null; const px=b.x, py=b.y; b.x=g.x; b.y=g.y; if(!freeSpot(b)){ b.x=px; b.y=py; unstick(b); } b.vx*=.3; b.vy=Math.min(b.vy,120); b.aimT={x:g.x,y:g.y,until:now+.8}; } }
  // 転がり抵抗
  if(b.contact>0&&b.mode!=='drag'){
   const tx=-b.cn.y, ty=b.cn.x; const vt=b.vx*tx+b.vy*ty;
   let f=mp.rr; if(b.onRamp>0&&b.mat!=='ice') f+=1.5; if(b.lastK==='rail') f=Math.min(f,.4);
-  const nvt=vt*Math.max(0,1-f*dt); b.vx+=(nvt-vt)*tx; b.vy+=(nvt-vt)*ty;
+  let nvt=vt*Math.max(0,1-f*dt); if(b.cn.y<-.97&&Math.abs(nvt)<4) nvt=0; // 平らな所でのごく小さなすべりは止める
+  b.vx+=(nvt-vt)*tx; b.vy+=(nvt-vt)*ty;
  }
 }
 function upN(s){ const dx=s.bx-s.ax,dy=s.by-s.ay,l=hyp(dx,dy)||1; let nx=dy/l,ny=-dx/l; if(ny>0){nx=-nx;ny=-ny;} return {x:nx,y:ny}; }
@@ -1494,7 +1496,8 @@ function rubberTop(b,imp){
  sfxBoard(true);
 }
 function boardTouch(b,ny,imp){
- if(ST.boardUp<.8||ny>-.3||now-ST.lastLaunch<.35||b.mode!=='free') return;
+ if(ST.boardUp<.8||ny>-.3||now-ST.lastLaunch<.35||b.mode!=='free'||b.ghost) return;
+ if(b.mat==='rubber'){ if(lastInput>(ST.boardLoopT||-9)) ST.boardLoop=0; if((ST.boardLoop||0)>=2) return; ST.boardLoop=(ST.boardLoop||0)+1; ST.boardLoopT=now; } // さわるまでは2回まで
  ST.lastLaunch=now; ST.boardKick=1;
  if(b.mat==='rubber'){
   const d=L.dests[ST.slot]; launchTo(b,d,d.ap);
@@ -1595,8 +1598,8 @@ function updateLight(dt){
 function heatTarget(k,x,y,ax,ay,bx,by,dt){
  if(k==='latch'&&ST.latchOpen) return; if(k==='door'&&ST.doorOpen) return;
  if(segDist(x,y,ax,ay,bx,by)<34){ ST[k+'Heat']+=dt; if(vrand()<.5) addP({x:x+rr(-8,8),y:y+rr(-8,8),vx:rr(-40,40),vy:rr(-80,-20),life:0,max:.5,r:rr(2,4),col:'#fff3b0',g:-50,kind:'star'});
-  if(ST[k+'Heat']>.55){ if(k==='latch'){ST.latchOpen=true; sfxLatch(); success('latch',x,y);} else {ST.doorOpen=true; sfxDoor(); success('door',x,y);} }
- } else ST[k+'Heat']=Math.max(0,ST[k+'Heat']-dt*.5);
+  if(ST[k+'Heat']>.4){ if(k==='latch'){ST.latchOpen=true; sfxLatch(); success('latch',x,y);} else {ST.doorOpen=true; sfxDoor(); success('door',x,y);} }
+ } else ST[k+'Heat']=Math.max(0,ST[k+'Heat']-dt*.25);
 }
 
 /* ---- 毎フレームの仕掛け更新 ---- */
@@ -1647,7 +1650,7 @@ function updateMech(dt){
  }
   if(b&&MP[b.mat].dens>2){ const bt=boatRect(); if(Math.abs(b.x-ST.boatX)<bt.w/2+b.r*.6&&Math.abs(b.y-bt.y)<b.r*1.2){ ST.boatTilt=Math.sign(ST.boatX-b.x)||1; ld=.8; } }
   ST.boatLoad=lerp(ST.boatLoad||0,ld,clamp(dt*3,0,1)); ST.boatTilt=lerp(ST.boatTilt||0,0,clamp(dt*1.5,0,1)); }
- if(b&&b.mat==='wood'&&b.sub>.15&&b.mode==='free'){ ST.boatMoved+=Math.abs(ST.boatX-ox); if(ST.boatMoved>50) success('boat',ST.boatX,ST.wl); }
+ if(b&&b.mat==='wood'&&b.sub>.15&&b.mode==='free'){ ST.boatMoved+=Math.max(Math.abs(ST.boatX-ox),Math.abs(ST.boatVX)*dt*.5); if(ST.boatMoved>50) success('boat',ST.boatX,ST.wl); }
  if(b&&b.mat==='wood'&&b.sub>.2&&b.mode==='free'&&Math.abs(b.vy)<60) success('float',b.x,b.y);
  if(b&&b.mat==='iron'&&b.sub>.5&&b.mode==='free') ST.d.sink=ST.d.sink||now;
  if(b&&b.mat==='iron'&&!ST.plugOpen&&Math.abs(b.x-l.pond.plug)<44&&b.y>l.pond.y1-b.r-10&&b.y<l.pond.y1) openPlug();
@@ -1790,7 +1793,7 @@ function release(b,cancel){
  }
  const k=clamp(sp,0,2600)*1.05; vx=vx/sp*k; vy=vy/sp*k;
  const t=aimTarget(b,vx,vy,DRAG.hist0);
- if(t){ const dist=hyp(t.x-b.x,t.y-b.y); const lift=clamp(80+dist*.25+(sp-400)*.05,60,360); const v=ballistic(b.x,b.y,t.x,t.y,Math.min(b.y,t.y)-lift); b.vx=v.vx; b.vy=v.vy; b.aimT=t; }
+ if(t){ const dist=hyp(t.x-b.x,t.y-b.y); const lift=clamp(80+dist*.25+(sp-400)*.05,60,360); const v=ballisticT(b.x,b.y,t.x,t.y,Math.min(b.y,t.y)-lift); b.vx=v.vx; b.vy=v.vy; b.aimT={x:t.x,y:t.y,until:now+v.T+.6}; }
  else { b.vx=vx; b.vy=vy; }
 }
 
@@ -1827,7 +1830,11 @@ function aimTarget(b,vx,vy,o){
 }
 function nearTarget(b,rad){ let best=null, bd=rad; for(const t of targets(b)){ const dd=hyp(t.x-b.x,t.y-b.y); if(dd<bd&&t.y>=b.y-20){bd=dd;best=t;} } return best; }
 
-function pondSpot(){ const p=L.pond, c=(p.x0+p.x1)/2; return ST.boatX>c?p.x0+L.R*1.2:p.x1-L.R*1.2; }
+/* 池のねらい: 小舟と(横の)橋をさけた、空いている水面 */
+function spotFree(x,y,r){ for(const arr of [SEGS,DYN]) for(const s of arr){ if(s.up&&ST.park) continue; const q=closest(s.ax,s.ay,s.bx,s.by,x,y); if(hyp(x-q.x,y-q.y)<r-1) return false; } return true; }
+function pondSpot(){ const p=L.pond, R=L.R, y=L.TY-R*.2; let best=p.x0+R*1.2, bs=-1;
+ for(let x=p.x0+R*1.1;x<=p.x1-R*1.1;x+=6){ const d=Math.abs(x-ST.boatX); const sc=d+(spotFree(x,y,R)?1000:0); if(sc>bs){bs=sc;best=x;} }
+ return best; }
 /* タップ: へこんで、次の対象へ小さく跳ぶ */
 function tapBall(b){
  b.sq.amt=.34; b.face.ex='squish'; b.face.hold=.3; b.tapT=now;
@@ -1835,7 +1842,7 @@ function tapBall(b){
  if(b.stuck&&b===BALL&&b.stuck.k==='ramp'&&!ST.bridgeLock){ b.face.ex='cozy'; b.face.hold=.6; return; }
  if(b.stuck){ b.stuck=null; b.unstuckT=now; }
  let h=HINT.t; let t=null;
- if(b===BALL&&(ST.parkClosing||ST.park)) h=b.mat==='clay'?blkHint('rubber'):null;
+ if(b===BALL&&(ST.parkClosing||ST.park)){ b.vy=-260; return; } // 遊園地をたたむタッチ: 新しい玉は その場でぷるんとするだけ (次のタップが新しい回の最初のひと押し)
  if(b===PBALL&&(!h||h.id==='newball')&&PARK.rideHint) h=PARK.rideHint();
  if(h&&h.aim) t=h.aim;
  // 地下のレールの中: スタートの井戸のほうへ転がす (上へは出られない)
@@ -1843,8 +1850,8 @@ function tapBall(b){
  if(!t){ b.vy=-420; return; }
  const dist=hyp(t.x-b.x,t.y-b.y), base=Math.min(b.y,t.y)-clamp(36+dist*.15,36,260);
  if(b===PBALL&&PARK.tapLift&&PARK.tapLift(b,t)) return;
- if(b===PBALL){ const v=ballisticT(b.x,b.y,t.x,t.y,base); b.vx=v.vx; b.vy=v.vy; b.pTap={x:t.x,y:t.y,until:now+v.T+.25}; return; }
- if(dist<b.r*.7){ b.vy=-420; b.vx*=.2; return; }   // もうそこにいる: その場で跳ねる
+ if(b===PBALL){ const v=ballisticT(b.x,b.y,t.x,t.y,base); b.vx=v.vx; b.vy=v.vy; b.pTap={x:t.x,y:t.y,until:now+v.T+.25}; b.aimT={x:t.x,y:t.y,until:now+v.T+.6}; return; }
+ if(dist<b.r*.7){ if(h.id==='hi'||h.id==='lo'){ b.vx*=.2; return; } b.vy=-420; b.vx*=.2; return; }   // もうそこにいる: その場で跳ねる (光のくぼみでは動かさない)
  // 途中にぶつからない弧を探す (低い→高い)。なければ手前を通りぬける跳び
  const lo=Math.min(b.y,t.y)-22, cands=[base,lo,base-90,base-180,base-300,b.r+10];
  for(const ap of cands){ const a=Math.max(ap,b.r+10); const v=ballisticT(b.x,b.y,t.x,t.y,a); if(arcClear(b,v,t)){ b.vx=v.vx; b.vy=v.vy; b.ghost=null; b.aimT={x:t.x,y:t.y,until:now+v.T+.6}; return; } }
@@ -1852,9 +1859,9 @@ function tapBall(b){
 }
 /* 放物線が途中の棚やブロックにぶつからないか (着地点のまわりは除く) */
 function arcClear(b,v,t){
- const r=b.r*.9, n=Math.max(8,Math.ceil(v.T*90));
+ const r=b.r+1, n=Math.max(8,Math.ceil(v.T*90));
  for(let i=1;i<=n;i++){ const tt=v.T*i/n, x=b.x+v.vx*tt, y=b.y+v.vy*tt+.5*G*tt*tt;
-  if(hyp(x-t.x,y-t.y)<b.r*1.25) return true;
+  if(hyp(x-t.x,y-t.y)<b.r*.6) return true;
   if(x<r||x>L.W-r||y<r) return false;
   for(let li=0;li<2;li++){ const arr=li?DYN:SEGS;
    for(let j=0;j<arr.length;j++){ const s=arr[j];
@@ -1876,7 +1883,8 @@ function matHint(b){
  switch(b.mat){
   case 'rubber': if(!d.board) return blkHint('rubber'); if(!ST.handleMoved) return hintObj('handle',ST.boardX,l.TY+46,null,40); if(!d.board2) return blkHint('rubber'); break;
   case 'iron': if(!ST.gateOpen) return hintObj('plate',l.plate.x,l.ledgeP.y,{x:l.plate.x,y:l.ledgeP.y-l.R},50);
-   if(!d.plug) return d.magnet?pondH():hintObj('plate',l.plate.x,l.ledgeP.y,{x:l.plate.x,y:l.ledgeP.y-l.R},50); break;
+   if(!d.plug) return d.magnet?pondH():hintObj('plate',l.plate.x,l.ledgeP.y,{x:l.plate.x,y:l.ledgeP.y-l.R},50);
+   if(!d.magmove) return hintObj('plate',l.plate.x,l.ledgeP.y,{x:l.plate.x,y:l.ledgeP.y-l.R},50); break;
   case 'wood': if(!d.boat&&!ST.drained&&!ST.plugOpen) return pondH(); break;
   case 'felt': if(!ST.bridgeLock&&b.stuck&&b.stuck.k==='ramp'){ const e=bridgeEnd(); return hintObj('bridge',(L.gap.x0+e.x)/2,(L.gap.y+e.y)/2,null,60); }
    if(!ST.bridgeLock){ const m=rampMid(); return hintObj('ramp',m.x,m.y,{x:m.x-10,y:m.y-l.R-4},60); } break;
@@ -1889,7 +1897,8 @@ function pending(m){
  const d=ST.d;
  switch(m){
   case 'wood': return !d.boat&&!ST.drained&&!ST.plugOpen&&!ST.refilling;
-  case 'iron': return !d.plug;
+  case 'iron': return !d.plug||!d.magmove;
+  case 'rubber': return !d.board||!ST.handleMoved||!d.board2;
   case 'felt': return !ST.bridgeLock;
   case 'ice': return !d.wind||(ST.bridgeLock&&!d.cross)||((ST.plugOpen||ST.drained)&&!d.refill);
   case 'glass': return !ST.latchOpen||!ST.doorOpen;
@@ -1908,7 +1917,7 @@ function pickHint(){
  // 継ぎはぎ玉: まだ見ていない仕掛けが残っていれば先にそちら、なければ柱へ
  if(b.pw){ for(const m of HINT_ORDER) if(m!==b.mat&&pending(m)) return blkHint(m); }
  if(b.pw) return hintObj('pillar',l.pil.x1-20,Math.min(b.y,l.TY-80),{x:l.pil.x1+l.R,y:Math.min(b.y,l.TY-l.R)},60);
- if(ST.doorOpen&&!d.rail&&b.mat!=='clay') return hintObj('landing',l.pil.x1+10,(l.door.y0+l.door.y1)/2,{x:l.pil.x1*.5,y:l.landing.y-l.R-2},50);
+ if(ST.doorOpen&&!d.rail&&b.mat!=='clay') return hintObj('landing',l.pil.x1+10,(l.door.y0+l.door.y1)/2,{x:(l.landing.x0+l.landing.x1)/2,y:l.landing.y-l.R},50);
  // まだ触っていない素材 / まだ仕掛けを見ていない素材 を順に
  for(const m of HINT_ORDER) if(m!==b.mat&&(b.got.indexOf(m)<0||pending(m))) return blkHint(m);
  return null;
@@ -2521,6 +2530,8 @@ const PARK={
   }
   if(!(ST.park||this.opening||this.closing)) return;
   for(const rd of this.rides) if(rd.update) rd.update(dt);
+  // 回転台: 光で開いたのが さわる前だった場合も、さわった後に発見にする
+  if(ST.park) for(const rd of this.rides) if(rd.kind==='turn'&&rd.open&&!ST.d.ride_turn&&lastInput>=(this.openT||0)) success('ride_turn',rd.latch.x,rd.latch.y);
   if(ST.park&&!this.closing&&PBALL){ this.updateLift(dt); this.updateTiles(); this.contain(dt); }
   // 6つ全部
   if(ST.park&&!ST.d.park_all){ let n=0; for(const rd of this.rides) if(ST.d['ride_'+rd.kind]) n++;
@@ -2557,7 +2568,7 @@ const PARK={
  },
  hopIn(b){ // 昇降機の上から 上の段の入口へぴょんと入る
   // 次にためす遊具 (またはその素材の札) へ。開いた直後はまだ発見にならない (success 側で入力を待つ)
-  const rh=ST.park?this.rideHint():null, a=(rh&&rh.aim)||this.rides[0].aim, v=ballistic(b.x,b.y,a.x,a.y,Math.min(b.y,a.y)-70); b.vx=v.vx; b.vy=v.vy;
+  const rh=ST.park?this.rideHint():null, a=(rh&&rh.aim)||this.rides[0].aim, v=ballisticT(b.x,b.y,a.x,a.y,Math.min(b.y,a.y)-70); b.vx=v.vx; b.vy=v.vy; b.aimT={x:a.x,y:a.y,until:now+v.T+.6};
  },
  contain(dt){
   const b=PBALL; if(b.mode==='script') return;
@@ -2618,7 +2629,8 @@ const PARK={
  hint(){
   if(!ST.park||this.closing) return null; const b=PBALL; if(!b) return null;
   const rh=this.rideHint(), idle=now-Math.max(lastInput,this.openT||0);
-  if(BALL&&BALL.mode!=='climb'&&(!rh||idle>12)){ const h=this.hc0('newball'); h.x=BALL.x; h.y=BALL.y; h.aim=null; h.r=BALL.r*1.6; return h; }
+  let done=0; for(const rd of this.rides) if(ST.d['ride_'+rd.kind]) done++;
+  if(BALL&&BALL.mode!=='climb'&&(!rh||(idle>20&&done>=4))){ const h=this.hc0('newball'); h.x=BALL.x; h.y=BALL.y; h.aim=null; h.r=BALL.r*1.6; return h; }
   return rh;
  },
  pick(wx,wy){
