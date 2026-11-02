@@ -200,7 +200,7 @@ function buildLayout() {
   L.S = 46 * U;                                    // 道具の半サイズ
   L.homeX = L.lhX + 30 * U;                        // 灯台守の家（戸口）
   L.wheelR = 25 * U;
-  L.penH = WH * lerp(0.085, 0.11, LT);
+  L.penH = WH * 0.11;
   L.windLen = WW * lerp(0.30, 0.22, LT);
   L.ringMax = WW * lerp(0.44, 0.30, LT);
   L.lightR = WW * lerp(0.13, 0.085, LT);
@@ -1066,7 +1066,7 @@ function stepWater(i, dt, kind) {
     if (k > 0.04) {
       PVX[i] += (WX - PVX[i]) * Math.min(1, k * 7 * dt);
       PVY[i] += (WY - PVY[i]) * Math.min(1, k * 4 * dt);
-      if (k > 0.3 && Math.abs(PVY[i]) < 0.35 * WH) { PK[i] = K_STREAM; kindCount[K_BOUNCE]--; kindCount[K_STREAM]++; PL[i] = 2.6; PM[i] = 2.6; return; }
+      if (k > 0.3 && Math.abs(PVY[i]) < 0.35 * WH) { PK[i] = K_STREAM; kindCount[K_BOUNCE]--; kindCount[K_STREAM]++; PL[i] = 2.6; PM[i] = 2.6; PVX[i] = WX; PVY[i] = WY; return; }
     }
   } else { // STREAM：風の中では運ばれ、軸へ集まる
     if (k > 0.03) {
@@ -1971,7 +1971,8 @@ function updParticles(dt) {
 const penK = new Float32Array(8);
 function updPennants(dt) {
   for (let i = 0; i < L.pen.length; i++) {
-    const k = Math.max(windAt(L.pen[i] + 6 * U, L.py - L.penH + 3 * U), windAt(L.pen[i] + 10 * U, L.py - L.penH + 8 * U));
+    const top = L.py - L.penH;
+    const k = Math.max(windAt(L.pen[i] + 6 * U, top + 3 * U), windAt(L.pen[i] + 10 * U, top + 8 * U), windAt(L.pen[i] + 6 * U, top - 9 * U) * 0.8);
     penK[i] += (k - penK[i]) * Math.min(1, dt * 4);
     if (penK[i] > 0.12 && !G.seenFlagCycle) { G.seenFlagCycle = G.cycle + 1; found('flag', { light: !!G.path.on }); }
   }
@@ -2694,7 +2695,7 @@ window.__lh = {
       fest: { on: G.fest.on, pier: G.fest.pier, guests: G.fest.guests.length },
       garland: G.garland ? { pier: G.garland.pier, order: G.garland.order } : null, memories: G.memories,
       invite: G.invite ? { kind: G.invite.kind, key: G.invite.key, s: scr(G.invite.x, G.invite.y), g: G.invite.gx !== undefined ? scr(G.invite.gx, G.invite.gy) : null } : null,
-      demo: { shown: G.demo.shown, on: G.demo.on }, rain: G.rainI, wet: Array.from(G.wet).map(v => Math.round(v * 100) / 100),
+      demo: { shown: G.demo.shown, on: G.demo.on }, preview: G.preview ? G.preview.tn : null, rain: G.rainI, wet: Array.from(G.wet).map(v => Math.round(v * 100) / 100),
       dots: { last: lastDots, max: maxDots, pass: passDots.slice() }, pool: PCAP - freeList.length, store: Object.assign({}, store), lastSave: G.lastSave || null,
       audio: AC ? AC.state : 'none', view: view(), sa: Object.assign({}, SA), U, W, H, DPR,
     };
