@@ -503,6 +503,7 @@ const MORPH = {
     const s3 = inv(.6, .95, t);
     if (s3 > 0) { const e3 = Math.max(.01, eBack(s3)); ctx.save(); ctx.scale(e3, e3); ctx.lineWidth /= e3; donutTop(); ctx.restore(); }
   },
+  bigwheel(t) { MORPH.wheel(t, { big: true }); },
   // ボタンの穴がチョコチップに
   button(t) {
     const u = inv(0, .45, t), flip = Math.cos(u * Math.PI * 4);
@@ -1240,13 +1241,13 @@ function paintBG(st, night, withStall) {
     for (let x = x0 - 20; x < x1 + 60;) { const w = 64 + r() * 40; const top = base - 150 - r() * 150; building(x + w / 2, top, w - 6, base, cols[Math.floor(r() * cols.length)], night, r); x += w; }
     if (!night) blob([[x0 + 60, y0 + 70, 18], [x0 + 85, y0 + 62, 22], [x0 + 110, y0 + 72, 16]], C.white);
   } else if (th.kind === 'harbor') {
-    const sy = base - 170;
+    const sy = L.portrait ? 60 : base - 170;
     bp(); ctx.rect(x0, sy, x1 - x0, base - sy + 10); fs(night ? '#145c69' : C.teal);
     ctx.save(); ctx.strokeStyle = night ? C.tealL : C.tealL; ctx.lineWidth = 3;
-    for (let i = 0; i < 18; i++) { const wx = lerp(x0, x1, r()), wy = sy + 20 + r() * 120; arcS(wx, wy, 8, Math.PI * 1.15, Math.PI * 1.85); }
+    for (let i = 0; i < 18; i++) { const wx = lerp(x0, x1, r()), wy = sy + 12 + r() * (L.portrait ? 30 : 120); arcS(wx, wy, 8, Math.PI * 1.15, Math.PI * 1.85); }
     ctx.restore(); ink(LW);
     for (let i = 0; i < 3; i++) {
-      const bx = lerp(x0 + 80, x1 - 80, (i + .5) / 3) + (r() - .5) * 60, by = sy + 40 + r() * 50;
+      const bx = L.portrait ? (i === 1 ? x1 - 30 : x0 + 20 + i * 8) : lerp(x0 + 80, x1 - 80, (i + .5) / 3) + (r() - .5) * 60, by = L.portrait ? sy + 22 + i * 4 : sy + 40 + r() * 50;
       bp(); ctx.moveTo(bx - 22, by); ctx.lineTo(bx + 22, by); ctx.lineTo(bx + 14, by + 12); ctx.lineTo(bx - 14, by + 12); ctx.closePath(); fs(C.verm);
       bp(); ctx.moveTo(bx, by - 2); ctx.lineTo(bx, by - 40); ctx.lineTo(bx + 20, by - 4); ctx.closePath(); fs(i % 2 ? C.yel : C.white);
     }
@@ -1266,7 +1267,15 @@ function paintBG(st, night, withStall) {
   }
   for (let i = 0; i < T.roofSlots.length; i++) {
     const p = T.roofSlots[i], w = 92 * T.roofS;
-    building(p[0], p[1] + 2, w, base, th.kind === 'hill' ? C.pinkL : cols[(i * 2 + 1) % cols.length], night, r, th.kind === 'hill' ? '' : '');
+    if (th.kind === 'harbor') {
+      const tw2 = w * .62;
+      Rf(p[0] - tw2 / 2, p[1] + 2, tw2, base - p[1], 6, C.white);
+      for (let k = 0; k < 6; k++) { bp(); ctx.rect(p[0] - tw2 / 2 + 1.5, p[1] + 22 + k * 44, tw2 - 3, 18); fs(C.pink); }
+      Rf(p[0] - w / 2, p[1] - 2, w, 10, 4, C.tealDD);
+    } else if (th.kind === 'hill') {
+      Ef(p[0], p[1] + 150, w * .95, 152, i % 2 ? '#a7e8c9' : C.tealL);
+      Cf(p[0] - w * .45, p[1] + 26, 11, night ? C.tealD : C.teal); Co(p[0] + w * .4, p[1] + 34, 4, C.pink); Co(p[0] + w * .3, p[1] + 44, 4, C.yel);
+    } else building(p[0], p[1] + 2, w, base, cols[(i * 2 + 1) % cols.length], night, r);
   }
   const sy0 = base - 16;
   bp(); ctx.rect(x0, sy0, x1 - x0, T.road.y0 - sy0); fs(night ? C.streetN : C.street);
@@ -1490,6 +1499,7 @@ function bubbleRect(c) {
   return { x: p.x, y: p.y + L.t.bubbleDY, w, h };
 }
 function drawBubble(c) {
+  if (G.st.carpServed && c.kind !== 'carp') return;
   if (c.state !== 'wait' && !(c.state === 'enter' && G.T - c.t0 > c.enterDur * .6)) return;
   const r = bubbleRect(c), T = L.t;
   const tb = G.T - (c.state === 'enter' ? c.t0 + c.enterDur * .6 : c.bubT);
@@ -2317,7 +2327,7 @@ function guideScore(kind, c) {
   return 20;
 }
 function computeGuide() {
-  if (G.cine) return null;
+  if (G.cine || G.st.carpServed) return null;
   const st = G.st; let best = null, bs = -1, cur = -1;
   const g = G.guide;
   for (let i = 0; i < 6; i++) {
