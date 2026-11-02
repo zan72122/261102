@@ -221,10 +221,10 @@ function stallLayout(){
   const fr=clamp(Math.min(w*.095,h*.12),26,50);
   LY.fruits=[{k:'s',x:x+w*.665,y:y+h*.2},{k:'m',x:x+w*.885,y:y+h*.2},{k:'b',x:x+w*.665,y:y+h*.53},{k:'u',x:x+w*.885,y:y+h*.53}];
   LY.fruits.forEach(f=>f.r=fr);
-  LY.plat={k:'p',x:x+w*.775,y:y+h*.845,r:fr*1.05};
-  LY.boy={x:x+w*.455,y:y+h*.6,s:clamp(u*1.15,.6,1.8)};
-  LY.photo={x:x+w*.455,y:y+h*.82,w:clamp(54*u,40,90),h:clamp(60*u,46,100)};
-  LY.penHome={x:x+w*.455,y:y+h*.1};
+  LY.plat={k:'p',x:x+w*.865,y:y+h*.86,r:fr*1.05};
+  LY.boy={x:x+w*.6,y:y+h*.985,s:clamp(u*1.1,.6,1.8)};
+  LY.photo={x:x+w*.455,y:y+h*.83,w:clamp(50*u,38,86),h:clamp(56*u,44,96)};
+  LY.penHome={x:x+w*.47,y:y+h*.07};
  }
  LY.spout={x:LY.base.x+LY.base.w*.5,y:LY.base.y+LY.base.h*.45};
 }
@@ -287,9 +287,6 @@ function drawStatic(c,n){
    for(let i=0;i<26;i++) star(c,rng()*430+14,rng()*300+20,rng()*3+2,'#fff3c2');
    c.beginPath(); c.arc(84,78,30,0,TAU); sp(c,'#fff3c2',3,ink); c.beginPath(); c.arc(98,70,26,0,TAU); c.fillStyle=p.paper; c.fill();
   }
-  // 遠くの町並み（丘の下）
-  c.lineWidth=3; c.strokeStyle=n?'#3a4174':'#b9b2a0';
-  for(let i=0;i<5;i++){ const hx=34+i*72, hh=30+((i*37)%22); c.beginPath(); c.rect(hx,392-hh+40,44,hh); c.stroke(); }
   // 丘
   c.beginPath(); c.moveTo(0,G.hillY); for(let x=0;x<=460;x+=10) c.lineTo(x,hillY(x)); c.lineTo(460,440); c.lineTo(0,440); c.closePath();
   sp(c,p.fill,5,ink);
@@ -324,6 +321,16 @@ function drawStatic(c,n){
  panelClip(c,G.P3,()=>{
   if(n){ for(let i=0;i<30;i++) star(c,rng()*900+30,rng()*260+460,rng()*3+2,'#fff3c2'); }
   else { cloudOutline(c,130,520,.5,p.fill,ink); cloudOutline(c,520,500,.42,p.fill,ink); }
+  // 遠くの山と町並み（うすい線）
+  const bgl=n?'#2e3566':'#cdc5ae';
+  c.lineWidth=3; c.strokeStyle=bgl;
+  c.beginPath(); c.moveTo(14,800); c.bezierCurveTo(160,730,260,770,380,760); c.bezierCurveTo(520,745,600,700,720,742); c.bezierCurveTo(820,770,880,735,946,750); c.stroke();
+  [[352,872,64,44],[430,830,58,86],[500,862,70,54],[586,846,50,70]].forEach(([hx,hy,hw,hh],i)=>{
+   c.beginPath(); c.rect(hx,hy,hw,hh); c.fillStyle=p.paper; c.fill(); c.stroke();
+   c.beginPath(); if(i%2===0){ c.moveTo(hx-6,hy); c.lineTo(hx+hw/2,hy-26); c.lineTo(hx+hw+6,hy); } else { c.moveTo(hx-4,hy); c.lineTo(hx+hw+4,hy); } c.stroke();
+   for(let wy=hy+10;wy<hy+hh-14;wy+=22) for(let wx=hx+9;wx<hx+hw-12;wx+=20){ c.strokeRect(wx,wy,10,10); }
+  });
+  c.beginPath(); c.moveTo(316,952); c.lineTo(316,880); c.stroke(); c.beginPath(); c.arc(316,862,24,0,TAU); c.fillStyle=p.paper; c.fill(); c.stroke();
   // 消防車のガレージ
   c.beginPath(); c.rect(22,862,136,90); sp(c,p.fill,5,ink);
   c.beginPath(); c.moveTo(14,866); c.lineTo(90,826); c.lineTo(166,866); c.closePath(); sp(c,p.roof,5,ink);
@@ -963,9 +970,9 @@ function curlHit(x,y){ const cx=PG.x+PG.w, cy=PG.y+PG.h, r=Math.max(70,Math.min(
 function townPoke(tx,ty){
  const near=(x,y,w,h)=>Math.abs(tx-x)<w&&ty>y-h&&ty<y+12;
  if(TR.on&&near(TR.x,TR.y,66,95)){ TR.wig=1; SFX.wiggle(); return; }
- if(near(KD.x,KD.y,26,80)){ KD.wig=1; SFX.wiggle(); return; }
- if(near(GL.x,GL.y,26,82)){ GL.wig=1; SFX.wiggle(); return; }
- if(near(GD.x,GD.y,26,82)){ GD.wig=1; SFX.wiggle(); return; }
+ if(near(KD.x,KD.y,30,96)){ KD.wig=1; SFX.wiggle(); return; }
+ if(near(GL.x,GL.y,30,98)){ GL.wig=1; SFX.wiggle(); return; }
+ if(near(GD.x,GD.y,30,100)){ GD.wig=1; SFX.wiggle(); return; }
  if(tx>G.shopL&&tx<G.shopR&&ty>G.shopTop-50&&ty<GY){ SK.wig=1; SFX.wiggle(); return; }
  if(dist(tx,ty,G.ferX,G.ferY)<G.ferR+16||near(810,G.topG,30,60)){ RD.wig=1; SFX.wiggle(); return; }
  if(RN.on&&dist(tx,ty,G.cloudX,G.cloudY)<80){ RN.flash=.5; SFX.wiggle(); return; }
@@ -1419,7 +1426,7 @@ function drawFerris(){
  ctx.beginPath(); ctx.arc(cx,cy,10,0,TAU); fillStroke(K.yellow,4);
  ctx.restore();
  if(RD.state!=='ride'){ const b=RD.board; [[796,0],[822,1]].forEach(([x,i])=>{ const up=eIn(b)*80;
-   ctx.save(); ctx.globalAlpha=1-b; drawPerson({x,y:G.topG-up,s:.7,dir:1,pose:b>0?'jump':(RD.wig>0?'jump':'stand'),mood:b>0?'happy':(RN.on?'wow':'neutral'),lx:.5,ly:-.8,top:VAR.riderTops[i],anim:i*1.7,wig:RD.wig}); ctx.restore(); }); }
+   ctx.save(); ctx.globalAlpha=1-b; drawPerson({x,y:G.topG-up,s:.82,dir:1,pose:b>0?'jump':(RD.wig>0?'jump':'stand'),mood:b>0?'happy':(RN.on?'wow':'neutral'),lx:.5,ly:-.8,top:VAR.riderTops[i],anim:i*1.7,wig:RD.wig}); ctx.restore(); }); }
 }
 function drawFlowers(){
  if(FLW.wig) FLW.wig=Math.max(0,FLW.wig-.04);
@@ -1433,7 +1440,7 @@ function drawFlowers(){
  }
  // 丘の人
  const g=GD;
- drawPerson(kidOpts(g,{pose:actorPose(g),s:1.02,top:'#7fb6f0',bot:'#5a4a3a',hat:'straw',hatCol:VAR.gardHat,hair:'#cfcabd',can:g.state!=='venue',canTilt:g.state==='happy'?-.6:.4,lantern:g.state==='venue'&&NT.dark>.5}));
+ drawPerson(kidOpts(g,{pose:actorPose(g),s:1.18,top:'#7fb6f0',bot:'#5a4a3a',hat:'straw',hatCol:VAR.gardHat,hair:'#cfcabd',can:g.state!=='venue',canTilt:g.state==='happy'?-.6:.4,lantern:g.state==='venue'&&NT.dark>.5}));
 }
 function drawRamp(){
  if(!F.slope||RP.g<=0) return;
@@ -1525,9 +1532,9 @@ function drawTown(){
  if(GAR.wig){ GAR.wig=Math.max(0,GAR.wig-.04); starShape(90,848,8+GAR.wig*6,K.yellow,2.5); }
  if(NT.glow.garage>0){ ctx.beginPath(); ctx.arc(90,848,22,0,TAU); ctx.fillStyle=hexA('#ffd36a',.3); ctx.fill(); }
  // 人と車
- const k=KD; drawPerson(kidOpts(k,{pose:actorPose(k),s:.9,top:VAR.kidTop,hair:VAR.kidHair,cupCol:'#ff8f8f',spd:VAR.walk}));
+ const k=KD; drawPerson(kidOpts(k,{pose:actorPose(k),s:1.1,top:VAR.kidTop,hair:VAR.kidHair,cupCol:'#ff8f8f',spd:VAR.walk}));
  drawTruck();
- const g=GL; drawPerson(kidOpts(g,{pose:actorPose(g),s:.95,top:VAR.girlDress,bot:'#ffffff',hat:'beret',hatCol:K.blue,hair:'#5a3a22',braid:true,cupCol:'#9fd27a'}));
+ const g=GL; drawPerson(kidOpts(g,{pose:actorPose(g),s:1.12,top:VAR.girlDress,bot:'#ffffff',hat:'beret',hatCol:K.blue,hair:'#5a3a22',braid:true,cupCol:'#9fd27a'}));
  drawSpray(); drawParticles(false); drawFX(); drawGhost(); drawInk(); drawFireworks();
  ctx.restore();
  // 紙の縁
@@ -1699,6 +1706,7 @@ function drawPhoto(){
 function hoseTop(){ const ps=penScale(), th=-PEN.ang; return [PEN.x+132*ps*Math.sin(th), PEN.y-132*ps*Math.cos(th), th]; }
 function penScale(){ return clamp(PG.s*1.15,.5,1.05); }
 function hoseCurve(){ const s=LY.spout, tp=hoseTop(), u=ST.u; const ax=Math.sin(tp[2]), ay=-Math.cos(tp[2]);
+ if(PORT) return [[s.x,s.y],[s.x+45*u,s.y-5*u],[tp[0]+ax*55*u,tp[1]+ay*55*u],[tp[0],tp[1]]];
  return [[s.x,s.y],[s.x+70*u,s.y+50*u],[tp[0]+ax*70*u,tp[1]+ay*70*u],[tp[0],tp[1]]]; }
 function bez(P,t){ const v=1-t; return [v*v*v*P[0][0]+3*v*v*t*P[1][0]+3*v*t*t*P[2][0]+t*t*t*P[3][0], v*v*v*P[0][1]+3*v*v*t*P[1][1]+3*v*t*t*P[2][1]+t*t*t*P[3][1]]; }
 function drawHose(){
