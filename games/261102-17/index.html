@@ -1951,7 +1951,7 @@ PKR.seesaw=function(rd){
  pkTile(rd,.22*w);
  const a=Math.min(.40*w,3.2*r), th=.36, pu=.45*w, ph=a*Math.sin(th)+5;
  Object.assign(rd,{a,th,pu,ph,px:X(pu),py:Y(ph),t:1,tv:0,load:0,lb:-9,lastMat:'wood',
-  poleX:X(pu)+D*a*Math.cos(th),vTop:clamp(.78*s.h,150,260),wh:5,wv:0,wFly:false,bellT:-9,bellA:0,slamMat:null,thT:-9});
+  poleX:X(pu)+D*a*Math.cos(th),vTop:clamp(.6*s.h,140,210),wh:5,wv:0,wFly:false,bellT:-9,bellA:0,slamMat:null,thT:-9});
  rd.vBell=Math.sqrt(2*G*Math.max(40,rd.vTop-14-(2*a*Math.sin(th)+5)));
  rd.plank=pkSeg(0,0,0,0,rd,'plank'); rd.sk1=pkSeg(0,0,0,0,rd,'skirt'); rd.sk2=pkSeg(0,0,0,0,rd,'skirt');
  rd.S.push(rd.plank,rd.sk1,rd.sk2,pkSeg(X(pu-16),fy,rd.px,rd.py+7,rd,'base'),pkSeg(rd.px,rd.py+7,X(pu+16),fy,rd,'base'));
@@ -1967,7 +1967,7 @@ PKR.seesaw=function(rd){
  rd.touch=function(b,sg,nx,ny,imp){
   if(b!==PBALL||sg.part!=='plank'||ny>-.3) return;
   this.load=.06; this.lastMat=b.mat;
-  if(imp>80){ const sb=clamp((b.x-this.px)*this.D/this.a,-1,1); this.tv+=sb*imp*MP[b.mat].dens*.0012;
+  if(imp>80){ const sb=clamp((b.x-this.px)*this.D/this.a,-1,1); this.tv+=sb*imp*MP[b.mat].dens*.004;
    if(now-this.lb>.25){ this.lb=now; sfxRide('seesaw',b.mat,clamp(imp/900,.2,1)); } }
  };
  rd.slam=function(sp){
@@ -1983,10 +1983,10 @@ PKR.seesaw=function(rd){
   if(this.slamMat==='iron'){ if(success('ride_seesaw',bx,by)) sparkle(bx,by,12,'#fff3b0'); }
  };
  rd.update=function(dt){
-  const b=PBALL; let tT=1, on=false;
-  if(b&&this.load>0&&b.mode!=='script'){ const sb=clamp((b.x-this.px)*this.D/this.a,-1,1), push=MP[b.mat].dens*Math.max(0,-sb); tT=clamp(1-push*.5,-1,1); on=true; }
+  const b=PBALL; let tT=1, on=false, push=0;
+  if(b&&this.load>0&&b.mode!=='script'){ const sb=clamp((b.x-this.px)*this.D/this.a,-1,1); push=MP[b.mat].dens*Math.max(0,-sb); tT=clamp(1-push*.5,-1,1); on=true; }
   this.load-=dt;
-  const K=on?42:26;
+  const K=on?42+40*Math.min(3,push):26;
   this.tv+=((tT-this.t)*K-this.tv*7)*dt; this.t+=this.tv*dt;
   if(this.t<-1){ const sp=-this.tv; this.t=-1; this.tv=0; if(sp>1.2) this.slam(sp); }
   else if(this.t>1){ const sp=this.tv; this.t=1; this.tv=0; if(sp>1.6&&now-this.thT>.4){ this.thT=now; sfxRide('seesaw',this.lastMat,clamp(sp/10,.15,.5)); } }
@@ -2240,12 +2240,14 @@ PKR.turn=function(rd){
   pkSeg(X(cu),Y(vc),X(cu),Y(vcb),rd,'pole'),
   pkSeg(X(cu-Rc-6),Y(vcb),X(cu+Rc+6),Y(vcb),rd,'roof'),pkSeg(X(cu-Rc-6),Y(vcb),X(cu),Y(vct),rd,'roof'),pkSeg(X(cu),Y(vct),X(cu+Rc+6),Y(vcb),rd,'roof'),
   pkSeg(X(up-6),fy,X(up-6),Y(vp),rd,'ped'),pkSeg(X(up+6),Y(vp),X(up+6),fy,rd,'ped'),
-  pkSeg(X(up-.9*r),Y(vp+7),X(up),Y(vp),rd,'ped'),pkSeg(X(up),Y(vp),X(up+.9*r),Y(vp+7),rd,'ped'));
+  pkSeg(X(up-1.15*r),Y(vp+16),X(up-.55*r),Y(vp+4),rd,'ped'),pkSeg(X(up-.55*r),Y(vp+4),X(up),Y(vp),rd,'ped'),
+  pkSeg(X(up),Y(vp),X(up+.55*r),Y(vp+4),rd,'ped'),pkSeg(X(up+.55*r),Y(vp+4),X(up+1.15*r),Y(vp+16),rd,'ped'));
  rd.aim={x:X(up),y:Y(vball)-2}; rd.focus={x:(X(cu)+X(up))/2,y:Y(vbeam)}; rd.hr=.4*w;
  rd.box={x0:Math.min(X(cu-Rc-12),X(ul))-4,x1:Math.max(X(cu-Rc-12),X(ul))+4,y0:Y(vct+6),y1:fy};
  rd.poke=function(){ if(this.open) this.om+=.6; else this.wig=1; };
  rd.touch=function(b,sg,nx,ny,imp){
   if(b!==PBALL) return; const p=sg.part;
+  if(p==='ped'&&imp>50&&b.mode==='free'){ b.vx*=.45; if(b.vy<0) b.vy*=.35; }   // 台座のくぼみは布張り: 玉が収まる
   if((p==='deck'||p==='roof')&&ny<-.4){
    if(this.open&&now-this.tossT>.7&&b.mode==='free'){ // 回る台が玉をそっと外へ
     this.tossT=now; const m=b.mat; b.vx=(b.x<this.cx?-1:1)*(150+70*this.om)*(m==='ice'?1.4:m==='felt'?.6:1); b.vy=Math.min(b.vy,m==='rubber'?-420:-240);
@@ -2294,7 +2296,9 @@ PKR.turn=function(rd){
   drawStar(g,cx,yt-8,6,0);
   // 台座 (玉を置くくぼみ)
   const px=X(this.up); woodFill(g,px-7,Y(this.vp),14,this.vp,'dark');
-  g.fillStyle=pkLG(g,px-this.r,0,px+this.r,0,[0,'#4e370c',.4,'#ffe9a8',1,'#5e420f']); g.beginPath(); g.moveTo(X(this.up-.95*this.r),Y(this.vp+8)); g.lineTo(px,Y(this.vp)); g.lineTo(X(this.up+.95*this.r),Y(this.vp+8)); g.lineTo(X(this.up+.95*this.r),Y(this.vp+4)); g.lineTo(px,Y(this.vp-5)); g.lineTo(X(this.up-.95*this.r),Y(this.vp+4)); g.closePath(); g.fill();
+  const r=this.r, cupP=[[-1.15,16],[-.55,4],[0,0],[.55,4],[1.15,16]];
+  g.fillStyle=pkLG(g,px-r,0,px+r,0,[0,'#4e370c',.4,'#ffe9a8',1,'#5e420f']); g.beginPath();
+  for(const q of cupP) g.lineTo(X(this.up+q[0]*r),Y(this.vp+q[1])); for(let i=cupP.length-1;i>=0;i--){ const q=cupP[i]; g.lineTo(X(this.up+q[0]*r*.92),Y(this.vp+q[1]-6)); } g.closePath(); g.fill();
   // ランプ
   const lx=this.lampX, ly=this.beamY; pkBar(g,lx,ly,lx,fy,4);
   g.save(); g.translate(lx,ly); g.scale(-this.D,1); g.fillStyle=pkLG(g,0,-10,0,10,[0,'#fff0b0',.5,'#d9a83a',1,'#6b4510']); g.beginPath(); g.moveTo(8,-8); g.lineTo(8,8); g.lineTo(-6,11); g.lineTo(-6,-11); g.closePath(); g.fill(); g.restore();
@@ -2889,7 +2893,7 @@ function drawDebug(c){
 /* ===================== 90 起動・ループ ===================== */
 function setupRound(keepBall){
  L=makeLayout(VIEW.orient,ROUND); buildStatic(); ST=newState();
- if(keepBall&&BALL){ BALL.mode='free'; BALL.x=L.start.x; BALL.y=L.TY-BALL.r-2; BALL.vx=BALL.vy=0; }
+ if(keepBall&&BALL){ if(BALL.mode!=='drag') BALL.mode='free'; BALL.stuck=null; unstick(BALL); }
  else BALL=newBall(L.start.x,L.TY-L.R-2);
  PBALL=null; PFLASH=[]; FX.length=0;
  fitView(); clearSpriteCache(); renderBG(); warmCaches();
