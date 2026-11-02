@@ -1674,7 +1674,8 @@ function pendingList() {
     const c = steamCenter(R.kettle);
     let dx = L.hb[0] - c[0], dy = L.hb[1] - c[1];
     const m = hyp(dx, dy) || 1;
-    out.push({ id: 'harbor', ref: R.bell, gx: c[0] - dx / m * 0.13 * WW, gy: c[1] - dy / m * 0.13 * WW });
+    const gd = Math.max(0.13 * WW, 95 * U);
+    out.push({ id: 'harbor', ref: R.bell, gx: c[0] - dx / m * gd, gy: c[1] - dy / m * gd });
   }
   if (ok(R.bell) && G.path.on && G.path.done && !G.ship.called && G.order.includes('lamp')) {
     pathPos(G.path.len * 0.25, _pp);
@@ -2682,7 +2683,7 @@ window.__lh = {
       ship: { state: G.ship.state, dest: G.ship.dest, variant: G.ship.variant, called: G.ship.called, s: scr(G.ship.x, G.ship.y) },
       fest: { on: G.fest.on, pier: G.fest.pier, guests: G.fest.guests.length },
       garland: G.garland ? { pier: G.garland.pier, order: G.garland.order } : null, memories: G.memories,
-      invite: G.invite ? { kind: G.invite.kind, key: G.invite.key, s: scr(G.invite.x, G.invite.y) } : null,
+      invite: G.invite ? { kind: G.invite.kind, key: G.invite.key, s: scr(G.invite.x, G.invite.y), g: G.invite.gx !== undefined ? scr(G.invite.gx, G.invite.gy) : null } : null,
       demo: { shown: G.demo.shown, on: G.demo.on }, rain: G.rainI, wet: Array.from(G.wet).map(v => Math.round(v * 100) / 100),
       dots: { last: lastDots, max: maxDots, pass: passDots.slice() }, pool: PCAP - freeList.length, store: Object.assign({}, store), lastSave: G.lastSave || null,
       audio: AC ? AC.state : 'none', view: view(), sa: Object.assign({}, SA), U, W, H, DPR,
