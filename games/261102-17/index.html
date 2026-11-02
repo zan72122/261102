@@ -1199,7 +1199,7 @@ function buildStatic(){
  for(const m of MATS){const b=l.blocks[m]; rectSegs(b.x,b.y,b.w,b.h,'blk',m);
   if(b.br){ sg(b.x-6,b.y+b.h,b.x+b.w+6,b.y+b.h,'w'); } }
  // ドラッグ中もぶつかる(閉じた仕掛け・台・柱・ブロック)
- for(const q of SEGS){ q.ds=Math.max(q.ay,q.by)>=TY-1||q.k==='pil'||q.k==='cab'||q.k==='pond'||q.k==='pondb'||q.k==='rail'||(q.ax===0&&q.bx===0)||(q.ax===l.W&&q.bx===l.W)||(q.ay===0&&q.by===0); }
+ for(const q of SEGS){ q.ds=(Math.max(q.ay,q.by)>=TY-1&&q.k!=='blk')||q.k==='pil'||q.k==='cab'||q.k==='pond'||q.k==='pondb'||q.k==='rail'||(q.ax===0&&q.bx===0)||(q.ax===l.W&&q.bx===l.W)||(q.ay===0&&q.by===0); }
  // 遊園地が開いている間は上の当たりを無効にする目印
  for(const q of SEGS){ q.up=Math.max(q.ay,q.by)<l.park.y1-1&&!(q.k==='w'&&(q.ax===0&&q.bx===0||q.ax===l.W&&q.bx===l.W||q.ay===0&&q.by===0)); q.frame=!q.up&&q.k==='w'&&(q.ax===0&&q.bx===0||q.ax===l.W&&q.bx===l.W||q.ay===0&&q.by===0); }
  // 光の屈折: くぼみ2か所から留め金/扉へ届くよう係数を合わせる
@@ -1273,6 +1273,7 @@ function closest(ax,ay,bx,by,px,py){
  return {x:ax+dx*t,y:ay+dy*t,t};
 }
 const SURF_E={f:1,w:.9,cab:.9,pil:.9,blk:1,slope:.95,pond:.8,pondb:.6,rail:.6,boat:.7,cloth:.15,board:1,plate:.5,bridge:.9,park:1};
+/* ドラッグ中は、指をゆっくりにしたブロックだけで着がえる (通りすぎるだけなら着がえない) */
 function collideBall(b){
  const r=b.r; let hit=null, best=0;
  const lists=[SEGS,DYN];
@@ -1281,7 +1282,7 @@ function collideBall(b){
    if(s.up&&ST.park&&b!==PBALL) continue;
    if(b===PBALL&&li===0&&!s.frame) continue;
    if(s.k==='boat'&&MP[b.mat].dens>2) continue;
-   if((b.mode==='drag'||b.ghost)&&!s.ds&&!(s.k==='park'&&!s.o)){ if(b.mode==='drag'&&(s.k==='blk'||s.k==='ptile')){ const q=closest(s.ax,s.ay,s.bx,s.by,b.x,b.y); if(hyp(b.x-q.x,b.y-q.y)<r&&(s.k==='blk'||b.pw)) wear(b,s.o); } continue; }
+   if((b.mode==='drag'||b.ghost)&&!s.ds&&!(s.k==='park'&&!s.o)){ if(b.mode==='drag'&&(s.k==='blk'||s.k==='ptile')&&(DRAG.fs||0)<260&&b.vx*b.vx+b.vy*b.vy<122500){ const q=closest(s.ax,s.ay,s.bx,s.by,b.x,b.y); if(hyp(b.x-q.x,b.y-q.y)<r&&(s.k==='blk'||b.pw)) wear(b,s.o); } continue; }
    const minx=Math.min(s.ax,s.bx)-r, maxx=Math.max(s.ax,s.bx)+r; if(b.x<minx||b.x>maxx) continue;
    const miny=Math.min(s.ay,s.by)-r, maxy=Math.max(s.ay,s.by)+r; if(b.y<miny||b.y>maxy) continue;
    const q=closest(s.ax,s.ay,s.bx,s.by,b.x,b.y); let dx=b.x-q.x, dy=b.y-q.y, d=Math.sqrt(dx*dx+dy*dy);
@@ -1327,8 +1328,9 @@ function onTouch(b,s,nx,ny,imp){
  else if(k==='board'){ boardTouch(b,ny,imp); }
  else if(k==='plug'){ if(b.mat==='iron'&&ny<-.5) openPlug(); else if(imp>120) ST.plugWob=1; }
  else if(k==='pil'||k==='cab'){ if(b.pw&&b===BALL&&!ST.climb&&!ST.park&&b.mode!=='held'&&climbOK(b)) startClimb(b); }
- else if(k==='boat'){ if(ny<-.5) b.onBoat=.1; if(Math.abs(nx)>.5){ const push=(b.vx-ST.boatVX); ST.boatVX+=push*(b.sub>.15?.5:.25); }
-  else if((LASTQT<=.001||LASTQT>=.999)&&Math.abs(b.vx)<30){ ST.boatVX+=(ST.boatX>b.x?1:-1)*2.5; } }
+ else if(k==='boat'){ if(ny<-.5) b.onBoat=.1;
+  if((LASTQT<=.001||LASTQT>=.999)&&Math.abs(b.vx)<30&&ny<-.2){ ST.boatVX+=(ST.boatX>b.x?1:-1)*2.5; } // 舟の先に乗って止まらない: 舟がそっと離れる
+  else if(Math.abs(nx)>.5){ const push=(b.vx-ST.boatVX); ST.boatVX+=push*(b.sub>.15?.5:.25); } }
  else if(k==='park'&&s.o&&s.o.touch){ s.o.touch(b,s,nx,ny,imp); }
 }
 function stickTo(b,s){
@@ -1685,7 +1687,7 @@ function updateClimb(dt){
  b.y=lerp(sy,c.top,easeInOut(k)); b.x=x+Math.sin(k*PI*6)*b.r*.25; b.ang-=dt*5;
  b.face.ex='happy'; b.face.hold=.3; b.face.tx=0; b.face.ty=-1;
  const step=Math.floor(k*6.999);
- if(step>c.step&&step<6){ c.step=step; sfxClimb(step); PFLASH[step]=now; const s=L.sock[step]; sparkle(s.x,s.y,6,MP[b.order[step]].c1); }
+ if(step>c.step&&step<6){ c.step=step; sfxClimb(step); PFLASH[step]=now; const s=L.sock[step]; sparkle(s.x,s.y,6,MP[b.order[step]||b.mat].c1); }
  if(k>=1&&!c.done){
   c.done=true;
   if(!ST.latchOpen){ ST.latchOpen=true; ST.glassFlash=now; sfxLatch(); success('latch',L.latch.x,L.latch.y); }
@@ -3109,6 +3111,8 @@ function frame(ts){
 }
 function step(dt){
  if(dt<=0) return;
+ // 指の速さ (なめらかにした値): ゆっくり動かしたときだけブロックで着がえる
+ if(DRAG.b&&DRAG.hist.length){ const hs=DRAG.hist, z=hs[hs.length-1]; let i=0; while(i<hs.length-2&&z.t-hs[i].t>.15) i++; const a=hs[i]; DRAG.fs=hyp(z.x-a.x,z.y-a.y)/Math.max(.06,now-a.t); } else DRAG.fs=0;
  const n=Math.max(1,Math.ceil(dt*240)), h=dt/n;
  for(let i=0;i<n;i++){ buildDyn(); if(BALL) stepBall(BALL,h); if(PBALL) stepBall(PBALL,h); }
  updateMech(dt); updateClimb(dt); PARK.update(dt); updateHint(dt);
