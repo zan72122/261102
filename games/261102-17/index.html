@@ -1082,11 +1082,11 @@ function makeLayout(orient,variant){
     wood:{x:100,y:800,w:72,h:48,br:1},
     rubber:{x:398,y:1072,w:76,h:48},
     iron:{x:268,y:150,w:70,h:46,br:1},
-    ice:{x:300,y:780,w:76,h:50,br:1},
+    ice:{x:372,y:680,w:72,h:46,br:1},
     felt:{x:560,y:236,w:70,h:44,br:1}},
    bell:{x:512,y:822,hang:690},
    board:{slots:[540,572,600],y:TY,w:70},
-   dests:[{x:190,y:1080,ap:960},{x:496,y:390-(dv*14),ap:340},{x:436,y:1030,ap:830}],
+   dests:[{x:190,y:1080,ap:960},{x:496,y:390+dv*14,ap:340},{x:436,y:1030,ap:830}],
    gap:{x0:170,x1:300,y:603},
    slope:{x0:332,y0:603,x1:462,y1:430+dv*14},
    ledgeP:{x0:462,x1:546,y:430+dv*14},
@@ -1122,7 +1122,7 @@ function makeLayout(orient,variant){
     ice:{x:1304,y:638,w:80,h:52}},
    bell:{x:792,y:404,hang:300},
    board:{slots:[822,862,902],y:TY,w:90},
-   dests:[{x:720,y:600,ap:430},{x:690,y:292-(dv*14),ap:240},{x:1344,y:596,ap:420}],
+   dests:[{x:720,y:600,ap:430},{x:690,y:288+dv*14,ap:240},{x:1004,y:650,ap:420}],
    gap:{x0:180,x1:360,y:560},
    slope:{x0:400,y0:560,x1:640,y1:330+dv*14},
    ledgeP:{x0:640,x1:744,y:330+dv*14},
@@ -1161,7 +1161,9 @@ function buildStatic(){
  sg(l.landing.x1,l.landing.y,l.landing.x1,l.landing.y+16,'w');
  // ガラス台の棚
  const s=l.ledgeS; sg(s.x0,s.y,s.x1,s.y,'f'); sg(s.x0,s.y,s.x0,s.y+18,'w'); sg(s.x0,s.y+18,s.x1,s.y+18,'w');
- const p=l.ped; sg(p.x0,s.y,p.x0+6,p.y,'f'); sg(p.x0+6,p.y,p.x1-6,p.y,'f'); sg(p.x1-6,p.y,p.x1,s.y,'f');
+ // 高い台座: 上面を浅いV字にして、玉がくぼみの中央で止まる (中心の高さ = hi.y)
+ const p=l.ped, pcx=(p.x0+p.x1)/2, vb=l.hi.y+R/Math.cos(Math.atan2(4,pcx-p.x0-6));
+ sg(p.x0,s.y,p.x0+6,vb-4,'f'); sg(p.x0+6,vb-4,pcx,vb,'f'); sg(pcx,vb,p.x1-6,vb-4,'f'); sg(p.x1-6,vb-4,p.x1,s.y,'f');
  // 低いくぼみの縁
  sg(l.lo.x-R*.95,s.y,l.lo.x-R*.95+5,s.y-8,'f');
  // テーブル (池の切り欠き, スタートの穴は動的)
@@ -1197,7 +1199,7 @@ function buildStatic(){
  for(const m of MATS){const b=l.blocks[m]; rectSegs(b.x,b.y,b.w,b.h,'blk',m);
   if(b.br){ sg(b.x-6,b.y+b.h,b.x+b.w+6,b.y+b.h,'w'); } }
  // ドラッグ中もぶつかる(閉じた仕掛け・台・柱・ブロック)
- for(const q of SEGS){ q.ds=Math.max(q.ay,q.by)>=TY-1||q.k==='pil'||q.k==='pond'||q.k==='pondb'||q.k==='rail'||(q.ax===0&&q.bx===0)||(q.ax===l.W&&q.bx===l.W)||(q.ay===0&&q.by===0); }
+ for(const q of SEGS){ q.ds=Math.max(q.ay,q.by)>=TY-1||q.k==='pil'||q.k==='cab'||q.k==='pond'||q.k==='pondb'||q.k==='rail'||(q.ax===0&&q.bx===0)||(q.ax===l.W&&q.bx===l.W)||(q.ay===0&&q.by===0); }
  // 遊園地が開いている間は上の当たりを無効にする目印
  for(const q of SEGS){ q.up=Math.max(q.ay,q.by)<l.park.y1-1&&!(q.k==='w'&&(q.ax===0&&q.bx===0||q.ax===l.W&&q.bx===l.W||q.ay===0&&q.by===0)); q.frame=!q.up&&q.k==='w'&&(q.ax===0&&q.bx===0||q.ax===l.W&&q.bx===l.W||q.ay===0&&q.by===0); }
  // 光の屈折: くぼみ2か所から留め金/扉へ届くよう係数を合わせる
@@ -1279,7 +1281,7 @@ function collideBall(b){
    if(s.up&&ST.park&&b!==PBALL) continue;
    if(b===PBALL&&li===0&&!s.frame) continue;
    if(s.k==='boat'&&MP[b.mat].dens>2) continue;
-   if(b.mode==='drag'&&!s.ds&&!(s.k==='park'&&!s.o)){ if(s.k==='blk'||s.k==='ptile'){ const q=closest(s.ax,s.ay,s.bx,s.by,b.x,b.y); if(hyp(b.x-q.x,b.y-q.y)<r&&(s.k==='blk'||b.pw)) wear(b,s.o); } continue; }
+   if((b.mode==='drag'||b.ghost)&&!s.ds&&!(s.k==='park'&&!s.o)){ if(b.mode==='drag'&&(s.k==='blk'||s.k==='ptile')){ const q=closest(s.ax,s.ay,s.bx,s.by,b.x,b.y); if(hyp(b.x-q.x,b.y-q.y)<r&&(s.k==='blk'||b.pw)) wear(b,s.o); } continue; }
    const minx=Math.min(s.ax,s.bx)-r, maxx=Math.max(s.ax,s.bx)+r; if(b.x<minx||b.x>maxx) continue;
    const miny=Math.min(s.ay,s.by)-r, maxy=Math.max(s.ay,s.by)+r; if(b.y<miny||b.y>maxy) continue;
    const q=closest(s.ax,s.ay,s.bx,s.by,b.x,b.y); let dx=b.x-q.x, dy=b.y-q.y, d=Math.sqrt(dx*dx+dy*dy);
@@ -1293,11 +1295,12 @@ function collideBall(b){
     b.vx-=(1+e)*vn*nx; b.vy-=(1+e)*vn*ny;
     if(imp>best){best=imp;hit={s,nx,ny,imp};}
    }
-   onTouch(b,s,nx,ny,vn<0?-vn:0);
+   LASTQT=q.t; onTouch(b,s,nx,ny,vn<0?-vn:0);
   }
  }
  if(hit){ onImpact(b,hit.s,hit.nx,hit.ny,hit.imp); }
 }
+let LASTQT=.5;
 function onImpact(b,s,nx,ny,imp){
  // 変形 (衝突で押しつぶされる)
  if(imp>90){ const k=b.mat==='rubber'?.0006:b.mat==='clay'?.0005:b.mat==='felt'?.0004:.00022;
@@ -1313,17 +1316,19 @@ function onImpact(b,s,nx,ny,imp){
 }
 /* 接触ごとの処理 (継続接触も含む) */
 function onTouch(b,s,nx,ny,imp){
- b.contact=.08; if(ny<-.35){b.cn.x=nx;b.cn.y=ny; b.lastK=s.k;}
+ b.contact=.08; if(ny<-.35){b.cn.x=nx;b.cn.y=ny; b.lastK=(s.k==='park'&&s.o)?'pride':s.k;}
+ if(b.aimT&&ny<-.5){ if(now>b.aimT.until) b.aimT=null; else if(hyp(b.x-b.aimT.x,b.y-b.aimT.y)<b.r*1.5){ b.vx*=.15; b.aimT=null; } }
  const k=s.k;
- if(k==='blk'){ if(b.mode!=='held') wear(b,s.o); if(s.o==='rubber'&&ny<-.5) rubberTop(b,imp); }
+ if(k==='blk'){ if(b.mode!=='held'&&ny<.45){ if(wear(b,s.o)&&ny<-.6&&b.mode==='free'&&!b.ghost) b.vx*=.1; } if(s.o==='rubber'&&ny<-.5) rubberTop(b,imp); }
  else if(k==='ptile'){ if(b.pw) wear(b,s.o); }
  else if(k==='plate'){ if(ny<-.4) b.onPlate=.1; }
  else if(k==='cloth'){ if(imp>40&&b.mode==='free'){ const tx=-ny, ty=nx, vt=b.vx*tx+b.vy*ty; b.vx-=vt*.6*tx; b.vy-=vt*.6*ty; }
-  if(b.mat==='felt'&&b.mode==='free'&&!b.stuck){ b.stuck={k:s.o,t:clamp(s.t0!=null?s.t0:.5,0,1)}; stickTo(b,s); sfxHit('felt',300,0);} else if(ny<-.3) b.onRamp=.1; }
+  if(b.mat==='felt'&&b.mode==='free'&&!b.stuck&&DRAG.b!==b&&now-(b.unstuckT||-9)>.35){ b.stuck={k:s.o,t:clamp(s.t0!=null?s.t0:.5,0,1)}; stickTo(b,s); sfxHit('felt',300,0);} else if(ny<-.3) b.onRamp=.1; }
  else if(k==='board'){ boardTouch(b,ny,imp); }
  else if(k==='plug'){ if(b.mat==='iron'&&ny<-.5) openPlug(); else if(imp>120) ST.plugWob=1; }
- else if(k==='pil'||k==='cab'){ if(b.pw&&b===BALL&&!ST.climb&&!ST.park&&b.mode!=='held') startClimb(b); }
- else if(k==='boat'){ if(ny<-.5) b.onBoat=.1; if(Math.abs(nx)>.5){ const push=(b.vx-ST.boatVX); ST.boatVX+=push*(b.sub>.15?.5:.25); } }
+ else if(k==='pil'||k==='cab'){ if(b.pw&&b===BALL&&!ST.climb&&!ST.park&&b.mode!=='held'&&climbOK(b)) startClimb(b); }
+ else if(k==='boat'){ if(ny<-.5) b.onBoat=.1; if(Math.abs(nx)>.5){ const push=(b.vx-ST.boatVX); ST.boatVX+=push*(b.sub>.15?.5:.25); }
+  else if((LASTQT<=.001||LASTQT>=.999)&&Math.abs(b.vx)<30){ ST.boatVX+=(ST.boatX>b.x?1:-1)*2.5; } }
  else if(k==='park'&&s.o&&s.o.touch){ s.o.touch(b,s,nx,ny,imp); }
 }
 function stickTo(b,s){
@@ -1334,17 +1339,19 @@ function stickTo(b,s){
 
 /* ---- 1ステップ ---- */
 function stepBall(b,dt){
+ if(b.ghost&&b.mode!=='free') b.ghost=null;
  if(b.mode==='climb'||b.mode==='script'||b.mode==='trophy') return;
  const mp=MP[b.mat];
  if(b.mode==='held'){ const p=magTip(); b.x=lerp(b.x,p.x,.35); b.y=lerp(b.y,p.y+b.r*.92,.35); b.vx=b.vy=0; return; }
+ if(b.stuck&&b.mode==='drag'){ b.stuck=null; b.unstuckT=now; }
  if(b.stuck){ const s=stuckSeg(b); if(s){const t=b.stuck.t, n=upN(s); b.x=lerp(s.ax,s.bx,t)+n.x*b.r; b.y=lerp(s.ay,s.by,t)+n.y*b.r; b.vx=b.vy=0; b.onRamp=.1; b.contact=.08; return;} b.stuck=null; }
  if(b.mode==='drag'){
   const tx=DRAG.wx, ty=DRAG.wy; let vx=(tx-b.x)*26, vy=(ty-b.y)*26; const sp=hyp(vx,vy); if(sp>2600){vx*=2600/sp;vy*=2600/sp;}
-  b.vx=vx; b.vy=vy;
+  b.vx=vx; b.vy=vy; b.sub=0;
  } else {
   b.vy+=G*dt;
   // 水
-  const w=waterAt(b);
+  const w=(b.ghost||(now-(b.tapT||-9)<.4&&b.vy<-150))?null:waterAt(b);
   if(w){ const sub=clamp((b.y+b.r-w.y)/(2*b.r),0,1);
    if(sub>0&&b.sub<=0&&b.vy>220){ splash(b.x,w.y,clamp(b.vy/1200,.2,1)); }
    b.sub=sub;
@@ -1356,10 +1363,13 @@ function stepBall(b,dt){
  }
  b.x+=b.vx*dt; b.y+=b.vy*dt;
  collideBall(b);
+ if(b.ghost){ const g=b.ghost; g.el+=dt;
+  if(g.el>g.T*.5&&b.vy>0&&hyp(b.x-g.x,b.y-g.y)<b.r*1.7&&!overlapAny(b)&&!insideSolid(b)){ b.ghost=null; b.aimT={x:g.x,y:g.y,until:now+.8}; }
+  else if(g.el>g.T+.35){ b.ghost=null; unstick(b); } }
  // 転がり抵抗
  if(b.contact>0&&b.mode!=='drag'){
   const tx=-b.cn.y, ty=b.cn.x; const vt=b.vx*tx+b.vy*ty;
-  let f=mp.rr; if(b.onRamp>0&&b.mat!=='ice') f+=1.5;
+  let f=mp.rr; if(b.onRamp>0&&b.mat!=='ice') f+=1.5; if(b.lastK==='rail') f=Math.min(f,.4);
   const nvt=vt*Math.max(0,1-f*dt); b.vx+=(nvt-vt)*tx; b.vy+=(nvt-vt)*ty;
  }
 }
@@ -1367,7 +1377,7 @@ function upN(s){ const dx=s.bx-s.ax,dy=s.by-s.ay,l=hyp(dx,dy)||1; let nx=dy/l,ny
 function stuckSeg(b){ for(const s of DYN) if(s.k==='cloth'&&s.o===b.stuck.k) return s; return null; }
 function waterAt(b){
  const pd=L.pond;
- if(b!==PBALL&&b.x>pd.x0&&b.x<pd.x1&&b.y+b.r>ST.wl&&ST.wl<pd.y1-4){ const dx=ST.boatX-b.x, bt=boatRect(); let cur=0; if(Math.abs(dx)<bt.w/2+b.r*.9&&b.y>bt.y) cur=-Math.sign(dx||1)*500; else if(Math.abs(dx)>b.r+bt.w/2+4&&b.y<ST.wl+b.r*.5) cur=Math.sign(dx)*160; return {y:ST.wl,cur}; }
+ if(b!==PBALL&&b.x>pd.x0&&b.x<pd.x1&&b.y<pd.y1&&b.y+b.r>ST.wl&&ST.wl<pd.y1-4){ const dx=ST.boatX-b.x, bt=boatRect(); let cur=0; if(Math.abs(dx)<bt.w/2+b.r*.9&&b.y>bt.y) cur=-Math.sign(dx||1)*500; else if(Math.abs(dx)>b.r+bt.w/2+4&&b.y<ST.wl+b.r*.5) cur=Math.sign(dx)*160; return {y:ST.wl,cur}; }
  if(b===PBALL&&PARK.water) return PARK.water(b);
  return null;
 }
@@ -1401,22 +1411,44 @@ function updateBallLook(b,dt){
  f.lx=lerp(f.lx,clamp(tx,-1,1),.12); f.ly=lerp(f.ly,clamp(ty,-1,1),.12);
 }
 
-/* ドラッグを離したとき棚などにめり込んでいたら上へ出す */
+/* ドラッグを離したとき棚などにめり込んでいたら、いちばん近い空いた場所へ出す */
 function overlapAny(b){ for(const arr of [SEGS,DYN]) for(const s of arr){ if(s.up&&ST.park&&b!==PBALL) continue; if(b===PBALL&&arr===SEGS&&!s.frame) continue;
+  if(s.k==='boat'&&MP[b.mat].dens>2) continue;
   const q=closest(s.ax,s.ay,s.bx,s.by,b.x,b.y); if(hyp(b.x-q.x,b.y-q.y)<b.r-2) return true; } return false; }
-function unstick(b){ if(!overlapAny(b)) return; const y0=b.y; for(let d=4;d<=b.r*4;d+=4){ b.y=y0-d; if(!overlapAny(b)) return; } for(let d=4;d<=b.r*3;d+=4){ b.y=y0+d; if(!overlapAny(b)) return; } b.y=y0; }
-/* 落ちた玉はスタートへ戻す */
+/* 閉じた箱の中 (棚・ガレージ・柱の中・ブロックの中) */
+function insideSolid(b){
+ if(b===PBALL||ST.park) return false; const l=L, x=b.x, y=b.y, c=l.cab;
+ if(x>c.x&&x<c.x+c.w&&y>c.y&&y<c.y+c.h) return true;
+ const g=l.garage; if(!ST.gateOpen&&x>g.x0&&x<g.x1&&y>g.y0&&y<g.y1) return true;
+ if(x<l.pil.x1&&y>c.y+c.h-2&&y<l.door.y0-6) return true;
+ for(const m of MATS){ const k=l.blocks[m]; if(x>k.x&&x<k.x+k.w&&y>k.y&&y<k.y+k.h) return true; }
+ return false;
+}
+function freeSpot(b){ return b.x>=b.r+1&&b.x<=L.W-b.r-1&&b.y>=b.r+1&&b.y<=L.H-b.r&&!overlapAny(b)&&!insideSolid(b); }
+function unstick(b){
+ if(b===PBALL){ if(!overlapAny(b)) return; const y0=b.y; for(let d=4;d<=b.r*4;d+=4){ b.y=y0-d; if(!overlapAny(b)) return; } b.y=y0; return; }
+ if(freeSpot(b)) return;
+ const x0=b.x, y0=b.y, D=[[0,-1],[0,1],[-1,0],[1,0],[-.7,-.7],[.7,-.7],[-.7,.7],[.7,.7]];
+ for(let d=4;d<=b.r*6;d+=4) for(const v of D){ b.x=x0+v[0]*d; b.y=y0+v[1]*d; if(freeSpot(b)) return; }
+ b.x=x0; b.y=y0; placeAtStart(b,false);
+}
+/* 落ちた玉・天井より上へ出た玉はスタートへ戻す */
 function rescue(b){
- const out=b.x<-60||b.x>L.W+60||b.y>L.H+80||b.y<-200||!isFinite(b.x)||!isFinite(b.y);
+ const out=b.x<-60||b.x>L.W+60||b.y>L.H+80||(b===PBALL?b.y<-200:b.y<b.r*.5)||!isFinite(b.x)||!isFinite(b.y);
  if(out){ if(b===PBALL){ b.x=(L.park.x0+L.park.x1)/2; b.y=PARK.floorY()-b.r-60; b.vx=b.vy=0; b.mode='free'; } else placeAtStart(b,true); }
 }
 function placeAtStart(b,pop){
- b.mode='free'; b.stuck=null; b.x=L.start.x; b.y=pop?L.rail.y:L.TY-b.r-2; b.vx=0; b.vy=pop?-popV():0;
+ b.mode='free'; b.stuck=null; b.ghost=null; b.aimT=null; b.x=L.start.x; b.y=pop?L.rail.y:L.TY-b.r-2; b.vx=0; b.vy=pop?-popV():0;
  if(pop){ ST.lidT=now; ST.popT=now; sfxPop(); }
 }
 function popV(){ return Math.sqrt(2*G*(L.rail.y-L.TY+L.R*2.6)); }
 
 /* ---- 弾道計算 (着地点補正) ---- */
+function ballisticT(x0,y0,x1,y1,apex){
+ apex=Math.min(apex,y0-8,y1-8);
+ const vy=-Math.sqrt(2*G*(y0-apex)); const t1=-vy/G; const t2=Math.sqrt(2*(y1-apex)/G);
+ return {vx:(x1-x0)/(t1+t2), vy, T:t1+t2};
+}
 function ballistic(x0,y0,x1,y1,apex){
  apex=Math.min(apex,y0-8,y1-8);
  const vy=-Math.sqrt(2*G*(y0-apex)); const t1=-vy/G; const t2=Math.sqrt(2*(y1-apex)/G);
@@ -1431,7 +1463,10 @@ function pillarFlash(m){ const i=BALL.order.indexOf(m); if(i>=0){ PFLASH[i]=now;
   addP({x:BALL.x,y:BALL.y,tx:s.x,ty:s.y,life:0,max:.7,r:9,col:MP[m].c0,kind:'fly',g:0,vx:0,vy:0,m}); } }
 
 function success(id,x,y){
- if(ST.d[id]) return false; ST.d[id]=now;
+ if(ST.d[id]) return false;
+ // 遊園地の遊具は、開いてから子どもが一度でもさわった後だけ「発見」になる (待つだけでは進まない)
+ if(id.indexOf('ride_')===0&&lastInput<(PARK.openT||0)) return false;
+ ST.d[id]=now;
  sfxSuccess(ST.succN++%10);
  if(x!=null){ sparkle(x,y,16); FX.push({x,y,t:now,k:'ring'}); }
  LASTDISC=now;
@@ -1441,15 +1476,16 @@ let LASTDISC=0;
 
 /* ---- ゴム → 鐘 → 跳ね板 ---- */
 function rubberTop(b,imp){
- if(b.mat!=='rubber'||b.mode!=='free'||ST.park) return;
+ if(b.mat!=='rubber'||b.mode!=='free'||ST.park||b.ghost) return;
  if(now-ST.lastLaunch<.45) return;
+ // 子どもがさわるまでは3回まで (放っておいても勝手に何度も飛ばない)
+ if(lastInput>ST.rubLoopT) ST.rubLoop=0;
+ if(ST.rubLoop>=3) return;
  const blk=L.blocks.rubber;
  if(b.y>blk.y-b.r*.5){ // 横から当たった → 上へはね上がる
-  if(imp>40){ b.vy=-760; b.vx=((blk.x+blk.w/2)-b.x)*2.6; ST.lastLaunch=now-.25; }
+  if(imp>40){ b.vy=-760; b.vx=((blk.x+blk.w/2)-b.x)*2.6; ST.lastLaunch=now-.25; ST.rubLoop+=.5; ST.rubLoopT=now; }
   return;
  }
- if(now-ST.rubLoopT>7) ST.rubLoop=0;
- if(ST.rubLoop>=3) return;
  ST.rubLoop++; ST.rubLoopT=now; ST.lastLaunch=now;
  const v=ballistic(b.x,b.y,ST.boardX,L.TY-b.r-34,L.bell.y+8);
  b.vx=v.vx; b.vy=v.vy; b.sq.amt=.34; b.sq.a=0; b.face.ex='smile'; b.face.hold=1;
@@ -1459,7 +1495,7 @@ function boardTouch(b,ny,imp){
  if(ST.boardUp<.8||ny>-.3||now-ST.lastLaunch<.35||b.mode!=='free') return;
  ST.lastLaunch=now; ST.boardKick=1;
  if(b.mat==='rubber'){
-  const d=L.dests[ST.slot]; const v=ballistic(b.x,b.y,d.x,d.y,d.ap); b.vx=v.vx; b.vy=v.vy;
+  const d=L.dests[ST.slot]; launchTo(b,d,d.ap);
   b.sq.amt=.3; sfxBoard(true);
   success('board',b.x,b.y);
   if(ST.handleMoved) success('board2',b.x,b.y);
@@ -1467,10 +1503,18 @@ function boardTouch(b,ny,imp){
 }
 
 /* ---- 磁石 ---- */
+/* 目標へ飛ばす: 途中がふさがっていれば手前を通りぬける跳び (ドラッグと同じ前後関係) */
+function launchTo(b,t,apex){
+ const v=ballisticT(b.x,b.y,t.x,t.y,apex);
+ b.vx=v.vx; b.vy=v.vy; b.stuck=null;
+ if(arcClear(b,v,t)){ b.ghost=null; b.aimT={x:t.x,y:t.y,until:now+v.T+.6}; }
+ else { b.ghost={x:t.x,y:t.y,T:v.T,el:0}; b.aimT=null; }
+}
 function magTip(){ return {x:ST.magX,y:L.crane.y+34+ST.cable}; }
 function holdCable(){ return L.crane.hold-L.R*.92-L.crane.y-34; }
 function magPull(b,dt){
  if(!ST.gateOpen||ST.magOff>0||ST.held||b.mode!=='free'||ST.park) return;
+ if(b.ghost||(b.aimT&&now<b.aimT.until)) return; // ヒントへ向かう跳びの途中は引きよせない
  const t=magTip(); const dx=t.x-b.x, dy=t.y+b.r*.9-b.y, d=hyp(dx,dy);
  if(!ST.magArm){ if(d>270) ST.magArm=true; return; }
  if(d<250&&Math.abs(dx)<120){ const a=(1-d/250)*9000+1400; b.vx+=dx/d*a*dt; b.vy+=dy/d*a*dt-G*dt*.6;
@@ -1592,7 +1636,7 @@ function updateMech(dt){
  else if(ST.plugOpen){ ST.wl=Math.min(bot,ST.wl+dt*85); if(ST.wl>=bot&&!ST.drained){ ST.drained=true; } }
  setWaterLoop(ST.refilling&&ST.wind>2?.8:ST.plugOpen&&!ST.drained?.6:0);
  // 小舟
- if(b&&b.sub>.1&&b.mode!=='held'){ const bt=boatRect(), dx=ST.boatX-b.x; if(Math.abs(dx)<bt.w/2+b.r+2&&b.y>bt.y-b.r) ST.boatVX+=Math.sign(dx||1)*(MP[b.mat].dens<1?520:200)*dt; }
+ if(b&&b.sub>.1&&b.mode==='free'){ const bt=boatRect(), dx=ST.boatX-b.x; if(Math.abs(dx)<bt.w/2+b.r+2&&b.y>bt.y-b.r) ST.boatVX+=Math.sign(dx||1)*(MP[b.mat].dens<1?520:200)*dt; }
  ST.boatVX*=1-clamp(1.1*dt,0,1); const ox=ST.boatX; ST.boatX+=ST.boatVX*dt;
  const bw=L.R*2/2; if(ST.boatX<l.pond.x0+bw+4){ST.boatX=l.pond.x0+bw+4; if(ST.boatVX<-60){sfxHit('wood',300,0);ST.boatFlag=1;} ST.boatVX*=-.3;}
  if(ST.boatX>l.pond.x1-bw-4){ST.boatX=l.pond.x1-bw-4; if(ST.boatVX>60){sfxHit('wood',300,0);ST.boatFlag=1;} ST.boatVX*=-.3;}
@@ -1601,9 +1645,9 @@ function updateMech(dt){
  }
   if(b&&MP[b.mat].dens>2){ const bt=boatRect(); if(Math.abs(b.x-ST.boatX)<bt.w/2+b.r*.6&&Math.abs(b.y-bt.y)<b.r*1.2){ ST.boatTilt=Math.sign(ST.boatX-b.x)||1; ld=.8; } }
   ST.boatLoad=lerp(ST.boatLoad||0,ld,clamp(dt*3,0,1)); ST.boatTilt=lerp(ST.boatTilt||0,0,clamp(dt*1.5,0,1)); }
- if(b&&b.mat==='wood'&&b.sub>.15){ ST.boatMoved+=Math.abs(ST.boatX-ox); if(ST.boatMoved>50) success('boat',ST.boatX,ST.wl); }
- if(b&&b.mat==='wood'&&b.sub>.2&&Math.abs(b.vy)<60) success('float',b.x,b.y);
- if(b&&b.mat==='iron'&&b.sub>.5) ST.d.sink=ST.d.sink||now;
+ if(b&&b.mat==='wood'&&b.sub>.15&&b.mode==='free'){ ST.boatMoved+=Math.abs(ST.boatX-ox); if(ST.boatMoved>50) success('boat',ST.boatX,ST.wl); }
+ if(b&&b.mat==='wood'&&b.sub>.2&&b.mode==='free'&&Math.abs(b.vy)<60) success('float',b.x,b.y);
+ if(b&&b.mat==='iron'&&b.sub>.5&&b.mode==='free') ST.d.sink=ST.d.sink||now;
  if(b&&b.mat==='iron'&&!ST.plugOpen&&Math.abs(b.x-l.pond.plug)<44&&b.y>l.pond.y1-b.r-10&&b.y<l.pond.y1) openPlug();
  // 扉
  ST.doorP=clamp(ST.doorP+(ST.doorOpen?dt*2:0),0,1);
@@ -1616,7 +1660,7 @@ function updateMech(dt){
  if(b&&b.mat==='ice'&&ST.bridgeLock&&b.x<l.landing.x1&&b.y<l.landing.y&&b.y>l.landing.y-b.r*2.5) success('cross',b.x,b.y);
  // 磁石で動かした
  if(ST.held&&ST.magMoved>70) success('magmove',ST.magX,L.crane.hold);
- if(b&&b.pw&&!ST.climb&&!ST.park&&(b.mode==='free'||b.mode==='drag')&&b.x-b.r<l.pil.x1+14&&b.y>l.pil.y0&&b.y<l.TY+b.r) startClimb(b);
+ if(b&&b.pw&&!ST.climb&&!ST.park&&(b.mode==='free'||b.mode==='drag')&&climbOK(b)&&b.x-b.r<l.pil.x1+(HINT.t&&HINT.t.id==='pillar'?14:3)&&b.y>l.pil.y0&&b.y<l.TY+b.r) startClimb(b);
  updateLight(dt);
  for(let i=FX.length-1;i>=0;i--) if(now-FX[i].t>1.2) FX.splice(i,1);
 }
@@ -1626,6 +1670,8 @@ function startPatchwork(b){
  b.pw=true; b.pwT=now; sfxTransform(); sparkle(b.x,b.y,30,'#ffe9a8'); FX.push({x:b.x,y:b.y,t:now,k:'ring'}); success('pw',b.x,b.y);
  b.face.ex='happy'; b.face.hold=2;
 }
+/* 柱を登りはじめてよいか: 柱のヒントが出ている / 指で柱へ押しあてた (最後の素材の仕掛けを先に楽しめる) */
+function climbOK(b){ return (HINT.t&&HINT.t.id==='pillar')||b.mode==='drag'; }
 function startClimb(b){
  b.mode='climb'; b.vx=b.vy=0; b.stuck=null; if(ST.held){ST.held=false;}
  ST.climb={t:0,x0:b.x,y0:b.y,step:-1,top:L.cab.y+L.cab.h+b.r+6};
@@ -1657,8 +1703,9 @@ function ballHitR(b){ return Math.max(b.r*1.7, 46/VIEW.s); }
 function pick(wx,wy){
  // 取っ手が最優先 (玉より小さな対象)
  const l=L;
- if(!ST.park&&ST.boardRaised){ const hx=ST.boardX, hy=l.TY+46; if(hyp(wx-hx,wy-hy)<Math.max(48,40/VIEW.s)) return {k:'handle'}; }
- if(!ST.park&&ST.gateP>=1){ const mx=ST.magX, my=l.crane.y, hr=Math.max(46,34/VIEW.s); if(Math.abs(wx-mx)<hr&&wy>my-hr&&wy<my+22) return {k:'trolley'}; }
+ const busy=ST.park||ST.parkClosing||PARK.opening||ST.climb;
+ if(!busy&&ST.boardRaised){ const hx=ST.boardX, hy=l.TY+46; if(hyp(wx-hx,wy-hy)<Math.max(48,40/VIEW.s)) return {k:'handle'}; }
+ if(!busy&&(ST.gateP>=1||ST.held)){ const mx=ST.magX, my=l.crane.y, hr=Math.max(46,34/VIEW.s); if(Math.abs(wx-mx)<hr&&wy>my-hr&&wy<my+22) return {k:'trolley'}; }
  // 玉
  let best=null, bd=1e9;
  for(const b of [BALL,PBALL]){ if(!b||b.mode==='climb'||b.mode==='script'||b.mode==='trophy') continue; const dd=hyp(wx-b.x,wy-b.y); if(dd<ballHitR(b)&&dd<bd){bd=dd;best=b;} }
@@ -1686,7 +1733,7 @@ function onDown(e){
   const b=h.b;
   if(b===BALL&&ST.park&&PBALL){ PARK.close(); }
   DRAG.fromHeld=b.mode==='held';
-  b.stuck=null;
+  b.ghost=null; b.aimT=null; b.pTap=null;
   DRAG.id=e.pointerId; DRAG.b=b; DRAG.sx=e.clientX; DRAG.sy=e.clientY; DRAG.t0=now; DRAG.path=0;
   DRAG.ox=b.x-p.x; DRAG.oy=b.y-p.y; DRAG.wx=b.x; DRAG.wy=b.y; DRAG.hist=[{x:p.x,y:p.y,t:now}];
   DRAG.moved=false; DRAG.hist0={x:b.x,y:b.y};
@@ -1712,7 +1759,7 @@ function onMove(e){
   DRAG.hist.push({x:p.x,y:p.y,t:now}); while(DRAG.hist.length>8) DRAG.hist.shift();
  } else if(e.pointerId===HANDLE.id){ e.preventDefault(); const p=toWorld(e.clientX,e.clientY); lastInput=now;
   if(HANDLE.kind==='handle'){ const s=L.board.slots; ST.boardX=clamp(p.x+HANDLE.ox,s[0]-6,s[2]+6); }
-  else { const nx=clamp(p.x+HANDLE.ox,L.crane.x0,L.crane.x1); ST.magMoved+=Math.abs(nx-ST.magX); ST.magX=nx; setHumLoop(ST.held?.7:.3); }
+  else { const nx=clamp(p.x+HANDLE.ox,L.crane.x0,L.crane.x1); ST.magMoved+=Math.abs(nx-ST.magX); ST.magX=nx; }
  } else if(PARK.move) PARK.move(e);
 }
 function onUp(e,cancel){
@@ -1730,7 +1777,7 @@ function release(b,cancel){
  if(b.mode==='held') return;
  if(cancel){ b.mode='free'; unstick(b); b.vx*=.2; b.vy=Math.min(b.vy*.2,0); return; }
  if(!DRAG.moved&&dur<.45){ b.mode='free'; tapBall(b); return; }
- b.mode='free'; unstick(b);
+ b.mode='free'; b.relT=now; unstick(b);
  // 指の速度
  const h=DRAG.hist; let vx=0,vy=0;
  if(h.length>=2){ const a=h[0], z=h[h.length-1]; let i=0; while(i<h.length-2&&z.t-h[i].t>.11) i++; const s=h[i]; const dt=Math.max(.016,z.t-s.t); vx=(z.x-s.x)/dt; vy=(z.y-s.y)/dt; if(now-z.t>.09){vx=0;vy=0;} }
@@ -1781,41 +1828,87 @@ function nearTarget(b,rad){ let best=null, bd=rad; for(const t of targets(b)){ c
 function pondSpot(){ const p=L.pond, c=(p.x0+p.x1)/2; return ST.boatX>c?p.x0+L.R*1.2:p.x1-L.R*1.2; }
 /* タップ: へこんで、次の対象へ小さく跳ぶ */
 function tapBall(b){
- b.sq.amt=.34; b.face.ex='squish'; b.face.hold=.3;
+ b.sq.amt=.34; b.face.ex='squish'; b.face.hold=.3; b.tapT=now;
+ // 布坂にくっついたフェルト: 橋が上がりきるまでは、つついても ぷるんとするだけ (ドラッグならはがせる)
+ if(b.stuck&&b===BALL&&b.stuck.k==='ramp'&&!ST.bridgeLock){ b.face.ex='cozy'; b.face.hold=.6; return; }
+ if(b.stuck){ b.stuck=null; b.unstuckT=now; }
  let h=HINT.t; let t=null;
  if(b===BALL&&(ST.parkClosing||ST.park)) h=b.mat==='clay'?blkHint('rubber'):null;
+ if(b===PBALL&&(!h||h.id==='newball')&&PARK.rideHint) h=PARK.rideHint();
  if(h&&h.aim) t=h.aim;
- if(t){ const dist=hyp(t.x-b.x,t.y-b.y); const v=ballistic(b.x,b.y,t.x,t.y,Math.min(b.y,t.y)-clamp(36+dist*.15,36,260)); b.vx=v.vx; b.vy=v.vy; }
- else { b.vy=-420; }
+ // 地下のレールの中: スタートの井戸のほうへ転がす (上へは出られない)
+ if(b===BALL&&b.y>L.pond.y1+4&&b.x>L.pil.x1-6){ b.vx=Math.sign(L.start.x-b.x||1)*460; b.vy=-60; return; }
+ if(!t){ b.vy=-420; return; }
+ const dist=hyp(t.x-b.x,t.y-b.y), base=Math.min(b.y,t.y)-clamp(36+dist*.15,36,260);
+ if(b===PBALL&&PARK.tapLift&&PARK.tapLift(b,t)) return;
+ if(b===PBALL){ const v=ballisticT(b.x,b.y,t.x,t.y,base); b.vx=v.vx; b.vy=v.vy; b.pTap={x:t.x,y:t.y,until:now+v.T+.25}; return; }
+ if(dist<b.r*.7){ b.vy=-420; b.vx*=.2; return; }   // もうそこにいる: その場で跳ねる
+ // 途中にぶつからない弧を探す (低い→高い)。なければ手前を通りぬける跳び
+ const lo=Math.min(b.y,t.y)-22, cands=[base,lo,base-90,base-180,base-300,b.r+10];
+ for(const ap of cands){ const a=Math.max(ap,b.r+10); const v=ballisticT(b.x,b.y,t.x,t.y,a); if(arcClear(b,v,t)){ b.vx=v.vx; b.vy=v.vy; b.ghost=null; b.aimT={x:t.x,y:t.y,until:now+v.T+.6}; return; } }
+ launchTo(b,t,Math.max(base-60,b.r+10));
+}
+/* 放物線が途中の棚やブロックにぶつからないか (着地点のまわりは除く) */
+function arcClear(b,v,t){
+ const r=b.r*.9, n=Math.max(8,Math.ceil(v.T*90));
+ for(let i=1;i<=n;i++){ const tt=v.T*i/n, x=b.x+v.vx*tt, y=b.y+v.vy*tt+.5*G*tt*tt;
+  if(hyp(x-t.x,y-t.y)<b.r*1.25) return true;
+  if(x<r||x>L.W-r||y<r) return false;
+  for(let li=0;li<2;li++){ const arr=li?DYN:SEGS;
+   for(let j=0;j<arr.length;j++){ const s=arr[j];
+    if(s.up&&ST.park) continue; if(s.k==='boat'&&MP[b.mat].dens>2) continue; if(s.k==='park') continue;
+    if(x<Math.min(s.ax,s.bx)-r||x>Math.max(s.ax,s.bx)+r||y<Math.min(s.ay,s.by)-r||y>Math.max(s.ay,s.by)+r) continue;
+    const q=closest(s.ax,s.ay,s.bx,s.by,x,y); if(hyp(x-q.x,y-q.y)<r) return false; } }
+ }
+ return true;
 }
 
 /* ---- ヒント: 次に触る対象は常に1つ ---- */
 const HINT={t:null,since:0,id:''};
 function hintObj(id,x,y,aim,r){ return {id,x,y,aim,r:r||50}; }
 function blkHint(m){ const k=L.blocks[m]; return hintObj('blk:'+m,k.x+k.w/2,k.y+k.h/2,{x:k.x+k.w/2,y:k.y-L.R+2},Math.max(k.w,k.h)*.75); }
+/* 素材ごとの「まだ見ていない仕掛け」 */
+function matHint(b){
+ const l=L, d=ST.d;
+ const pondH=()=>hintObj('pond',pondSpot(),l.TY+30,{x:pondSpot(),y:l.TY-l.R*.2},70);
+ switch(b.mat){
+  case 'rubber': if(!d.board) return blkHint('rubber'); if(!ST.handleMoved) return hintObj('handle',ST.boardX,l.TY+46,null,40); if(!d.board2) return blkHint('rubber'); break;
+  case 'iron': if(!ST.gateOpen) return hintObj('plate',l.plate.x,l.ledgeP.y,{x:l.plate.x,y:l.ledgeP.y-l.R},50);
+   if(!d.plug) return d.magnet?pondH():hintObj('plate',l.plate.x,l.ledgeP.y,{x:l.plate.x,y:l.ledgeP.y-l.R},50); break;
+  case 'wood': if(!d.boat&&!ST.drained&&!ST.plugOpen) return pondH(); break;
+  case 'felt': if(!ST.bridgeLock&&b.stuck&&b.stuck.k==='ramp'){ const e=bridgeEnd(); return hintObj('bridge',(L.gap.x0+e.x)/2,(L.gap.y+e.y)/2,null,60); }
+   if(!ST.bridgeLock){ const m=rampMid(); return hintObj('ramp',m.x,m.y,{x:m.x-10,y:m.y-l.R-4},60); } break;
+  case 'ice': if(pending('ice')) return hintObj('slope',lerp(l.slope.x0,l.slope.x1,.75),lerp(l.slope.y0,l.slope.y1,.75),{x:lerp(l.slope.x0,l.slope.x1,.7),y:lerp(l.slope.y0,l.slope.y1,.7)-l.R*1.2},60); break;
+  case 'glass': if(!ST.latchOpen) return hintObj('hi',l.hi.x,l.hi.y,{x:l.hi.x,y:l.hi.y},44); if(!ST.doorOpen) return hintObj('lo',l.lo.x,l.lo.y,{x:l.lo.x,y:l.lo.y},44); break;
+ }
+ return null;
+}
+function pending(m){
+ const d=ST.d;
+ switch(m){
+  case 'wood': return !d.boat&&!ST.drained&&!ST.plugOpen&&!ST.refilling;
+  case 'iron': return !d.plug;
+  case 'felt': return !ST.bridgeLock;
+  case 'ice': return !d.wind||(ST.bridgeLock&&!d.cross)||((ST.plugOpen||ST.drained)&&!d.refill);
+  case 'glass': return !ST.latchOpen||!ST.doorOpen;
+ }
+ return false;
+}
+const HINT_ORDER=['wood','iron','glass','felt','ice','rubber'];
 function pickHint(){
  const l=L, b=BALL, d=ST.d;
  if(ST.park){ if(PARK.hint){ const h=PARK.hint(); if(h) return h; } return null; }
  if(!b||b.mode==='climb') return null;
  if(!d.w_rubber&&b.mat==='clay') return blkHint('rubber');
+ // 磁石につかまっている: まずトロリー、動かしたら玉 (タップで落とす)
+ if(ST.held) return d.magmove?hintObj('drop',b.x,b.y,null,b.r*1.25):hintObj('trolley',ST.magX,l.crane.y,null,40);
+ const mh=matHint(b); if(mh) return mh;
+ // 継ぎはぎ玉: まだ見ていない仕掛けが残っていれば先にそちら、なければ柱へ
+ if(b.pw){ for(const m of HINT_ORDER) if(m!==b.mat&&pending(m)) return blkHint(m); }
  if(b.pw) return hintObj('pillar',l.pil.x1-20,Math.min(b.y,l.TY-80),{x:l.pil.x1+l.R,y:Math.min(b.y,l.TY-l.R)},60);
- if(ST.held) return hintObj('trolley',ST.magX,l.crane.y,null,40);
- const pondH=hintObj('pond',pondSpot(),l.TY+30,{x:pondSpot(),y:l.TY-l.R*.2},70);
- switch(b.mat){
-  case 'rubber': if(!d.board) return blkHint('rubber'); if(!ST.handleMoved) return hintObj('handle',ST.boardX,l.TY+46,null,40); if(!d.board2) return blkHint('rubber'); break;
-  case 'iron': if(!ST.gateOpen) return hintObj('plate',l.plate.x,l.ledgeP.y,{x:l.plate.x,y:l.ledgeP.y-l.R},50);
-   if(!d.plug) return d.magnet?pondH:hintObj('plate',l.plate.x,l.ledgeP.y,{x:l.plate.x,y:l.ledgeP.y-l.R},50); break;
-  case 'wood': if(!d.boat&&!ST.drained) return pondH; break;
-  case 'felt': if(!ST.bridgeLock){ const m=rampMid(); return hintObj('ramp',m.x,m.y,{x:m.x-10,y:m.y-l.R-4},60); } break;
-  case 'ice': if(!d.wind||(ST.bridgeLock&&!d.cross)||(ST.plugOpen&&!d.refill)) return hintObj('slope',lerp(l.slope.x0,l.slope.x1,.75),lerp(l.slope.y0,l.slope.y1,.75),{x:lerp(l.slope.x0,l.slope.x1,.7),y:lerp(l.slope.y0,l.slope.y1,.7)-l.R*1.2},60); break;
-  case 'glass': if(!ST.latchOpen) return hintObj('hi',l.hi.x,l.hi.y,{x:l.hi.x,y:l.hi.y},44); if(!ST.doorOpen) return hintObj('lo',l.lo.x,l.lo.y,{x:l.lo.x,y:l.lo.y},44); break;
- }
- if(ST.doorOpen&&!d.rail&&b.mat!=='clay') return hintObj('landing',l.pil.x1+10,(l.door.y0+l.door.y1)/2,{x:(l.landing.x0+l.landing.x1)/2,y:l.landing.y-l.R},50);
- const order=['wood','iron','felt','ice','glass','rubber'];
- for(const m of order) if(b.got.indexOf(m)<0) return blkHint(m);
- // 全部触ったが変身前 (ありえない) / それ以外: 未発見の仕掛け
- if(!ST.gateOpen) return blkHint('iron');
- if(!ST.bridgeLock) return blkHint('felt');
+ if(ST.doorOpen&&!d.rail&&b.mat!=='clay') return hintObj('landing',l.pil.x1+10,(l.door.y0+l.door.y1)/2,{x:l.pil.x1*.5,y:l.landing.y-l.R-2},50);
+ // まだ触っていない素材 / まだ仕掛けを見ていない素材 を順に
+ for(const m of HINT_ORDER) if(m!==b.mat&&(b.got.indexOf(m)<0||pending(m))) return blkHint(m);
  return null;
 }
 function updateHint(dt){
@@ -1827,7 +1920,7 @@ function updateHint(dt){
  for(const b of [BALL,PBALL]){ if(!b||b.mode==='drag') continue; if(b===BALL||ST.park){ const tx=(h.x-b.x)/260, ty=(h.y-b.y)/260; if(now-lastInput>.6){ b.face.tx=tx; b.face.ty=ty; } } }
  // しばらく触らないとき: 玉が次の対象を見て、その場で小さく跳ねる (環境の動きで誘う)
  const ib=ST.park?PBALL:BALL;
- if(firstInputDone&&ib&&ib.mode==='free'&&ib.contact>0&&!ib.stuck&&now-lastInput>5&&now-(HINT.nudge||0)>3.2&&Math.abs(ib.vx)<20&&ib.mat!=='rubber'&&(ib.lastK==='f'||ib.lastK==='w'||ib.lastK==='park')){ HINT.nudge=now; ib.vy=-300; ib.face.ex='happy'; ib.face.hold=.6; }
+ if(firstInputDone&&ib&&ib.mode==='free'&&ib.contact>0&&!ib.stuck&&now-lastInput>5&&now-(HINT.nudge||0)>3.2&&Math.abs(ib.vx)<20&&ib.mat!=='rubber'&&(ib.lastK==='f'||ib.lastK==='w'||ib.lastK==='park'||ib.lastK==='blk'||ib.lastK==='slope')){ HINT.nudge=now; ib.vy=-300; ib.face.ex='happy'; ib.face.hold=.6; }
  // 最初だけ: 4秒触らなければ手のお手本
  if(!firstInputDone&&!DEMO&&now-lastInput>4&&now>4) DEMO={t0:now};
 }
@@ -1923,9 +2016,9 @@ PKR.tramp=function(rd){
    vy=-Math.min(130,imp*.12); this.sagV+=imp*.16; this.hop(70); b.face.ex='strain'; b.face.hold=.5;
    burst(this.px,this.py,'iron',4,160,{life:.5,size:.6});
   } else if(m==='felt'){ vy=-imp*.2; this.sagV+=imp*.05; this.hop(50); }
-  else { const k=m==='wood'?.62:m==='glass'?.52:.46; vy=-Math.min(620,imp*k+80); this.sagV+=imp*.06; this.hop(130); }
+  else { const k=m==='wood'?.62:m==='glass'?.52:.46; vy=-Math.min(620,imp*k+(pkBusy(0,4)?80:0)); this.sagV+=imp*.06; this.hop(130); }
   b.vy=vy; if(m!=='ice') b.vx=b.vx*.3+(this.px-b.x)*1.2;
-  sfxRide('tramp',m,st);
+  if(imp>110||pkBusy(0,4)) sfxRide('tramp',m,st);
  };
  rd.update=function(dt){
   const b=PBALL; this.load-=dt;
@@ -2416,7 +2509,7 @@ const PARK={
    const k=easeInOut(ST.parkP), t=this.spawn;
    b.x=lerp(this.from.x,t.x,k); b.y=lerp(this.from.y,t.y,k)-Math.sin(k*PI)*80; b.r=lerp(this.r0,this.r,k); b.ang+=dt*6;
    if(this.P&&k>.85) this.lift.py=b.y+b.r;
-   if(ST.parkP>=1){ this.opening=false; ST.park=true; b.mode='free'; b.r=this.r; b.vx=b.vy=0; if(this.P){ this.hopIn(b); this.lift.exitT=now; } }
+   if(ST.parkP>=1){ this.opening=false; ST.park=true; this.openT=now; b.mode='free'; b.r=this.r; b.vx=b.vy=0; if(this.P){ this.hopIn(b); this.lift.exitT=now; } }
   }
   if(ST.park&&!BALL&&now>this.spawnAt){ BALL=newBall(L.start.x,L.rail.y); BALL.vy=-popV(); ST.lidT=now; ST.popT=now; sfxPop(); }
   if(this.closing){
@@ -2426,7 +2519,7 @@ const PARK={
   }
   if(!(ST.park||this.opening||this.closing)) return;
   for(const rd of this.rides) if(rd.update) rd.update(dt);
-  if(ST.park&&!this.closing&&PBALL){ this.updateLift(dt); this.updateTiles(); this.contain(); }
+  if(ST.park&&!this.closing&&PBALL){ this.updateLift(dt); this.updateTiles(); this.contain(dt); }
   // 6つ全部
   if(ST.park&&!ST.d.park_all){ let n=0; for(const rd of this.rides) if(ST.d['ride_'+rd.kind]) n++;
    if(n>=6){ this.allT+=dt; if(this.allT>1.2){ const p=L.park; success('park_all',(p.x0+p.x1)/2,(p.y0+p.y1)/2); for(const rd of this.rides) sparkle(rd.focus.x,rd.focus.y,5); } } }
@@ -2436,7 +2529,8 @@ const PARK={
   // 札に触れたら着がえ (勢いよく跳び上がる途中は素通り: 下りてきて触れたとき / ドラッグで触れたとき)
   if(b.mode==='drag'||(b.mode==='free'&&b.vy>-150)) for(const rd of this.rides){ const t=rd.tile;
    const qx=clamp(b.x,t.x,t.x+t.w), qy=clamp(b.y,t.y,t.y+t.h), ov=hyp(b.x-qx,b.y-qy)<b.r;
-   if(ov&&!t.in&&b.mat!==t.m){ wear(b,t.m); t.wt=now; if(b.mode==='free') b.vx*=.35; } t.in=ov; }   // 札にぶつかると少し勢いが落ちる (遠くへ飛びすぎない)
+   const by=b.mode==='free'&&b.pTap&&now<b.pTap.until&&hyp(t.aim.x-b.pTap.x,t.aim.y-b.pTap.y)>6; // タップで別の遊具へ跳ぶ途中は、通りすぎる札で着がえない
+   if(ov&&!t.in&&b.mat!==t.m&&!by){ wear(b,t.m); t.wt=now; if(b.mode==='free') b.vx*=.35; } t.in=ov; }   // 札にぶつかると少し勢いが落ちる (遠くへ飛びすぎない)
   this.lastMat=b.mat;
  },
  updateLift(dt){ // 縦画面: 左の縦穴の昇降機で上の段へ
@@ -2449,21 +2543,27 @@ const PARK={
    return;
   }
   lf.py=Math.min(this.fy,lf.py+dt*260);
-  // 自動で何度も回らないよう: 一度出たら、さわるか4秒たつまで待つ
-  if(b.mode==='free'&&!b.stuck&&b.x<this.xl+this.gw&&b.y>this.fy-b.r-60&&Math.abs(b.vx)<160&&(now-lf.exitT>4||lastInput>lf.exitT)){
+  // 自動で何度も回らないよう: 一度出たら、子どもがさわるまで待つ
+  if(b.mode==='free'&&!b.stuck&&b.x<this.xl+this.gw&&b.y>this.fy-b.r-60&&Math.abs(b.vx)<160&&lastInput>lf.exitT){
    lf.rest+=dt; if(lf.rest>.45){ lf.rest=0; lf.t=0; lf.step=-1; lf.y0=b.y; lf.y1=this.ym-b.r-50; b.mode='script'; sfxClick(); }
   } else lf.rest=0;
  },
- hopIn(b){ // 昇降機の上から 上の段の入口へぴょんと入る
-  const a=this.rides[0].aim, v=ballistic(b.x,b.y,a.x,a.y,Math.min(b.y,a.y)-70); b.vx=v.vx; b.vy=v.vy;
+ tapLift(b,t){ // 縦穴の底でタップ & 上の段がねらい → すぐに昇降機で上がる
+  const lf=this.lift; if(!this.P||!ST.park||lf.t>=0||!t) return false;
+  if(Math.abs(t.x-(this.xl+this.gw/2))>2||!(b.x<this.xl+this.gw&&b.y>this.fy-b.r-60)) return false;
+  lf.rest=0; lf.t=0; lf.step=-1; lf.y0=b.y; lf.y1=this.ym-b.r-50; b.mode='script'; b.vx=b.vy=0; b.stuck=null; sfxClick(); return true;
  },
- contain(){
+ hopIn(b){ // 昇降機の上から 上の段の入口へぴょんと入る
+  // 次にためす遊具 (またはその素材の札) へ。開いた直後はまだ発見にならない (success 側で入力を待つ)
+  const rh=ST.park?this.rideHint():null, a=(rh&&rh.aim)||this.rides[0].aim, v=ballistic(b.x,b.y,a.x,a.y,Math.min(b.y,a.y)-70); b.vx=v.vx; b.vy=v.vy;
+ },
+ contain(dt){
   const b=PBALL; if(b.mode==='script') return;
   if(!(b.x>this.xl-4&&b.x<this.xr+4&&b.y>this.yc-4&&b.y<this.fy+4)){ b.x=this.spawn.x; b.y=this.spawn.y; b.vx=b.vy=0; b.stuck=null; return; }
   if(b.mode!=='free'||b.vy<-260) return;
   for(const rd of this.rides){ const P=rd.solid; if(P&&pkInPoly(P,b.x,b.y)){ let top=1e9; for(let i=1;i<P.length;i+=2) top=Math.min(top,P[i]); b.y=top-b.r-2; b.vy=0; } }
   // 2つの角のあいだに乗って止まったら、ぴょんと降ろす
-  if(!b.stuck&&b.contact>0&&hyp(b.x-this.sx,b.y-this.sy)<3){ this.still+=1/60; if(this.still>.9){ this.still=0; const k=this.perched(b); if(k){ b.vx=k*170; b.vy=-280; b.sq.amt=.2; } } } else { this.still=0; this.sx=b.x; this.sy=b.y; }
+  if(!b.stuck&&b.contact>0&&hyp(b.x-this.sx,b.y-this.sy)<3){ this.still+=dt||1/60; if(this.still>.9){ this.still=0; const k=this.perched(b); if(k){ b.vx=k*170; b.vy=-280; b.sq.amt=.2; } } } else { this.still=0; this.sx=b.x; this.sy=b.y; }
  },
  perched(b){ // 左右の角だけで支えられて止まっている (2つの遊具のすき間など) → 降りる向き (-1/1)、そうでなければ 0
   let Lc=false, Rc=false, hiY=1e9, side=0;
@@ -2506,13 +2606,18 @@ const PARK={
   return T;
  },
  hc0(id){ return this.hc[id]||(this.hc[id]={id,x:0,y:0,aim:null,r:50}); },
- hint(){
+ rideHint(){
   if(!ST.park||this.closing) return null; const b=PBALL; if(!b) return null;
-  let done=0, next=null; for(const rd of this.rides){ if(ST.d['ride_'+rd.kind]) done++; else if(!next) next=rd; }
-  if(BALL&&BALL.mode!=='climb'&&(done>=3||!next)){ const h=this.hc0('newball'); h.x=BALL.x; h.y=BALL.y; h.aim=null; h.r=BALL.r*1.6; return h; }
+  let next=null; for(const rd of this.rides){ if(!ST.d['ride_'+rd.kind]){ next=rd; break; } }
   if(!next) return null;
   if(b.mat!==next.mat){ const t=next.tile, h=this.hc0('ptile:'+next.mat); h.x=t.cx; h.y=t.cy; h.aim=this.aimFor(b,t.aim,next.s.row); h.r=34; return h; }
   const h=this.hc0('ride:'+next.kind); h.x=next.focus.x; h.y=next.focus.y; h.aim=this.aimFor(b,next.aim,next.s.row); h.r=next.hr; return h;
+ },
+ hint(){
+  if(!ST.park||this.closing) return null; const b=PBALL; if(!b) return null;
+  const rh=this.rideHint(), idle=now-Math.max(lastInput,this.openT||0);
+  if(BALL&&BALL.mode!=='climb'&&(!rh||idle>12)){ const h=this.hc0('newball'); h.x=BALL.x; h.y=BALL.y; h.aim=null; h.r=BALL.r*1.6; return h; }
+  return rh;
  },
  pick(wx,wy){
   if(!ST.park||this.closing) return null;
@@ -2834,6 +2939,8 @@ function drawHint(c){
  const h=HINT.t; if(!h||h.id.startsWith('blk:')) return;
  const a=.35+.25*Math.sin(now*4); softG(c,h.x,h.y,h.r*1.5,'rgba(255,238,170,1)',a);
  // 取っ手は小さく跳ねて誘う
+ // 玉そのものが次の対象: あたたかい色の輪で囲む (明るい壁でも見える)
+ if(h.id==='newball'||h.id==='drop'){ const b=h.id==='drop'?BALL:BALL; const x=b?b.x:h.x, y=b?b.y:h.y, rr0=(b?b.r:30)*1.32+Math.sin(now*4)*3; c.save(); c.globalAlpha=.55+.3*Math.sin(now*4); c.strokeStyle='#f0a040'; c.lineWidth=5; c.beginPath(); c.arc(x,y,rr0,0,TAU); c.stroke(); c.globalAlpha*=.6; c.strokeStyle='#fff1c8'; c.lineWidth=2; c.beginPath(); c.arc(x,y,rr0+5,0,TAU); c.stroke(); c.restore(); }
  if(h.id==='handle'||h.id==='trolley'){ const ph=(now-HINT.since)%1.6; if(ph<.4){ c.save(); c.globalAlpha=.5*(1-ph/.4); c.strokeStyle='#fff3c0'; c.lineWidth=3; c.beginPath(); c.arc(h.x,h.y,20+ph*60,0,TAU); c.stroke(); c.restore(); } }
 }
 function drawBeam(c){
@@ -2949,6 +3056,7 @@ function drawDebug(c){
 }
 /* ===================== 90 起動・ループ ===================== */
 function setupRound(keepBall){
+ HANDLE.id=null; HANDLE.drag=false;
  L=makeLayout(VIEW.orient,ROUND); buildStatic(); ST=newState();
  if(keepBall&&BALL){ if(BALL.mode!=='drag') BALL.mode='free'; BALL.stuck=null; unstick(BALL); }
  else BALL=newBall(L.start.x,L.TY-L.R-2);
@@ -2986,7 +3094,7 @@ function adaptState(o){
  if(PBALL){ PBALL.r=L.R; PARK.relayout&&PARK.relayout(); }
 }
 function cancelInput(){
- if(DRAG.b){ const b=DRAG.b; DRAG.b=null; DRAG.id=null; b.mode='free'; b.vx=b.vy=0; }
+ if(DRAG.b){ const b=DRAG.b; DRAG.b=null; DRAG.id=null; if(b.mode==='drag'){ b.mode='free'; b.vx=b.vy=0; unstick(b); } }
  DRAG.id=null; HANDLE.id=null; HANDLE.drag=false; setHumLoop(0);
  if(PARK.cancel) PARK.cancel();
 }
@@ -3007,7 +3115,8 @@ function step(dt){
  for(const b of [BALL,PBALL]) if(b){ updateBallLook(b,dt); if(b.mode==='free') rescue(b); }
  const b=BALL; let sl=0; if(b&&b.contact>0&&b.mode==='free'&&(b.mat==='ice'||b.mat==='glass')){ const sp=hyp(b.vx,b.vy); if(sp>160) sl=clamp(sp/1300,0,1)*(b.mat==='ice'?1:.4); }
  setSlideLoop(sl);
- setHumLoop(ST.held&&HANDLE.drag?.7:ST.gateOpen&&BALL&&BALL.mat==='iron'&&!ST.held?.15:0);
+ const trol=HANDLE.drag&&HANDLE.kind==='trolley';
+ setHumLoop(trol?(ST.held?.7:.3):ST.gateOpen&&BALL&&BALL.mat==='iron'&&!ST.held&&!ST.park?.15:0);
 }
 function start(){ if(rafId) return; lastT=null; rafId=requestAnimationFrame(frame); running=true; }
 function stop(){ if(rafId) cancelAnimationFrame(rafId); rafId=0; running=false; }
