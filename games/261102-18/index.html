@@ -1736,8 +1736,9 @@ document.addEventListener('visibilitychange',()=>{
  else {start(); try{if(AC&&AC.state==='suspended')AC.resume().catch(()=>{});}catch(e){}}
 });
 function onResize(){
- /* 回転：引いている途中の生地は そっと戻す。航海中の舟は 画面内の割合で置き直す */
- if(PTR&&PTR.kind==='dough')endPtr(true);
+ /* 回転（向きが変わる・大きさが大きく変わる）：引いている途中の生地は そっと戻す。航海中の舟は 画面内の割合で置き直す */
+ const nw=window.innerWidth|0, nh=window.innerHeight|0, big=((nh>nw*1.12)!==PORT)||Math.abs(nw-W)>W*.2||Math.abs(nh-H)>H*.2;
+ if(big&&PTR&&PTR.kind==='dough')endPtr(true);
  const nx=p=>p?{fx:(p.x-X0)/SW,fy:(p.y-Y0)/SH}:null, bx=K.boats.map(b=>({p:nx(b),f:nx(b.from)}));
  layout(); genHouses();
  K.boats.forEach((b,i)=>{const q=bx[i], leg=b.legs&&b.legs[b.li]; if(q.p){b.x=X0+q.p.fx*SW;b.y=Y0+q.p.fy*SH;} if(q.f&&b.from&&!(leg&&leg.route)&&b.st==='sail'){b.from={x:b.x,y:b.y}; b.lt=0;}});
