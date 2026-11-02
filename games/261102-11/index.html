@@ -1,0 +1,3297 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta name="robots" content="noindex,nofollow">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,minimum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#3a2616">
+<meta name="format-detection" content="telephone=no">
+<title>ちょきん！おばあちゃんの髪と、時間が戻るおへや</title>
+<style>
+html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#3a2616;
+  overscroll-behavior:none;touch-action:none;-webkit-user-select:none;user-select:none;
+  -webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;-webkit-text-size-adjust:none;
+  position:fixed;inset:0}
+canvas{position:fixed;left:0;top:0;display:block;touch-action:none;-webkit-user-select:none;user-select:none;
+  -webkit-touch-callout:none;outline:none}
+#sa{position:fixed;left:0;top:0;width:0;height:0;visibility:hidden;pointer-events:none;
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="sa"></div>
+<script>
+(() => {
+'use strict';
+// =====================================================================
+//  ちょきん！おばあちゃんの髪と、時間が戻るおへや
+//  形式 fr-261029-4 / 画風 material / 題材 no_animal_princess
+//  素材: 生成りの木壁・琥珀の木目・青緑のガラス・白い焼き陶器・桃色と金色の絹糸
+//  文字・数字・言葉のUIは使わない。すべて手続き描画と合成音。
+// =====================================================================
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const saEl = document.getElementById('sa');
+
+// ---------------------------------------------------------------------
+//  小道具
+// ---------------------------------------------------------------------
+const TAU = Math.PI * 2;
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+const lerp = (a, b, t) => a + (b - a) * t;
+const inv = (a, b, v) => clamp((v - a) / (b - a), 0, 1);
+const sm = t => t * t * (3 - 2 * t);
+const easeIO = t => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
+const easeOut = t => 1 - Math.pow(1 - t, 3);
+function hex(h) { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
+function mix(a, b, t) { return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]; }
+function rgb(c, a) {
+  if (a === undefined || a >= 1) return 'rgb(' + (c[0] | 0) + ',' + (c[1] | 0) + ',' + (c[2] | 0) + ')';
+  return 'rgba(' + (c[0] | 0) + ',' + (c[1] | 0) + ',' + (c[2] | 0) + ',' + (a < 0 ? 0 : a).toFixed(3) + ')';
+}
+function lit(c, k) { return k >= 0 ? mix(c, [255, 255, 255], k) : mix(c, [0, 0, 0], -k); }
+function mulberry(seed) {
+  let a = seed >>> 0;
+  return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+function tab(arr, e) { e = clamp(e, 0, arr.length - 1); const i = Math.floor(e), f = e - i; if (i >= arr.length - 1) return arr[arr.length - 1]; return arr[i] + (arr[i + 1] - arr[i]) * f; }
+function tabC(arr, e) { e = clamp(e, 0, arr.length - 1); const i = Math.floor(e), f = e - i; if (i >= arr.length - 1) return arr[arr.length - 1]; return mix(arr[i], arr[i + 1], f); }
+function segDist(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+  let t = l2 > 0 ? ((px - ax) * dx + (py - ay) * dy) / l2 : 0; t = clamp(t, 0, 1);
+  return Math.hypot(px - (ax + dx * t), py - (ay + dy * t));
+}
+function polyDist(px, py, pts) { let d = 1e9; for (let i = 1; i < pts.length; i++) d = Math.min(d, segDist(px, py, pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1])); return d; }
+function polyLen(pts) { let s = 0; for (let i = 1; i < pts.length; i++) s += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); return s; }
+function polyAt(pts, f) { // f: 0..1 along length -> [x,y,angle]
+  const tot = polyLen(pts); let want = clamp(f, 0, 1) * tot;
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i], l = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (want <= l || i === pts.length - 1) { const k = l > 0 ? clamp(want / l, 0, 1) : 0; return [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, Math.atan2(b[1] - a[1], b[0] - a[0])]; }
+    want -= l;
+  }
+  const p = pts[pts.length - 1]; return [p[0], p[1], 0];
+}
+function smoothPath(c, pts) { // 中点を通る二次曲線
+  if (pts.length < 2) return;
+  c.moveTo(pts[0][0], pts[0][1]);
+  if (pts.length === 2) { c.lineTo(pts[1][0], pts[1][1]); return; }
+  for (let i = 1; i < pts.length - 1; i++) {
+    const mx = (pts[i][0] + pts[i + 1][0]) / 2, my = (pts[i][1] + pts[i + 1][1]) / 2;
+    c.quadraticCurveTo(pts[i][0], pts[i][1], mx, my);
+  }
+  const l = pts[pts.length - 1]; c.lineTo(l[0], l[1]);
+}
+
+// ---------------------------------------------------------------------
+//  素材の色
+// ---------------------------------------------------------------------
+const P = {
+  wall: hex('#ecdcbc'), wallD: hex('#cdb488'), wallL: hex('#fbf1dc'),
+  amber: hex('#b56d2a'), amberD: hex('#6e3a14'), amberL: hex('#e3a45a'),
+  glass: hex('#2f8f88'), glassD: hex('#174f55'), glassL: hex('#c4f1e6'),
+  cer: hex('#f4f0e6'), cerD: hex('#c4bba9'), cerL: hex('#ffffff'),
+  silkP: hex('#e2846b'), silkPD: hex('#a24b3f'), silkG: hex('#ddaa45'), silkGD: hex('#9a6a22'), silkL: hex('#fff0cf'),
+  gold: hex('#d6a12c'), goldL: hex('#ffe7a0'), goldD: hex('#8c5e16'),
+  skin: hex('#f1d6c0'), skinD: hex('#cfa184'), skinL: hex('#fff4ea'),
+  ink: hex('#3a2216'),
+  dough: hex('#efd5a2'), doughD: hex('#c39a66'), cookie: hex('#cf8a3c'), cookieD: hex('#8d4f1c'),
+  leaf: hex('#4c9346'), leafD: hex('#245a30'), leafL: hex('#a5d57a'), bark: hex('#6a4224'), barkD: hex('#3a2212'),
+};
+
+// ---------------------------------------------------------------------
+//  時代（0=いま/みらい 1=おかあさん 2=わかもの 3=こども 4=あかちゃん）
+// ---------------------------------------------------------------------
+const HAIR_LEN = [99, 5.2, 3.55, 1.85, 0.34];   // 髪の長さ（S単位）。99 は床まで全部
+const LOCK_LEN = 3.6;                             // こども時代に残る「最後の一房」
+const TREE_G = [1.0, 0.74, 0.46, 0.27, 0.09];     // 木の育ち
+const AVAIL = { dough: [0, 1, 1, 1, 0], cup: [0, 1, 1, 1, 0], tree: [0, 0, 1, 1, 0], silk: [0, 0, 1, 1, 0] };
+const MAX_LOOPS = 6;
+const MAX_PARTS = 90;
+
+// ---------------------------------------------------------------------
+//  配置
+// ---------------------------------------------------------------------
+const L = { W: 0, H: 0, dpr: 1, portrait: true };
+const Q = { level: 0, acc: 0, n: 0, fixed: false, dprCap: 2 };
+function readInsets() {
+  try {
+    const cs = getComputedStyle(saEl);
+    return { t: parseFloat(cs.paddingTop) || 0, r: parseFloat(cs.paddingRight) || 0, b: parseFloat(cs.paddingBottom) || 0, l: parseFloat(cs.paddingLeft) || 0 };
+  } catch (e) { return { t: 0, r: 0, b: 0, l: 0 }; }
+}
+function layout() {
+  const W = Math.max(240, window.innerWidth | 0), H = Math.max(240, window.innerHeight | 0);
+  const dpr = Math.min(Q.dprCap, window.devicePixelRatio || 1);
+  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  cv.style.width = W + 'px'; cv.style.height = H + 'px';
+  L.W = W; L.H = H; L.dpr = dpr;
+  const ins = readInsets();
+  const ax = ins.l + 8, ay = ins.t + 6, aw = W - ins.l - ins.r - 16, ah = H - ins.t - ins.b - 12;
+  L.ax = ax; L.ay = ay; L.aw = aw; L.ah = ah; L.ins = ins;
+  const por = aw / ah < 0.95; L.portrait = por;
+  let S;
+  if (por) {
+    const fw = clamp(aw * 0.032, 8, 24);
+    const ox = ax + aw * 0.06, ow = aw * 0.88, oy = ay + ah * 0.008, oh = ah * 0.262;
+    L.win = { x: ox + fw, y: oy + fw, w: ow - 2 * fw, h: oh - 2 * fw, f: fw, ox, oy, ow, oh };
+    L.sillY = oy + oh;
+    L.floorY = ay + ah * 0.80;
+    S = Math.min(aw * 0.15, (L.floorY - L.sillY) / 7.3);
+    L.S = S;
+    L.cx = ax + aw * 0.5;
+    L.baseY = L.floorY + 0.3 * S;
+    const tTop = ay + ah * 0.862;
+    L.table = { x0: 0, x1: ax + aw * 0.42, y: tTop, y1: Math.min(L.H, ay + ah + 12) };
+    const dr = Math.min(aw * 0.088, ah * 0.044);
+    L.dough = { x: ax + aw * 0.135, y: tTop - dr * 0.22, r: dr };
+    L.cup = { x: ax + aw * 0.325, y: tTop + dr * 0.05, s: dr * 0.95 };
+    const bw = aw * 0.34, bh = ah * 0.082;
+    L.basket = { x: ax + aw * 0.815, y: ay + ah + 4 - bh, w: bw, h: bh };
+    const br = Math.min(aw * 0.074, ah * 0.036);
+    L.ball = { x: ax + aw * 0.775, y: L.basket.y - br * 0.15, r: br };
+    const sx = ax + aw * 0.745, sw = W - sx;
+    L.shelf = { x: sx, w: sw, y1: ay + ah * 0.385, y2: ay + ah * 0.505, d: clamp(S * 0.22, 6, 14) };
+    L.stand = { x: L.win.x + L.win.w * 0.15, y: L.sillY };
+    L.treeX = 0.6; L.treeTH = 0.88;
+  } else {
+    const fw = clamp(ah * 0.026, 8, 24);
+    const ox = ax + aw * 0.03, ow = aw * 0.30, oy = ay + ah * 0.05, oh = ah * 0.50;
+    L.win = { x: ox + fw, y: oy + fw, w: ow - 2 * fw, h: oh - 2 * fw, f: fw, ox, oy, ow, oh };
+    L.sillY = oy + oh;
+    L.floorY = ay + ah * 0.78;
+    S = Math.min(aw * 0.062, (L.floorY - ay - ah * 0.02) / 7.3);
+    L.S = S;
+    L.cx = ax + aw * 0.505;
+    L.baseY = L.floorY + 0.3 * S;
+    const tTop = ay + ah * 0.64;
+    L.table = { x0: ax + aw * 0.705, x1: Math.min(L.W, ax + aw + 10), y: tTop, y1: ay + ah * 0.93 };
+    const dr = Math.min(aw * 0.043, ah * 0.068);
+    L.dough = { x: ax + aw * 0.775, y: tTop - dr * 0.22, r: dr };
+    L.cup = { x: ax + aw * 0.915, y: tTop + dr * 0.05, s: dr * 0.95 };
+    const bw = aw * 0.19, bh = ah * 0.115;
+    L.basket = { x: ax + aw * 0.165, y: ay + ah + 2 - bh, w: bw, h: bh };
+    const br = Math.min(aw * 0.034, ah * 0.052);
+    L.ball = { x: ax + aw * 0.15, y: L.basket.y - br * 0.15, r: br };
+    const sx = ax + aw * 0.725;
+    L.shelf = { x: sx, w: Math.min(L.W - sx, aw * 0.26 + 10), y1: ay + ah * 0.20, y2: ay + ah * 0.39, d: clamp(S * 0.22, 6, 14) };
+    L.stand = { x: L.win.x + L.win.w * 0.80, y: L.sillY };
+    L.treeX = 0.52; L.treeTH = 0.80;
+  }
+  // 棚の4つの置き場（上段: 枝・絹 / 下段: 型・金）
+  const sh = L.shelf, half = sh.w / 2;
+  L.slots = [
+    { x: sh.x + half * 0.52, y: sh.y1 }, { x: sh.x + half * 1.45, y: sh.y1 },
+    { x: sh.x + half * 0.52, y: sh.y2 }, { x: sh.x + half * 1.45, y: sh.y2 },
+  ];
+  L.slotR = clamp(Math.min(half * 0.47, (sh.y2 - sh.y1) * 0.42), 20, 46);
+  L.cutDist = clamp(S * 1.9, 70, 170);
+  L.tree = { bx: L.win.w * L.treeX, by: L.win.h * 0.9, TH: L.win.h * L.treeTH };
+}
+
+// ---------------------------------------------------------------------
+//  状態
+// ---------------------------------------------------------------------
+function newGifts() {
+  return { dough: null, branch: null, silk: null, cup: null, tTree: -1, tSilk: -1, seq: 0, used: { b: false, s: false, d: false, c: false } };
+}
+const G = {
+  t: 0, frame: 0, phase: 'play', era: 0,
+  ev: { fig: 0, tree: 0, sky: 0, sweets: 0, knit: 0, cup: 0, shelf: 0 },
+  tweens: [],
+  creation: null,           // いまの部屋に並ぶ「みらい」
+  rv: { slide: 1, swing: 1, curtain: 1, cookie: 1, gold: 1 },   // みらいの物の出来上がり具合
+  gifts: newGifts(),
+  shelf: { b: null, s: null, d: null, c: null, tf: true },
+  cyc: 0,
+  visit: { era: 0, choices: 0, touches: 0 },
+  rainbow: false, forceRainbow: -1,
+  invite: null, inviteT: 0, lastInput: -10, anyInput: false, firstTapT: -1,
+  hint: null, hintDone: {},
+  face: { sur: 0, laugh: 0, smile: 0.45, blink: 0, lx: 0, ly: 0, tlx: 0, tly: 0, tilt: 0, lookUntil: 0, lookX: 0, lookY: 0, giggle: 0 },
+  rock: { amp: 0.018, kick: 0, ang: 0, vel: 0 },
+  ff: null,               // 早送り中の段取り
+  flights: [],
+  parts: [],
+  touched: {},            // みらいの物に触ったか
+  dough: null,            // いま机の上にある生地の形
+  doughSq: 0, doughSqT: 9,
+  branchSel: null,        // いま育てている枝（過去）
+  branchAnim: [0, 0, 0, 0],
+  loops: 0, loopAnim: null, ballSpin: 0,
+  cupWob: 0, cupWobV: 0, cupShine: 9, cupRings: 0,
+  swing: { th: 0, w: 0 }, ball: null, curtainWave: 0, cookieHop: 9, goldShine: 9,
+  wiggle: {},
+  combT: 0,
+};
+
+// ---------------------------------------------------------------------
+//  端末内保存（壊れていても・断られても遊び続ける）
+// ---------------------------------------------------------------------
+const SAVE_KEY = 'gf261102-11-room';
+const SAVE_V = 1;
+const store = { mode: 'empty', canWrite: true, mem: null };
+const isInt = (v, a, b) => Number.isInteger(v) && v >= a && v <= b;
+const isNum = (v, a, b) => typeof v === 'number' && isFinite(v) && v >= a && v <= b;
+function vBranch(o) {
+  if (!o || typeof o !== 'object' || !isInt(o.i, 0, 3) || !isInt(o.e, 1, 3) || !Array.isArray(o.p)) return null;
+  if (o.p.length < 2 || o.p.length > 24) return null;
+  const p = [];
+  for (const q of o.p) { if (!Array.isArray(q) || q.length !== 2 || !isNum(q[0], -3, 3) || !isNum(q[1], -3, 3)) return null; p.push([q[0], q[1]]); }
+  return { i: o.i, e: o.e, p };
+}
+function vSilk(o) {
+  if (!o || typeof o !== 'object' || !isInt(o.n, 1, MAX_LOOPS) || !isInt(o.e, 1, 3)) return null;
+  return { n: o.n, e: o.e, rb: o.rb === true };
+}
+function vDough(o) {
+  if (!o || typeof o !== 'object' || !isInt(o.e, 1, 3) || !Array.isArray(o.o) || o.o.length !== 24 || !Array.isArray(o.d) || o.d.length > 12) return null;
+  const out = [], dd = [];
+  for (const r of o.o) { if (!isNum(r, 0.3, 1.4)) return null; out.push(r); }
+  for (const d of o.d) { if (!Array.isArray(d) || d.length !== 3 || !isNum(d[0], -1.5, 1.5) || !isNum(d[1], -1.5, 1.5) || !isNum(d[2], 0.02, 0.6)) return null; dd.push([d[0], d[1], d[2]]); }
+  return { e: o.e, o: out, d: dd };
+}
+function vCup(o) {
+  if (!o || typeof o !== 'object' || !isInt(o.e, 1, 3) || !isInt(o.s, 1, 5)) return null;
+  return { e: o.e, s: o.s };
+}
+function vBundle(o) { // {b,s,d,c,tf} どれも省略可
+  if (!o || typeof o !== 'object') return null;
+  const r = { b: null, s: null, d: null, c: null, tf: o.tf !== false };
+  for (const k of ['b', 's', 'd', 'c']) {
+    if (o[k] === null || o[k] === undefined) continue;
+    const v = k === 'b' ? vBranch(o[k]) : k === 's' ? vSilk(o[k]) : k === 'd' ? vDough(o[k]) : vCup(o[k]);
+    if (!v) return null;
+    r[k] = v;
+  }
+  return r;
+}
+function loadSave() {
+  let raw;
+  try { raw = window.localStorage.getItem(SAVE_KEY); }
+  catch (e) { store.mode = 'memory'; store.canWrite = false; return; }
+  if (raw === null || raw === undefined) { store.mode = 'empty'; return; }
+  let data = null;
+  try { data = raw.length < 20000 ? JSON.parse(raw) : null; } catch (e) { data = null; }
+  const ok = data && typeof data === 'object' && data.v === SAVE_V && isInt(data.cyc, 0, 1e6);
+  const last = ok ? (data.last === null ? null : vBundle(data.last)) : null;
+  const shelf = ok ? vBundle(data.shelf) : null;
+  if (!ok || (data.last !== null && !last) || !shelf) {
+    store.mode = 'reset';
+    try { window.localStorage.removeItem(SAVE_KEY); } catch (e) { /* 消せなくても続ける */ }
+    return;
+  }
+  G.cyc = data.cyc; G.creation = last; G.shelf = shelf;
+  store.mode = 'restored';
+}
+function snapshot() {
+  const cp = o => (o ? JSON.parse(JSON.stringify(o)) : null);
+  return { v: SAVE_V, cyc: G.cyc, last: G.creation ? cp(G.creation) : null, shelf: cp(G.shelf) };
+}
+function writeSave() {
+  const data = snapshot();
+  store.mem = data;
+  if (!store.canWrite) { store.mode = 'memory'; return; }
+  try { window.localStorage.setItem(SAVE_KEY, JSON.stringify(data)); if (store.mode !== 'memory') store.mode = 'saved'; }
+  catch (e) { store.canWrite = false; store.mode = 'memory'; }
+}
+
+// ---------------------------------------------------------------------
+//  音（Web Audio で合成。最初のタッチで開始）
+// ---------------------------------------------------------------------
+const AU = { ctx: null, out: null, rev: null, noise: null, ten: null, started: false };
+function audioStart() {
+  try {
+    if (!AU.ctx) {
+      const C = window.AudioContext || window.webkitAudioContext;
+      if (!C) return;
+      const ac = new C();
+      AU.ctx = ac;
+      const comp = ac.createDynamicsCompressor();
+      comp.threshold.value = -16; comp.knee.value = 12; comp.ratio.value = 4; comp.attack.value = 0.004; comp.release.value = 0.2;
+      const master = ac.createGain(); master.gain.value = 0.85;
+      master.connect(comp); comp.connect(ac.destination);
+      AU.out = master;
+      // 小さな木の部屋の響き
+      const len = Math.floor(ac.sampleRate * 1.4), ir = ac.createBuffer(2, len, ac.sampleRate);
+      for (let ch = 0; ch < 2; ch++) {
+        const d = ir.getChannelData(ch);
+        for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.8) * (i < 60 ? i / 60 : 1);
+      }
+      const conv = ac.createConvolver(); conv.buffer = ir;
+      const rg = ac.createGain(); rg.gain.value = 0.28; conv.connect(rg); rg.connect(master);
+      AU.rev = conv;
+      const nb = ac.createBuffer(1, ac.sampleRate, ac.sampleRate), nd = nb.getChannelData(0);
+      for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
+      AU.noise = nb;
+    }
+    if (AU.ctx.state === 'suspended') AU.ctx.resume();
+    AU.started = true;
+  } catch (e) { /* 音が出なくても遊べる */ }
+}
+function aT() { return AU.ctx ? AU.ctx.currentTime + 0.005 : 0; }
+function voice(type, f0, t0, dur, vol, o) {
+  o = o || {};
+  const ac = AU.ctx; if (!ac) return null;
+  try {
+    const osc = ac.createOscillator(); osc.type = type;
+    osc.frequency.setValueAtTime(f0, t0);
+    if (o.f1) osc.frequency.exponentialRampToValueAtTime(Math.max(20, o.f1), t0 + (o.glide || dur));
+    if (o.det) osc.detune.setValueAtTime(o.det, t0);
+    const g = ac.createGain();
+    const a = o.a || 0.004;
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(Math.max(0.0002, vol), t0 + a);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    let node = osc;
+    if (o.filter) { const f = ac.createBiquadFilter(); f.type = o.filter; f.frequency.setValueAtTime(o.ff || 1200, t0); if (o.ff1) f.frequency.exponentialRampToValueAtTime(o.ff1, t0 + dur); f.Q.value = o.q || 0.8; osc.connect(f); node = f; }
+    node.connect(g); g.connect(AU.out);
+    if (o.rev) { const s = ac.createGain(); s.gain.value = o.rev; g.connect(s); s.connect(AU.rev); }
+    if (o.vib) { const l = ac.createOscillator(), lg = ac.createGain(); l.frequency.value = o.vib; lg.gain.value = o.vibAmt || 6; l.connect(lg); lg.connect(osc.frequency); l.start(t0); l.stop(t0 + dur + 0.05); }
+    osc.start(t0); osc.stop(t0 + dur + 0.05);
+    return { osc, g };
+  } catch (e) { return null; }
+}
+function noise(t0, dur, vol, ftype, f0, f1, q, rev) {
+  const ac = AU.ctx; if (!ac || !AU.noise) return;
+  try {
+    const src = ac.createBufferSource(); src.buffer = AU.noise;
+    const f = ac.createBiquadFilter(); f.type = ftype || 'bandpass'; f.frequency.setValueAtTime(f0, t0);
+    if (f1) f.frequency.exponentialRampToValueAtTime(f1, t0 + dur); f.Q.value = q || 0.9;
+    const g = ac.createGain(); g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(vol, t0 + Math.min(0.02, dur * 0.3)); g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    src.connect(f); f.connect(g); g.connect(AU.out);
+    if (rev) { const s = ac.createGain(); s.gain.value = rev; g.connect(s); s.connect(AU.rev); }
+    src.start(t0, Math.random() * 0.5); src.stop(t0 + dur + 0.05);
+  } catch (e) { /* noop */ }
+}
+const PENT = n => 261.63 * Math.pow(2, ([0, 2, 4, 7, 9][((n % 5) + 5) % 5] + 12 * Math.floor(n / 5)) / 12);
+function bell(f, t0, vol, dur, rev) { // 鈴のような成功音
+  voice('sine', f, t0, dur, vol, { rev: rev === undefined ? 0.5 : rev });
+  voice('sine', f * 2.76, t0, dur * 0.45, vol * 0.32, { rev: 0.4 });
+  voice('triangle', f * 4.07, t0, dur * 0.2, vol * 0.12);
+}
+// ふつうのさわり音
+function sTick(f, v) { if (!AU.ctx) return; const t = aT(); voice('sine', f || 1100, t, 0.07, v || 0.05); voice('triangle', (f || 1100) * 1.5, t, 0.04, (v || 0.05) * 0.4); }
+function sWood() { if (!AU.ctx) return; const t = aT(); voice('sine', 820, t, 0.09, 0.06, { f1: 640 }); noise(t, 0.03, 0.04, 'highpass', 2500); }
+function sSilk(k) { if (!AU.ctx) return; const t = aT(); k = k || 1; noise(t, 0.2, 0.06 * k, 'bandpass', 3600, 1500, 0.7, 0.25); voice('triangle', PENT(8 + ((Math.random() * 3) | 0)), t + 0.01, 0.45, 0.045 * k, { rev: 0.4 }); }
+// 髪がぴんと張る音（続く音）
+function tensionStart() {
+  if (!AU.ctx || AU.ten) return;
+  try {
+    const ac = AU.ctx, t = aT();
+    const o1 = ac.createOscillator(), o2 = ac.createOscillator(), g = ac.createGain(), f = ac.createBiquadFilter();
+    o1.type = 'triangle'; o2.type = 'sine'; o1.frequency.value = 220; o2.frequency.value = 331;
+    f.type = 'lowpass'; f.frequency.value = 1600; f.Q.value = 2;
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.03, t + 0.05);
+    o1.connect(f); o2.connect(f); f.connect(g); g.connect(AU.out);
+    const s = ac.createGain(); s.gain.value = 0.25; g.connect(s); s.connect(AU.rev);
+    o1.start(t); o2.start(t);
+    AU.ten = { o1, o2, g, f };
+  } catch (e) { AU.ten = null; }
+}
+function tensionSet(k) {
+  const T = AU.ten; if (!T) return;
+  try {
+    const t = AU.ctx.currentTime, f = 196 * Math.pow(2, k * 1.6);
+    T.o1.frequency.setTargetAtTime(f, t, 0.03); T.o2.frequency.setTargetAtTime(f * 1.5, t, 0.03);
+    T.f.frequency.setTargetAtTime(900 + 2600 * k, t, 0.05);
+    T.g.gain.setTargetAtTime(0.02 + 0.05 * k, t, 0.04);
+  } catch (e) { /* noop */ }
+}
+function tensionStop() {
+  const T = AU.ten; if (!T) return; AU.ten = null;
+  try { const t = AU.ctx.currentTime; T.g.gain.cancelScheduledValues(t); T.g.gain.setTargetAtTime(0.0001, t, 0.04); T.o1.stop(t + 0.3); T.o2.stop(t + 0.3); } catch (e) { /* noop */ }
+}
+// ちょきん！（成功音）
+function sSnip(k) {
+  if (!AU.ctx) return; const t = aT();
+  noise(t, 0.025, 0.25, 'highpass', 4200); noise(t + 0.055, 0.03, 0.3, 'highpass', 5200);
+  voice('sine', 2600, t + 0.05, 0.12, 0.05, { f1: 2300 });
+  const base = 9 - k * 1;
+  [0, 2, 4].forEach((d, i) => bell(PENT(base + d), t + 0.1 + i * 0.07, 0.07, 0.9));
+}
+// 時間がもどる音
+function sRewind(steps) {
+  if (!AU.ctx) return; const t = aT() + 0.05;
+  voice('sawtooth', 900, t, 0.75, 0.035, { f1: 140, filter: 'lowpass', ff: 2400, ff1: 400, q: 3, rev: 0.6 });
+  noise(t, 0.7, 0.05, 'bandpass', 3000, 300, 1.2, 0.5);
+  for (let i = 0; i < 4; i++) bell(PENT(12 - i * 2 - (steps - 1)), t + 0.12 + i * 0.11, 0.035, 0.6, 0.6);
+}
+function sForward(i) { if (!AU.ctx) return; const t = aT(); voice('sawtooth', 160, t, 0.8, 0.03, { f1: 900, filter: 'lowpass', ff: 500, ff1: 2600, q: 2, rev: 0.6 }); bell(PENT(5 + i * 2), t + 0.35, 0.05, 0.8); }
+function sBoing() { if (!AU.ctx) return; const t = aT(); voice('triangle', 300, t, 0.35, 0.07, { f1: 180, vib: 14, vibAmt: 30 }); }
+function sDough(d) { if (!AU.ctx) return; const t = aT(); voice('sine', 190 + d * 40, t, 0.18, 0.13, { f1: 70 }); noise(t, 0.12, 0.07, 'lowpass', 600, 200, 0.6); }
+function sBranch(k) { if (!AU.ctx) return; const t = aT(); voice('square', 95, t, 0.16, 0.025, { filter: 'bandpass', ff: 700, q: 4, vib: 30, vibAmt: 25 }); voice('sine', PENT(5 + (k | 0)), t + 0.02, 0.25, 0.06); voice('sine', PENT(5 + (k | 0)) * 4, t + 0.02, 0.06, 0.02); }
+function sLoop(n) { if (!AU.ctx) return; const t = aT(); const f = PENT(5 + n * 1); voice('triangle', f, t, 0.9, 0.08, { rev: 0.5 }); voice('sine', f * 2, t, 0.5, 0.03); noise(t, 0.08, 0.03, 'bandpass', 4000, 2500); }
+function sCup(rich, k) {
+  if (!AU.ctx) return; const t = aT(); const b = 1180 * Math.pow(2, ((k || 0) % 3) / 12);
+  const parts = [[1, 1.3, 0.09], [2.32, 0.9, 0.04], [4.25, 0.5, 0.025], [6.63, 0.3, 0.012]];
+  parts.forEach(p => voice('sine', b * p[0], t, p[1] * (rich ? 1.6 : 1), p[2], { rev: 0.6, vib: 5, vibAmt: b * 0.004 }));
+  if (rich) [0, 4, 7].forEach((s, i) => bell(b * 0.5 * Math.pow(2, s / 12), t + 0.08 + i * 0.09, 0.05, 1.4));
+}
+function sDull() { if (!AU.ctx) return; const t = aT(); voice('sine', 640, t, 0.25, 0.06, { rev: 0.2 }); voice('sine', 1480, t, 0.12, 0.02); }
+function sSuccess(level) {
+  if (!AU.ctx) return; const t = aT(); const base = 7 + (level || 0);
+  [0, 2, 4, 5].forEach((d, i) => bell(PENT(base + d), t + i * 0.085, 0.07, 1.1));
+  voice('sine', PENT(base) / 2, t, 0.6, 0.04, { rev: 0.4 });
+}
+function sLaugh(big) {
+  if (!AU.ctx) return; const t = aT(); const n = big ? 9 : 4;
+  for (let i = 0; i < n; i++) {
+    const f = (big ? 560 : 430) * (1 + 0.18 * Math.sin(i * 2.1)) * (1 + i * 0.015);
+    const tt = t + i * 0.11;
+    voice('sawtooth', f, tt, 0.085, 0.045, { f1: f * 1.25, filter: 'bandpass', ff: 1300, q: 1.6 });
+    voice('sine', f * 2, tt, 0.07, 0.02);
+  }
+  if (big) voice('triangle', 700, t + n * 0.11, 0.5, 0.05, { f1: 1050, vib: 7, vibAmt: 25, rev: 0.4 });
+}
+function sGiggle() { sLaugh(false); }
+function sGrowNote(i) { if (!AU.ctx) return; const t = aT(); bell(PENT(3 + i), t, 0.045, 0.7, 0.5); voice('sine', PENT(3 + i) / 2, t, 0.5, 0.025); }
+function sSwing(a) { if (!AU.ctx) return; const t = aT(); noise(t, 0.45, 0.05 + a * 0.05, 'bandpass', 600, 1800, 0.7, 0.3); voice('square', 110, t + 0.02, 0.1, 0.015, { filter: 'bandpass', ff: 900, q: 6, vib: 40, vibAmt: 20 }); bell(PENT(9 + Math.round(a * 4)), t + 0.25, 0.04, 0.6); }
+function sRoll(dur) { if (!AU.ctx) return; const t = aT(); noise(t, dur, 0.05, 'bandpass', 900, 1300, 4); voice('sine', 70, t, dur, 0.02, { vib: 18, vibAmt: 20 }); }
+function sTock() { if (!AU.ctx) return; const t = aT(); voice('sine', 980, t, 0.08, 0.1, { f1: 700 }); noise(t, 0.02, 0.06, 'highpass', 3000); }
+function sCrunch() { if (!AU.ctx) return; const t = aT(); for (let i = 0; i < 4; i++) noise(t + i * 0.045 + Math.random() * 0.02, 0.04, 0.12, 'highpass', 1800 + Math.random() * 1500); voice('sine', 300, t, 0.08, 0.04); }
+function sCurtain() { if (!AU.ctx) return; const t = aT(); noise(t, 0.5, 0.05, 'bandpass', 2500, 900, 0.6, 0.3); [0, 2, 4].forEach((d, i) => voice('triangle', PENT(10 + d), t + 0.05 + i * 0.07, 0.6, 0.03, { rev: 0.5 })); }
+function sFly() { if (!AU.ctx) return; const t = aT(); noise(t, 0.5, 0.04, 'bandpass', 900, 3500, 1.2, 0.4); voice('sine', 500, t, 0.5, 0.03, { f1: 1100, rev: 0.4 }); }
+function sShelf() { if (!AU.ctx) return; const t = aT(); voice('sine', 1568, t, 0.25, 0.05, { rev: 0.5 }); voice('sine', 2093, t + 0.06, 0.3, 0.04, { rev: 0.5 }); }
+function sBabyCoo() { if (!AU.ctx) return; const t = aT(); voice('triangle', 520, t, 0.35, 0.05, { f1: 760, filter: 'bandpass', ff: 1200, q: 1.5 }); }
+
+// ---------------------------------------------------------------------
+//  部屋の下絵（木の壁・琥珀の床・棚・机・かご）を前もって描いておく
+// ---------------------------------------------------------------------
+const C = {};   // 描きおき
+function mkCanvas(w, h, res) { return mkCanvasAt(0, 0, w, h, res); }
+function mkCanvasAt(x, y, w, h, res) {   // 必要な範囲だけの描きおき（全体座標のまま描ける）
+  x = Math.floor(x); y = Math.floor(y); w = Math.max(1, Math.ceil(w)); h = Math.max(1, Math.ceil(h));
+  const d = res || L.dpr;
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.ceil(w * d)); c.height = Math.max(1, Math.ceil(h * d));
+  const g = c.getContext('2d'); g.setTransform(d, 0, 0, d, -x * d, -y * d);
+  return { c, g, x, y, w, h, d };
+}
+function blit(o) { if (o) ctx.drawImage(o.c, o.x, o.y, o.w, o.h); }
+function grain(g, x, y, w, h, base, vertical, seed, density, strength) {
+  const r = mulberry(seed);
+  g.save(); g.beginPath(); g.rect(x, y, w, h); g.clip();
+  const span = vertical ? w : h, len = vertical ? h : w;
+  const n = Math.max(3, Math.round(span / (density || 3.2)));
+  for (let i = 0; i < n; i++) {
+    const off = r() * span, amp = 0.6 + r() * 2.6, fr = 0.008 + r() * 0.03, ph = r() * TAU;
+    g.strokeStyle = rgb(lit(base, -(0.18 + r() * 0.22)), (0.10 + r() * 0.22) * (strength || 1));
+    g.lineWidth = 0.4 + r() * 1.3;
+    g.beginPath();
+    for (let s = 0, first = true; s <= len + 6; s += 6) {
+      const a = off + Math.sin(s * fr + ph) * amp + Math.sin(s * fr * 3.1 + ph * 2) * amp * 0.25;
+      const px = vertical ? x + a : x + s, py = vertical ? y + s : y + a;
+      if (first) { g.moveTo(px, py); first = false; } else g.lineTo(px, py);
+    }
+    g.stroke();
+  }
+  // 節（ふし）
+  const knots = Math.floor(r() * 2.2 * (len / 300));
+  for (let k = 0; k < knots; k++) {
+    const kx = vertical ? x + r() * w : x + r() * w, ky = vertical ? y + r() * h : y + r() * h;
+    const rr = 2 + r() * 5;
+    for (let j = 4; j > 0; j--) {
+      g.strokeStyle = rgb(lit(base, -0.35), 0.10 + 0.05 * j * (strength || 1));
+      g.lineWidth = 0.7;
+      g.beginPath();
+      if (vertical) g.ellipse(kx, ky, rr * j * 0.45, rr * j * 1.2, 0, 0, TAU); else g.ellipse(kx, ky, rr * j * 1.2, rr * j * 0.45, 0, 0, TAU);
+      g.stroke();
+    }
+  }
+  g.restore();
+}
+function woodBox(g, x, y, w, h, base, vertical, seed, shadeK) {
+  const grd = vertical ? g.createLinearGradient(x, 0, x + w, 0) : g.createLinearGradient(0, y, 0, y + h);
+  grd.addColorStop(0, rgb(lit(base, 0.10 * (shadeK || 1))));
+  grd.addColorStop(0.45, rgb(lit(base, 0.02)));
+  grd.addColorStop(1, rgb(lit(base, -0.22 * (shadeK || 1))));
+  g.fillStyle = grd; g.fillRect(x, y, w, h);
+  grain(g, x, y, w, h, base, vertical, seed, 3, 1);
+}
+function buildRoom() {
+  const W = L.W, H = L.H, S = L.S;
+  // ---------- 壁と床 ----------
+  const bg = mkCanvas(W, H), g = bg.g;
+  const fy = L.floorY;
+  const bw = clamp(S * 0.66, 22, 60);
+  const r = mulberry(11);
+  for (let x = -r() * bw, i = 0; x < W; x += bw, i++) {
+    const tone = lit(P.wall, (r() - 0.5) * 0.08);
+    const grd = g.createLinearGradient(x, 0, x + bw, 0);
+    grd.addColorStop(0, rgb(lit(tone, -0.05))); grd.addColorStop(0.3, rgb(lit(tone, 0.04))); grd.addColorStop(1, rgb(lit(tone, -0.06)));
+    g.fillStyle = grd; g.fillRect(x, 0, bw + 1, fy);
+    grain(g, x, 0, bw, fy, tone, true, 100 + i, 4.2, 0.75);
+    g.fillStyle = rgb(P.wallD, 0.55); g.fillRect(x, 0, 1.4, fy);
+    g.fillStyle = rgb(P.wallL, 0.7); g.fillRect(x + 1.4, 0, 1, fy);
+  }
+  // 窓からの光と、奥の陰
+  const wl = L.win.x + L.win.w / 2;
+  let lg = g.createRadialGradient(wl, L.win.y + L.win.h * 0.6, 10, wl, L.win.y + L.win.h * 0.6, Math.max(W, H) * 0.9);
+  lg.addColorStop(0, 'rgba(255,236,190,0.30)'); lg.addColorStop(0.5, 'rgba(255,220,170,0.06)'); lg.addColorStop(1, 'rgba(70,40,20,0.30)');
+  g.fillStyle = lg; g.fillRect(0, 0, W, fy);
+  // 天井のかげ
+  lg = g.createLinearGradient(0, 0, 0, Math.min(fy, H * 0.25));
+  lg.addColorStop(0, 'rgba(60,35,15,0.30)'); lg.addColorStop(1, 'rgba(60,35,15,0)');
+  g.fillStyle = lg; g.fillRect(0, 0, W, Math.min(fy, H * 0.25));
+  // 床
+  const vpx = L.cx, vpy = fy - (H - fy) * 2.2;
+  lg = g.createLinearGradient(0, fy, 0, H);
+  lg.addColorStop(0, rgb(lit(P.amber, -0.28))); lg.addColorStop(0.35, rgb(lit(P.amber, -0.06))); lg.addColorStop(1, rgb(lit(P.amber, 0.04)));
+  g.fillStyle = lg; g.fillRect(0, fy, W, H - fy);
+  const xAt = (xb, y) => vpx + (xb - vpx) * (y - vpy) / (H - vpy);
+  g.save(); g.beginPath(); g.rect(0, fy, W, H - fy); g.clip();
+  const rr = mulberry(77);
+  for (let i = 0; i < 160; i++) {   // 木目
+    const xb = -W * 1.2 + rr() * W * 3.4;
+    g.strokeStyle = rgb(lit(P.amber, -0.3 - rr() * 0.25), 0.08 + rr() * 0.16); g.lineWidth = 0.4 + rr() * 1.1;
+    g.beginPath();
+    for (let k = 0; k <= 16; k++) { const y = fy + (H - fy) * k / 16; const x = xAt(xb, y) + Math.sin(k * 0.8 + i) * (0.6 + rr()); k === 0 ? g.moveTo(x, y) : g.lineTo(x, y); }
+    g.stroke();
+  }
+  const pw = clamp(S * 1.05, 34, 96);
+  const cols = [];
+  for (let xb = vpx - Math.ceil((W * 1.8) / pw) * pw; xb < W * 2.2; xb += pw) cols.push(xb);
+  cols.forEach((xb, i) => {   // 板の継ぎ目
+    g.strokeStyle = 'rgba(55,25,8,0.55)'; g.lineWidth = 1.3;
+    g.beginPath(); g.moveTo(xAt(xb, fy), fy); g.lineTo(xb, H); g.stroke();
+    g.strokeStyle = 'rgba(255,210,150,0.22)'; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(xAt(xb, fy) + 1, fy); g.lineTo(xb + 1.5, H); g.stroke();
+    if (i < cols.length - 1) {   // 突きつけ
+      const n = 2 + (i % 3);
+      for (let j = 0; j < n; j++) {
+        const y = fy + (H - fy) * ((j + 0.3 + ((i * 0.37) % 1)) / n);
+        g.strokeStyle = 'rgba(55,25,8,0.4)'; g.lineWidth = 1;
+        g.beginPath(); g.moveTo(xAt(xb, y), y); g.lineTo(xAt(cols[i + 1], y), y); g.stroke();
+      }
+    }
+  });
+  // 床のつや
+  lg = g.createRadialGradient(L.win.x + L.win.w * 0.5 + (L.portrait ? 0 : S * 2), fy + (H - fy) * 0.45, 4, L.win.x + L.win.w * 0.5, fy + (H - fy) * 0.45, (H - fy) * 1.6 + S * 3);
+  lg.addColorStop(0, 'rgba(255,225,170,0.28)'); lg.addColorStop(1, 'rgba(255,225,170,0)');
+  g.fillStyle = lg; g.fillRect(0, fy, W, H - fy);
+  lg = g.createLinearGradient(0, fy, 0, fy + (H - fy) * 0.3);
+  lg.addColorStop(0, 'rgba(40,18,6,0.45)'); lg.addColorStop(1, 'rgba(40,18,6,0)');
+  g.fillStyle = lg; g.fillRect(0, fy, W, (H - fy) * 0.3);
+  g.restore();
+  // 幅木
+  const bh = clamp(S * 0.3, 8, 24);
+  woodBox(g, 0, fy - bh, W, bh, lit(P.amber, -0.1), false, 5, 1.2);
+  g.fillStyle = 'rgba(255,220,160,0.35)'; g.fillRect(0, fy - bh, W, 1.2);
+  // ---------- 棚（昔の棚） ----------
+  const sh = L.shelf;
+  [sh.y1, sh.y2].forEach((y, i) => {
+    const d = sh.d;
+    // 壁への影
+    const sg = g.createLinearGradient(0, y + d, 0, y + d + d * 2.4);
+    sg.addColorStop(0, 'rgba(60,30,10,0.32)'); sg.addColorStop(1, 'rgba(60,30,10,0)');
+    g.fillStyle = sg; g.fillRect(sh.x, y + d, sh.w, d * 2.4);
+    // 天板の上面
+    g.fillStyle = rgb(lit(P.amber, 0.14)); g.fillRect(sh.x, y - d * 0.55, sh.w, d * 0.55);
+    grain(g, sh.x, y - d * 0.55, sh.w, d * 0.55, lit(P.amber, 0.14), false, 300 + i, 2, 0.8);
+    woodBox(g, sh.x, y, sh.w, d, P.amber, false, 200 + i, 1);
+    g.fillStyle = 'rgba(255,225,170,0.5)'; g.fillRect(sh.x, y, sh.w, 1);
+    // 腕木
+    [sh.x + sh.w * 0.18, sh.x + sh.w * 0.82].forEach(bx => {
+      g.beginPath(); g.moveTo(bx - d * 0.3, y + d); g.lineTo(bx + d * 0.3, y + d); g.lineTo(bx + d * 0.3, y + d * 2.6); g.closePath();
+      const bgd = g.createLinearGradient(bx - d * 0.3, 0, bx + d * 0.3, 0); bgd.addColorStop(0, rgb(lit(P.amber, -0.05))); bgd.addColorStop(1, rgb(lit(P.amber, -0.35)));
+      g.fillStyle = bgd; g.fill();
+    });
+  });
+  const vg = g.createRadialGradient(W / 2, H * 0.5, Math.min(W, H) * 0.35, W / 2, H * 0.5, Math.hypot(W, H) * 0.62);
+  vg.addColorStop(0, 'rgba(30,14,4,0)'); vg.addColorStop(1, 'rgba(30,14,4,0.3)');
+  g.fillStyle = vg; g.fillRect(0, 0, W, H);
+  C.bg = bg;
+
+  // ---------- 窓わく（外の景色の上に重ねる） ----------
+  const w = L.win, f = w.f;
+  const fr = mkCanvasAt(w.ox - f - 2, w.oy - 2, w.ow + 2 * f + 4, w.oh + Math.max(8, f * 0.9) * 2.4 + 4), fg = fr.g;
+  fg.save();
+  fg.beginPath(); fg.rect(w.ox, w.oy, w.ow, w.oh); fg.rect(w.x, w.y, w.w, w.h); fg.clip('evenodd');
+  woodBox(fg, w.ox, w.oy, w.ow, w.oh, P.amber, false, 41, 1);
+  fg.restore();
+  // 面取りの光と影
+  fg.strokeStyle = 'rgba(255,220,160,0.55)'; fg.lineWidth = 1.5; fg.strokeRect(w.ox + 0.75, w.oy + 0.75, w.ow - 1.5, w.oh - 1.5);
+  fg.strokeStyle = 'rgba(50,22,6,0.6)'; fg.lineWidth = 2; fg.strokeRect(w.x - 1, w.y - 1, w.w + 2, w.h + 2);
+  // 桟
+  const mw = Math.max(4, f * 0.42);
+  const bars = L.portrait ? [[w.x + w.w / 3 - mw / 2, w.y, mw, w.h], [w.x + w.w * 2 / 3 - mw / 2, w.y, mw, w.h], [w.x, w.y + w.h * 0.42 - mw / 2, w.w, mw]]
+    : [[w.x + w.w / 2 - mw / 2, w.y, mw, w.h], [w.x, w.y + w.h * 0.36 - mw / 2, w.w, mw]];
+  C.bars = bars;
+  bars.forEach((b, i) => {
+    woodBox(fg, b[0], b[1], b[2], b[3], P.amber, b[2] < b[3], 60 + i, 1.2);
+    fg.fillStyle = 'rgba(40,18,6,0.25)'; if (b[2] < b[3]) fg.fillRect(b[0] + b[2], b[1], 2, b[3]); else fg.fillRect(b[0], b[1] + b[3], b[2], 2);
+  });
+  // 窓台
+  const sy = L.sillY, sd = Math.max(8, f * 0.9);
+  fg.fillStyle = rgb(lit(P.amber, 0.18)); fg.fillRect(w.ox - f * 0.5, sy - sd * 0.45, w.ow + f, sd * 0.45);
+  grain(fg, w.ox - f * 0.5, sy - sd * 0.45, w.ow + f, sd * 0.45, lit(P.amber, 0.18), false, 71, 2, 0.8);
+  woodBox(fg, w.ox - f * 0.5, sy, w.ow + f, sd * 0.75, P.amber, false, 72, 1.1);
+  fg.fillStyle = 'rgba(255,230,180,0.6)'; fg.fillRect(w.ox - f * 0.5, sy, w.ow + f, 1);
+  const shg = fg.createLinearGradient(0, sy + sd * 0.75, 0, sy + sd * 2.2);
+  shg.addColorStop(0, 'rgba(60,30,10,0.3)'); shg.addColorStop(1, 'rgba(60,30,10,0)');
+  fg.fillStyle = shg; fg.fillRect(w.ox - f * 0.5, sy + sd * 0.75, w.ow + f, sd * 1.5);
+  C.frame = fr;
+  L.sillTop = sy - sd * 0.45;
+
+  // ---------- ガラスの照り（屈折の筋） ----------
+  const gl = mkCanvas(w.w, w.h), gg = gl.g;
+  let gd = gg.createLinearGradient(0, 0, w.w, w.h);
+  gd.addColorStop(0, 'rgba(210,255,245,0.20)'); gd.addColorStop(0.32, 'rgba(210,255,245,0.02)'); gd.addColorStop(0.42, 'rgba(230,255,250,0.16)');
+  gd.addColorStop(0.47, 'rgba(230,255,250,0.02)'); gd.addColorStop(0.75, 'rgba(20,80,80,0.05)'); gd.addColorStop(1, 'rgba(10,60,70,0.20)');
+  gg.fillStyle = gd; gg.fillRect(0, 0, w.w, w.h);
+  // ゆがみの筋（昔の板ガラスのさざ波）
+  const gr2 = mulberry(9);
+  for (let i = 0; i < 6; i++) {
+    const y0 = gr2() * w.h, a = 1 + gr2() * 3;
+    gg.strokeStyle = 'rgba(235,255,250,' + (0.03 + gr2() * 0.04).toFixed(3) + ')'; gg.lineWidth = 0.8 + gr2() * 1.4;
+    gg.beginPath();
+    for (let x = 0; x <= w.w; x += 6) { const y = y0 + Math.sin(x * 0.03 + i) * a + x * (gr2() * 0.02 - 0.01); x === 0 ? gg.moveTo(x, y) : gg.lineTo(x, y); }
+    gg.stroke();
+  }
+  // 縁のくもり
+  const eg = gg.createRadialGradient(w.w / 2, w.h / 2, Math.min(w.w, w.h) * 0.3, w.w / 2, w.h / 2, Math.max(w.w, w.h) * 0.75);
+  eg.addColorStop(0, 'rgba(20,90,90,0)'); eg.addColorStop(1, 'rgba(15,70,75,0.28)');
+  gg.fillStyle = eg; gg.fillRect(0, 0, w.w, w.h);
+  C.glass = gl;
+
+  // ---------- 机 ----------
+  const T = L.table;
+  const tw = T.x1 - T.x0, td = clamp(S * 0.55, 14, 48), tt = clamp(S * 0.2, 6, 16);
+  const tb = mkCanvasAt(Math.max(0, T.x0 - 4), T.y - td - 4, Math.min(W, T.x1 + tw * 0.12) - Math.max(0, T.x0 - 4) + 4, T.y1 - T.y + td + tw * 0.12 + 8), tg = tb.g;
+  // 脚
+  const legW = clamp(S * 0.26, 8, 22);
+  [T.x0 + tw * 0.14, T.x1 - tw * 0.14].forEach((lx, i) => {
+    const lgd = tg.createLinearGradient(lx - legW / 2, 0, lx + legW / 2, 0);
+    lgd.addColorStop(0, rgb(lit(P.amber, -0.15))); lgd.addColorStop(0.4, rgb(lit(P.amber, 0.12))); lgd.addColorStop(1, rgb(lit(P.amber, -0.4)));
+    tg.fillStyle = lgd; tg.fillRect(lx - legW / 2, T.y + tt, legW, T.y1 - T.y - tt);
+    grain(tg, lx - legW / 2, T.y + tt, legW, T.y1 - T.y - tt, P.amber, true, 90 + i, 3, 0.7);
+  });
+  // 床の影
+  if (T.y1 < H) {
+    const fs = tg.createRadialGradient((T.x0 + T.x1) / 2, T.y1, 4, (T.x0 + T.x1) / 2, T.y1, tw * 0.6);
+    fs.addColorStop(0, 'rgba(40,18,6,0.35)'); fs.addColorStop(1, 'rgba(40,18,6,0)');
+    tg.fillStyle = fs; tg.fillRect(T.x0 - tw * 0.1, T.y1 - tw * 0.1, tw * 1.2, tw * 0.2);
+  }
+  // 天板
+  tg.beginPath(); tg.moveTo(T.x0 + td * 0.5, T.y - td); tg.lineTo(T.x1 - td * 0.5, T.y - td); tg.lineTo(T.x1, T.y); tg.lineTo(T.x0, T.y); tg.closePath();
+  tg.save(); tg.clip();
+  woodBox(tg, T.x0, T.y - td, tw, td, lit(P.amber, 0.1), false, 33, 0.8);
+  const tsh = tg.createLinearGradient(0, T.y - td, 0, T.y);
+  tsh.addColorStop(0, 'rgba(255,235,190,0.25)'); tsh.addColorStop(1, 'rgba(255,235,190,0)');
+  tg.fillStyle = tsh; tg.fillRect(T.x0, T.y - td, tw, td);
+  tg.restore();
+  woodBox(tg, T.x0, T.y, tw, tt, lit(P.amber, -0.12), false, 34, 1.2);
+  tg.fillStyle = 'rgba(255,230,180,0.55)'; tg.fillRect(T.x0, T.y, tw, 1.2);
+  C.table = tb; L.tableTD = td;
+
+  // ---------- かご（後ろと前） ----------
+  const B = L.basket;
+  const rx = B.w / 2, ry = Math.max(6, B.h * 0.22), top = B.y, bot = B.y + B.h;
+  const bk = mkCanvasAt(B.x - rx - 10, top - ry - 10, rx * 2 + 20, ry * 2 + 20), bkg = bk.g;
+  const bf = mkCanvasAt(B.x - rx - 10, top - ry - 10, rx * 2 + 20, B.h + ry * 3 + 20), bfg = bf.g;
+  // 中の暗がり
+  let ig = bkg.createRadialGradient(B.x, top, 2, B.x, top, rx);
+  ig.addColorStop(0, 'rgba(40,20,6,0.95)'); ig.addColorStop(1, 'rgba(90,50,20,0.95)');
+  bkg.fillStyle = ig; bkg.beginPath(); bkg.ellipse(B.x, top, rx * 0.94, ry * 0.86, 0, 0, TAU); bkg.fill();
+  // 後ろの縁
+  bkg.lineWidth = Math.max(4, ry * 0.5); bkg.strokeStyle = rgb(lit(P.amber, -0.1));
+  bkg.beginPath(); bkg.ellipse(B.x, top, rx * 0.97, ry * 0.92, 0, Math.PI, TAU); bkg.stroke();
+  // 前の胴（編み目）
+  bfg.save();
+  bfg.beginPath(); bfg.moveTo(B.x - rx, top); bfg.lineTo(B.x - rx * 0.86, bot - ry * 0.4); bfg.quadraticCurveTo(B.x, bot + ry * 0.5, B.x + rx * 0.86, bot - ry * 0.4); bfg.lineTo(B.x + rx, top);
+  bfg.ellipse(B.x, top, rx, ry, 0, 0, Math.PI, false); bfg.closePath();
+  bfg.clip();
+  let bgd2 = bfg.createLinearGradient(B.x - rx, 0, B.x + rx, 0);
+  bgd2.addColorStop(0, rgb(lit(P.amber, -0.35))); bgd2.addColorStop(0.35, rgb(lit(P.amber, 0.08))); bgd2.addColorStop(1, rgb(lit(P.amber, -0.45)));
+  bfg.fillStyle = bgd2; bfg.fillRect(B.x - rx, top - ry, rx * 2, B.h + ry * 2);
+  const rowH = Math.max(5, B.h / 6);
+  for (let y = top - ry, row = 0; y < bot + ry; y += rowH, row++) {
+    for (let x = B.x - rx - rowH, col = 0; x < B.x + rx + rowH; x += rowH * 1.4, col++) {
+      const ox = (row % 2) * rowH * 0.7;
+      const wg = bfg.createLinearGradient(0, y, 0, y + rowH);
+      wg.addColorStop(0, 'rgba(255,215,150,0.35)'); wg.addColorStop(0.5, 'rgba(255,215,150,0.05)'); wg.addColorStop(1, 'rgba(50,20,5,0.35)');
+      bfg.fillStyle = wg; bfg.beginPath(); bfg.ellipse(x + ox, y + rowH * 0.5 + ry * 0.8 * (1 - Math.pow((x + ox - B.x) / rx, 2)), rowH * 0.62, rowH * 0.42, 0, 0, TAU); bfg.fill();
+    }
+  }
+  bfg.restore();
+  bfg.lineWidth = Math.max(5, ry * 0.55);
+  const rg2 = bfg.createLinearGradient(0, top - ry, 0, top + ry);
+  rg2.addColorStop(0, rgb(lit(P.amber, 0.3))); rg2.addColorStop(1, rgb(lit(P.amber, -0.3)));
+  bfg.strokeStyle = rg2; bfg.beginPath(); bfg.ellipse(B.x, top, rx, ry, 0, 0, Math.PI); bfg.stroke();
+  C.basketBack = bk; C.basketFront = bf;
+}
+
+// ---------------------------------------------------------------------
+//  日ざし・虹・周辺の陰（毎フレーム）
+// ---------------------------------------------------------------------
+const SUN_COL = [hex('#ffe3a8'), hex('#ffd38a'), hex('#ffc896'), hex('#ffb98a'), hex('#ffab84')];
+function drawSunbeam() {
+  const w = L.win, e = G.ev.sky, col = tabC(SUN_COL, e);
+  const fy = L.floorY, H = L.H;
+  const dx = L.portrait ? L.S * 0.6 : L.S * 2.6;
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(w.x, w.y + w.h * 0.1); ctx.lineTo(w.x + w.w, w.y + w.h * 0.1);
+  ctx.lineTo(w.x + w.w + dx * 1.6, Math.min(H, fy + (H - fy) * 0.75)); ctx.lineTo(w.x + dx * 0.5, Math.min(H, fy + (H - fy) * 0.75));
+  ctx.closePath();
+  const g = ctx.createLinearGradient(0, w.y, 0, fy + (H - fy) * 0.7);
+  g.addColorStop(0, rgb(col, 0.0)); g.addColorStop(0.35, rgb(col, 0.10)); g.addColorStop(1, rgb(col, 0.0));
+  ctx.fillStyle = g; ctx.fill();
+  if (G.rainbow || G.rbFade > 0.01) {   // まれな虹色の光
+    const a = G.rbFade * (0.55 + 0.2 * Math.sin(G.t * 2));
+    const bx0 = w.x + w.w * 0.35, bx1 = w.x + w.w * 0.75;
+    const tx = bx0 + dx * 1.5, ty = Math.min(H, fy + (H - fy) * 0.55);
+    const rbs = ['#ff3b3b', '#ff9f1c', '#ffe83a', '#3fd16b', '#2ec4ff', '#4f5bff', '#b04fff'];
+    for (let i = 0; i < rbs.length; i++) {
+      const k0 = i / rbs.length, k1 = (i + 1) / rbs.length;
+      ctx.beginPath();
+      ctx.moveTo(lerp(bx0, bx1, k0), w.y + w.h * 0.5); ctx.lineTo(lerp(bx0, bx1, k1), w.y + w.h * 0.5);
+      ctx.lineTo(tx + (k1 - 0.5) * L.S * 3.2, ty); ctx.lineTo(tx + (k0 - 0.5) * L.S * 3.2, ty); ctx.closePath();
+      const c = hex(rbs[i]);
+      const lg = ctx.createLinearGradient(0, w.y + w.h * 0.5, 0, ty);
+      lg.addColorStop(0, rgb(c, 0)); lg.addColorStop(0.5, rgb(c, 0.12 * a)); lg.addColorStop(1, rgb(c, 0.22 * a));
+      ctx.fillStyle = lg; ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+function drawVignette() {
+  if (Q.level >= 1) return;   // 軽くするときは周辺の陰を省く（背景には焼きこみ済み）
+  if (!C.vig || C.vig.w !== L.W || C.vig.h !== L.H) {
+    const v = mkCanvas(L.W, L.H), g = v.g;
+    const rg = g.createRadialGradient(L.W / 2, L.H * 0.5, Math.min(L.W, L.H) * 0.35, L.W / 2, L.H * 0.5, Math.hypot(L.W, L.H) * 0.62);
+    rg.addColorStop(0, 'rgba(30,14,4,0)'); rg.addColorStop(1, 'rgba(30,14,4,0.16)');
+    g.fillStyle = rg; g.fillRect(0, 0, L.W, L.H);
+    C.vig = v;
+  }
+  ctx.drawImage(C.vig.c, 0, 0, L.W, L.H);
+}
+
+// ---------------------------------------------------------------------
+//  窓の外（空・町・大木）と、青緑ガラスの屈折
+// ---------------------------------------------------------------------
+const SKY_T = ['#3f93b8', '#4f87b4', '#5f78ad', '#556aa2', '#4b5a98'].map(hex);
+const SKY_B = ['#bfe0c4', '#ebc98c', '#efb38a', '#eba07c', '#f08f6e'].map(hex);
+const HILL_A = ['#5d9a73', '#6c9765', '#7a8f68', '#6c7f6c', '#5f6f6c'].map(hex);
+const HILL_B = ['#33714d', '#447447', '#53704b', '#4a6450', '#425752'].map(hex);
+const GRASS = ['#4a8a39', '#578a37', '#64883c', '#5a7a40', '#527044'].map(hex);
+const HOUSES = [[0.07, 3.5], [0.17, 2.6], [0.29, 1.6], [0.80, 0.85], [0.91, 0.85], [0.40, 0.5]];
+const BR = [
+  { h: 0.34, ang: -1.12, len: 0.33, bend: 0.45 },
+  { h: 0.47, ang: 1.02, len: 0.33, bend: 0.45 },
+  { h: 0.63, ang: -0.74, len: 0.29, bend: 0.40 },
+  { h: 0.76, ang: 0.64, len: 0.26, bend: 0.35 },
+];
+function trunkH(gr) { return L.tree.TH * Math.pow(Math.max(0.02, gr), 0.85); }
+function trunkW(gr) { return Math.max(2.2, L.tree.TH * 0.07 * (0.2 + 0.8 * gr)); }
+function trunkX(h, gr) { return L.tree.bx + Math.sin(h * 2.4) * trunkW(gr) * 0.5; }
+function brBase(i, gr, fut) { const b = BR[i], k = fut === true ? 1 : (fut || 0), h = lerp(b.h, 0.24 + 0.5 * b.h, k); return [trunkX(h, gr), L.tree.by - trunkH(gr) * h]; }
+function brDefault(i, gr) {
+  const b = BR[i], base = brBase(i, gr);
+  const len = L.tree.TH * b.len * (0.3 + 0.7 * gr);
+  const pts = [[base[0], base[1]]]; let x = base[0], y = base[1];
+  for (let k = 1; k <= 6; k++) { const s = k / 6, a = b.ang * (1 - b.bend * s); x += Math.sin(a) * len / 6; y -= Math.cos(a) * len / 6; pts.push([x, y]); }
+  return pts;
+}
+function brFit(pts, x0, y0) {   // 窓からはみ出さないよう、根元を中心に縮める
+  const m = Math.max(6, L.win.w * 0.1), Wd = L.win.w - m, Hh = L.tree.by - 4, mt = 6;
+  let k = 1;
+  for (const p of pts) {
+    const dx = p[0] - x0, dy = p[1] - y0;
+    if (p[0] < m && dx < 0) k = Math.min(k, (x0 - m) / -dx);
+    if (p[0] > Wd && dx > 0) k = Math.min(k, (Wd - x0) / dx);
+    if (p[1] < mt && dy < 0) k = Math.min(k, (y0 - mt) / -dy);
+    if (p[1] > Hh && dy > 0) k = Math.min(k, (Hh - y0) / dy);
+  }
+  k = clamp(k, 0.15, 1);
+  return k < 1 ? pts.map(p => [x0 + (p[0] - x0) * k, y0 + (p[1] - y0) * k]) : pts;
+}
+function brCustom(i, rel, gr, fut) {
+  const k = fut === true ? 1 : (fut || 0);
+  const base = brBase(i, gr, k), th = trunkH(gr) * lerp(1, 0.8, k);
+  return brFit(rel.map(p => [base[0] + p[0] * th, base[1] + p[1] * th]), base[0], base[1]);
+}
+function taperPath(g, pts, w0, w1) {
+  const n = pts.length; if (n < 2) return;
+  const A = [], B = [];
+  for (let k = 0; k < n; k++) {
+    const a = pts[Math.max(0, k - 1)], b = pts[Math.min(n - 1, k + 1)];
+    let dx = b[0] - a[0], dy = b[1] - a[1]; const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l;
+    const w = lerp(w0, w1, k / (n - 1)) / 2;
+    A.push([pts[k][0] - dy * w, pts[k][1] + dx * w]); B.push([pts[k][0] + dy * w, pts[k][1] - dx * w]);
+  }
+  g.moveTo(A[0][0], A[0][1]);
+  for (let k = 1; k < n; k++) g.lineTo(A[k][0], A[k][1]);
+  for (let k = n - 1; k >= 0; k--) g.lineTo(B[k][0], B[k][1]);
+  g.closePath();
+}
+function drawBranch(g, pts, w0, w1, glow) {
+  g.beginPath(); taperPath(g, pts, w0, w1);
+  g.fillStyle = rgb(P.bark); g.fill();
+  g.save(); g.lineCap = 'round'; g.lineJoin = 'round';
+  g.strokeStyle = rgb(lit(P.bark, 0.35), 0.55); g.lineWidth = Math.max(0.8, w0 * 0.18);
+  g.beginPath(); smoothPath(g, pts.map(p => [p[0] - w0 * 0.12, p[1] - w0 * 0.16])); g.stroke();
+  if (glow > 0) {
+    const tip = pts[pts.length - 1];
+    const rg = g.createRadialGradient(tip[0], tip[1], 1, tip[0], tip[1], 14 + glow * 10);
+    rg.addColorStop(0, 'rgba(255,240,170,' + (0.75 * glow).toFixed(3) + ')'); rg.addColorStop(1, 'rgba(255,240,170,0)');
+    g.fillStyle = rg; g.beginPath(); g.arc(tip[0], tip[1], 14 + glow * 10, 0, TAU); g.fill();
+  }
+  g.restore();
+}
+function leaf(g, x, y, s, a, k) {
+  g.save(); g.translate(x, y); g.rotate(a);
+  const lg = g.createLinearGradient(0, -s * 0.5, 0, s * 0.5);
+  lg.addColorStop(0, rgb(lit(P.leaf, 0.25 + k * 0.1))); lg.addColorStop(1, rgb(lit(P.leafD, 0.1)));
+  g.fillStyle = lg; g.beginPath(); g.ellipse(s * 0.5, 0, s * 0.55, s * 0.26, 0, 0, TAU); g.fill();
+  g.strokeStyle = 'rgba(230,255,200,0.35)'; g.lineWidth = 0.7; g.beginPath(); g.moveTo(0, 0); g.lineTo(s * 0.95, 0); g.stroke();
+  g.restore();
+}
+const CLB = [[-0.42, 0.08, 0.6], [0.4, 0.04, 0.58], [0.0, -0.36, 0.64], [0.05, 0.3, 0.55]];
+function clusterBall(g, x, y, r, k) {
+  g.fillStyle = rgb(lit(P.leafD, -0.2));
+  g.beginPath(); g.arc(x + r * 0.12, y + r * 0.18, r * 0.95, 0, TAU); g.fill();
+  for (let i = 0; i < CLB.length; i++) {
+    const o = CLB[(i + k) % CLB.length], cx = x + o[0] * r, cy = y + o[1] * r, rr = r * o[2];
+    const rg = g.createRadialGradient(cx - rr * 0.38, cy - rr * 0.42, rr * 0.08, cx, cy, rr);
+    rg.addColorStop(0, rgb(lit(P.leafL, -0.05))); rg.addColorStop(0.5, rgb(P.leaf)); rg.addColorStop(1, rgb(lit(P.leafD, -0.05)));
+    g.fillStyle = rg; g.beginPath(); g.arc(cx, cy, rr, 0, TAU); g.fill();
+  }
+  g.fillStyle = 'rgba(220,255,190,0.35)';
+  for (let i = 0; i < 5; i++) { const a = i * 2.4 + k, d = r * (0.25 + 0.12 * i); g.beginPath(); g.ellipse(x + Math.cos(a) * d * 0.8, y + Math.sin(a) * d * 0.6 - r * 0.2, r * 0.09, r * 0.05, a, 0, TAU); g.fill(); }
+}
+// 枝の今の形（過去の選び中・選び済み・未来）
+function branchPts(i, gr) {
+  if (G.branchSel && G.branchSel.i === i) return G.branchSel.live;
+  const gb = G.gifts.branch;
+  if (gb && gb.i === i && (G.era > 0 || G.phase === 'ff')) return brCustom(i, gb.p, gr, G.phase === 'ff' ? clamp((gr - 0.55) / 0.4, 0, 1) : 0);
+  return null;
+}
+function drawTree(g, gr) {
+  const T = L.tree, th = trunkH(gr), tw = trunkW(gr), t = G.t;
+  const sway = Math.sin(t * 0.9) * 0.6;
+  // 幹
+  const top = [trunkX(1, gr) + sway, T.by - th];
+  g.beginPath();
+  g.moveTo(T.bx - tw * 0.9, T.by + 2);
+  g.quadraticCurveTo(trunkX(0.4, gr) - tw * 0.55, T.by - th * 0.4, top[0] - tw * 0.18, top[1]);
+  g.lineTo(top[0] + tw * 0.18, top[1]);
+  g.quadraticCurveTo(trunkX(0.4, gr) + tw * 0.55, T.by - th * 0.4, T.bx + tw * 0.9, T.by + 2);
+  g.closePath();
+  const tg = g.createLinearGradient(T.bx - tw, 0, T.bx + tw, 0);
+  tg.addColorStop(0, rgb(lit(P.bark, 0.15))); tg.addColorStop(0.45, rgb(lit(P.bark, 0.05))); tg.addColorStop(1, rgb(P.barkD));
+  g.fillStyle = tg; g.fill();
+  if (tw > 4) {   // 樹皮のすじ
+    g.strokeStyle = 'rgba(30,15,5,0.35)'; g.lineWidth = 0.8;
+    for (let k = -1; k <= 1; k++) { g.beginPath(); g.moveTo(T.bx + k * tw * 0.35, T.by); g.quadraticCurveTo(trunkX(0.5, gr) + k * tw * 0.25, T.by - th * 0.5, top[0] + k * tw * 0.1, top[1] + th * 0.1); g.stroke(); }
+  }
+  const leafAmt = inv(0.5, 0.95, gr);
+  const fut = playShown() ? G.creation.b.i : -1;
+  // 枝
+  const brs = [];
+  if (gr > 0.13) {
+    for (let i = 0; i < 4; i++) {
+      if (i === fut) { brs.push(null); continue; }
+      const custom = branchPts(i, gr);
+      const pts = custom || brDefault(i, gr);
+      brs.push(pts);
+      const glow = (G.invite === 'tree' && G.era > 0) ? (0.4 + 0.4 * Math.sin(t * 5 + i)) * (custom ? 0 : 1) : 0;
+      const selGlow = custom ? 0.6 + 0.3 * Math.sin(t * 4) : 0;
+      drawBranch(g, pts, Math.max(1.6, tw * 0.5), Math.max(1, tw * 0.16), Math.max(glow, selGlow));
+    }
+  }
+  // 葉
+  if (leafAmt > 0.01) {
+    const r0 = T.TH * 0.13 * (0.55 + 0.45 * leafAmt);
+    const cl = [];
+    brs.forEach((pts, i) => { if (!pts) return; const tip = pts[pts.length - 1], mid = pts[3]; cl.push([tip[0], tip[1] - r0 * 0.2, 1.0], [mid[0], mid[1] - r0 * 0.5, 0.8]); });
+    cl.push([top[0], top[1] - r0 * 0.3, 1.25], [top[0] - r0 * 0.9, top[1] + r0 * 0.25, 1.0], [top[0] + r0 * 0.95, top[1] + r0 * 0.2, 1.0], [top[0], top[1] + r0 * 0.6, 0.9]);
+    g.save(); g.globalAlpha = leafAmt;
+    cl.forEach((c, k) => clusterBall(g, c[0] + Math.sin(t * 0.7 + k) * 1.2, c[1], r0 * c[2] * (0.75 + 0.25 * leafAmt), k % 3));
+    g.restore();
+  }
+  if (leafAmt < 0.99) {   // わかい葉
+    g.save(); g.globalAlpha = 1 - leafAmt;
+    const s = Math.max(5, T.TH * 0.06 * (0.6 + gr));
+    if (gr <= 0.13) { leaf(g, top[0], top[1], s, -2.4 + Math.sin(t) * 0.1, 1); leaf(g, top[0], top[1], s, -0.7 - Math.sin(t) * 0.1, 0); }
+    else {
+      brs.forEach((pts, i) => { if (!pts) return; const tip = pts[pts.length - 1], a = Math.atan2(tip[1] - pts[pts.length - 2][1], tip[0] - pts[pts.length - 2][0]); leaf(g, tip[0], tip[1], s, a - 0.5 + Math.sin(t * 1.3 + i) * 0.08, 1); leaf(g, tip[0], tip[1], s * 0.85, a + 0.6, 0); const m = pts[3]; leaf(g, m[0], m[1], s * 0.7, a - 1.2, 0); });
+      leaf(g, top[0], top[1], s, -2.3, 1); leaf(g, top[0], top[1], s, -0.8, 0);
+    }
+    g.restore();
+  }
+}
+function drawOutside(g) {
+  const w = L.win.w, h = L.win.h, e = G.ev.sky, t = G.t;
+  const sg = g.createLinearGradient(0, 0, 0, h);
+  sg.addColorStop(0, rgb(tabC(SKY_T, e))); sg.addColorStop(0.75, rgb(tabC(SKY_B, e)));
+  g.fillStyle = sg; g.fillRect(0, 0, w, h);
+  // 太陽
+  const sx = w * 0.2, sy = h * lerp(0.16, 0.62, e / 4);
+  let rg = g.createRadialGradient(sx, sy, 2, sx, sy, Math.max(w, h) * 0.5);
+  rg.addColorStop(0, 'rgba(255,250,225,0.95)'); rg.addColorStop(0.08, 'rgba(255,240,190,0.65)'); rg.addColorStop(1, 'rgba(255,220,160,0)');
+  g.fillStyle = rg; g.fillRect(0, 0, w, h);
+  // 雲
+  for (let k = 0; k < 3; k++) {
+    const cx = ((k * 0.37 + t * 0.006 * (1 + k * 0.3)) % 1.3 - 0.15) * w, cy = h * (0.12 + k * 0.1), cr = h * 0.07;
+    g.fillStyle = 'rgba(255,250,240,0.55)';
+    g.beginPath(); g.ellipse(cx, cy, cr * 2.2, cr * 0.8, 0, 0, TAU); g.ellipse(cx + cr, cy - cr * 0.4, cr * 1.2, cr * 0.8, 0, 0, TAU); g.fill();
+  }
+  // 遠くの丘と町
+  const hy = h * 0.66;
+  g.fillStyle = rgb(tabC(HILL_A, e));
+  g.beginPath(); g.moveTo(0, h);
+  for (let x = 0; x <= w + 8; x += 8) g.lineTo(x, hy - Math.sin(x / w * 5 + 1) * h * 0.04 - Math.sin(x / w * 2.2) * h * 0.05);
+  g.lineTo(w, h); g.closePath(); g.fill();
+  HOUSES.forEach((hs, k) => {
+    const a = clamp(hs[1] - e + 0.5, 0, 1); if (a <= 0) return;
+    const x = hs[0] * w, base = hy - Math.sin(x / w * 5 + 1) * h * 0.04 - Math.sin(x / w * 2.2) * h * 0.05 + 2, s = h * 0.055 * (0.8 + (k % 3) * 0.15);
+    g.save(); g.globalAlpha = a; g.translate(x, base + (1 - a) * s * 1.5); g.scale(1, a);
+    const wg = g.createLinearGradient(-s, 0, s, 0); wg.addColorStop(0, '#fffaf0'); wg.addColorStop(1, '#cfc4b0');
+    g.fillStyle = wg; g.fillRect(-s * 0.7, -s, s * 1.4, s);
+    const rf = g.createLinearGradient(0, -s * 1.7, 0, -s); rf.addColorStop(0, '#d0703a'); rf.addColorStop(1, '#8c4320');
+    g.fillStyle = rf; g.beginPath(); g.moveTo(-s * 0.9, -s); g.lineTo(0, -s * 1.7); g.lineTo(s * 0.9, -s); g.closePath(); g.fill();
+    g.fillStyle = 'rgba(60,150,150,0.9)'; g.fillRect(-s * 0.25, -s * 0.7, s * 0.3, s * 0.3);
+    g.restore();
+  });
+  g.fillStyle = rgb(tabC(HILL_B, e));
+  g.beginPath(); g.moveTo(0, h);
+  for (let x = 0; x <= w + 8; x += 8) g.lineTo(x, h * 0.8 - Math.sin(x / w * 3.3 + 2) * h * 0.035);
+  g.lineTo(w, h); g.closePath(); g.fill();
+  // 地面
+  const gy = L.tree.by - 3;
+  const gg = g.createLinearGradient(0, gy, 0, h);
+  gg.addColorStop(0, rgb(lit(tabC(GRASS, e), 0.1))); gg.addColorStop(1, rgb(lit(tabC(GRASS, e), -0.25)));
+  g.fillStyle = gg; g.beginPath(); g.moveTo(0, gy + 3); g.quadraticCurveTo(w * 0.5, gy - 5, w, gy + 3); g.lineTo(w, h); g.lineTo(0, h); g.closePath(); g.fill();
+  // 木
+  drawTree(g, tab(TREE_G, G.ev.tree));
+  // みらいの遊び場
+  if (playShown()) drawPlayground(g);
+  // 選んだ順の糸（過去）：木と絹の両方を選ぶと、つける場所の予告が見える
+  drawLinkPreview(g);
+}
+function drawWindow() {
+  const w = L.win;
+  const od = Math.min(L.dpr, Q.level ? 1 : 1.5);
+  if (!C.out || C.out.d !== od || Math.abs(C.out.w - Math.ceil(w.w)) > 1 || Math.abs(C.out.h - Math.ceil(w.h)) > 1) C.out = mkCanvas(w.w, w.h, od);
+  const g = C.out.g;
+  g.setTransform(od, 0, 0, od, 0, 0);
+  g.clearRect(0, 0, w.w, w.h);
+  drawOutside(g);
+  ctx.fillStyle = rgb(P.glassD); ctx.fillRect(w.x, w.y, w.w, w.h);
+  // 板ガラスのゆがみ：横帯ごとに少しずらして写す
+  const bands = Q.level ? 6 : 16, ch = C.out.c.height, cw = C.out.c.width, od2 = C.out.d;
+  for (let i = 0; i < bands; i++) {
+    const sy0 = Math.floor(ch * i / bands), sy1 = Math.min(ch, Math.ceil(ch * (i + 1) / bands) + 1);
+    const off = Math.sin(i * 1.7 + G.t * 0.4) * 1.3 + Math.sin(i * 0.63 + 1) * 1.0;
+    ctx.drawImage(C.out.c, 0, sy0, cw, sy1 - sy0, w.x + off, w.y + sy0 / od2, w.w, (sy1 - sy0) / od2);
+  }
+  ctx.fillStyle = 'rgba(28,120,112,0.17)'; ctx.fillRect(w.x, w.y, w.w, w.h);
+  ctx.drawImage(C.glass.c, w.x, w.y, w.w, w.h);
+  // 動く照り
+  if (!Q.level) {
+  const gx = w.x + ((G.t * 0.05) % 1.6 - 0.3) * w.w;
+  const lg = ctx.createLinearGradient(gx - w.w * 0.12, w.y, gx + w.w * 0.12, w.y + w.h);
+  lg.addColorStop(0, 'rgba(220,255,248,0)'); lg.addColorStop(0.5, 'rgba(220,255,248,0.10)'); lg.addColorStop(1, 'rgba(220,255,248,0)');
+  ctx.fillStyle = lg; ctx.fillRect(w.x, w.y, w.w, w.h);
+  }
+  if (G.rbFade > 0.01) {   // 虹のプリズム
+    ctx.save(); ctx.globalAlpha = G.rbFade * 0.5;
+    const rg = ctx.createLinearGradient(w.x + w.w * 0.3, w.y, w.x + w.w * 0.8, w.y + w.h);
+    ['#ff4040', '#ffa020', '#ffe040', '#40d070', '#30b0ff', '#6050ff', '#c050ff'].forEach((c, i) => rg.addColorStop(i / 6, c));
+    ctx.fillStyle = rg; ctx.globalCompositeOperation = 'screen'; ctx.fillRect(w.x, w.y, w.w, w.h);
+    ctx.restore();
+  }
+  blit(C.frame);
+}
+
+// ---------------------------------------------------------------------
+//  みらいの遊び場：枝のすべり台／絹のブランコ
+// ---------------------------------------------------------------------
+function futBranch() { const b = G.creation.b; return brCustom(b.i, b.p, 1, true); }
+function playShown() { const cr = G.creation; return !!(cr && cr.b && (cr.s ? G.rv.swing : G.rv.slide) > 0.01); }
+function swingGeo() {
+  const cr = G.creation, pts = futBranch(), n = cr.s.n;
+  const pa = cr.tf ? 0.84 : 0.24;   // 木→絹：枝先 ／ 絹→木：幹寄り
+  const twoRopes = n >= 2;
+  const a1 = polyAt(pts, twoRopes ? pa - 0.07 : pa), a2 = polyAt(pts, twoRopes ? pa + 0.07 : pa);
+  const px = (a1[0] + a2[0]) / 2, py = (a1[1] + a2[1]) / 2;
+  const rl = clamp((L.tree.by - py) * 0.66, 16, L.win.h * 0.6);
+  return { pts, a1, a2, px, py, rl, n, half: Math.max(6, Math.hypot(a2[0] - a1[0], a2[1] - a1[1]) / 2) };
+}
+function bow(g, x, y, s, col, rb, k) {
+  const c1 = rb ? hex(['#ff4f4f', '#ffb02e', '#ffe24a', '#46d17a', '#3ab8ff', '#7a5cff'][k % 6]) : col;
+  g.save(); g.translate(x, y);
+  const lg = g.createLinearGradient(-s, -s, s, s); lg.addColorStop(0, rgb(lit(c1, 0.35))); lg.addColorStop(1, rgb(lit(c1, -0.25)));
+  g.fillStyle = lg;
+  g.beginPath(); g.moveTo(0, 0); g.bezierCurveTo(-s * 1.2, -s * 0.9, -s * 1.3, s * 0.6, 0, 0); g.fill();
+  g.beginPath(); g.moveTo(0, 0); g.bezierCurveTo(s * 1.2, -s * 0.9, s * 1.3, s * 0.6, 0, 0); g.fill();
+  g.beginPath(); g.moveTo(-s * 0.1, 0); g.lineTo(-s * 0.55, s * 1.3); g.lineTo(-s * 0.2, s * 1.1); g.lineTo(0, 0); g.fill();
+  g.beginPath(); g.moveTo(s * 0.1, 0); g.lineTo(s * 0.6, s * 1.25); g.lineTo(s * 0.25, s * 1.1); g.lineTo(0, 0); g.fill();
+  g.fillStyle = rgb(lit(c1, 0.5)); g.beginPath(); g.arc(0, 0, s * 0.28, 0, TAU); g.fill();
+  g.fillStyle = 'rgba(255,255,255,0.55)'; g.beginPath(); g.ellipse(-s * 0.55, -s * 0.25, s * 0.3, s * 0.12, -0.5, 0, TAU); g.fill();
+  g.restore();
+}
+function silkLine(g, pts, wd, rb, k) {
+  g.save(); g.lineCap = 'round'; g.lineJoin = 'round';
+  g.strokeStyle = rb ? rgb(hex(['#ff6a5a', '#ffb43a', '#f7e04a', '#5ed38a', '#4ab8ff', '#8a6aff'][k % 6])) : rgb(lit(P.silkG, -0.15));
+  g.lineWidth = wd; g.beginPath(); smoothPath(g, pts); g.stroke();
+  g.strokeStyle = 'rgba(255,245,215,0.75)'; g.lineWidth = Math.max(0.6, wd * 0.35);
+  g.beginPath(); smoothPath(g, pts.map(p => [p[0] - wd * 0.2, p[1]])); g.stroke();
+  g.restore();
+}
+function drawPlayground(g) {
+  const cr = G.creation; if (!cr.b) return;
+  const rv = cr.s ? G.rv.swing : G.rv.slide;
+  const full = futBranch(), pts = full;
+  const tw = trunkW(1);
+  g.save(); g.globalAlpha = 0.5; g.strokeStyle = 'rgba(255,236,190,0.9)'; g.lineWidth = tw * 0.75; g.lineCap = 'round'; g.lineJoin = 'round';
+  g.beginPath(); smoothPath(g, pts); g.stroke(); g.restore();
+  drawBranch(g, pts, tw * 0.55, tw * 0.2, G.invite === 'play' ? 0.5 + 0.4 * Math.sin(G.t * 5) : 0);
+  const t = G.t;
+  for (let k = 1; k < pts.length; k += 2) leaf(g, pts[k][0], pts[k][1], L.tree.TH * 0.06, -1.9 + Math.sin(t + k) * 0.1 + (k % 4) * 0.7, k % 2);
+  const ra = inv(0.55, 1, rv);
+  if (ra <= 0) return;
+  g.save(); g.globalAlpha = ra;
+  if (cr.s) drawSwing(g); else drawSlide(g, full);
+  g.restore();
+}
+function drawSlide(g, pts) {
+  const tw = trunkW(1), off = tw * 0.35;
+  const rail = pts.map((p, k) => {
+    const a = pts[Math.max(0, k - 1)], b = pts[Math.min(pts.length - 1, k + 1)], an = Math.atan2(b[1] - a[1], b[0] - a[0]);
+    let nx = Math.sin(an), ny = -Math.cos(an); if (ny > 0) { nx = -nx; ny = -ny; }
+    return [p[0] + nx * off, p[1] + ny * off];
+  });
+  g.save(); g.lineCap = 'round'; g.lineJoin = 'round';
+  g.strokeStyle = rgb(lit(P.amber, -0.15)); g.lineWidth = Math.max(3, tw * 0.45); g.beginPath(); smoothPath(g, rail); g.stroke();
+  g.strokeStyle = rgb(lit(P.amberL, 0.1)); g.lineWidth = Math.max(1.2, tw * 0.16); g.beginPath(); smoothPath(g, rail.map(p => [p[0], p[1] - tw * 0.1])); g.stroke();
+  g.restore();
+  // 高いほうの端に小さな台
+  const a = pts[0], b = pts[pts.length - 1], hi = a[1] < b[1] ? a : b;
+  const pw = tw * 1.8;
+  g.fillStyle = rgb(P.amber); g.fillRect(hi[0] - pw / 2, hi[1] - tw * 0.7, pw, tw * 0.45);
+  g.fillStyle = rgb(P.amberL); g.fillRect(hi[0] - pw / 2, hi[1] - tw * 0.7, pw, tw * 0.12);
+  if (G.creation.b.e >= 3) {   // こども時代に選んだ枝は大きく育ち、小屋根がつく
+    g.fillStyle = rgb(lit(P.amber, -0.2));
+    g.beginPath(); g.moveTo(hi[0] - pw * 0.7, hi[1] - tw * 1.9); g.lineTo(hi[0], hi[1] - tw * 3.1); g.lineTo(hi[0] + pw * 0.7, hi[1] - tw * 1.9); g.closePath(); g.fill();
+    g.fillStyle = rgb(P.amber); g.fillRect(hi[0] - pw * 0.42, hi[1] - tw * 1.9, tw * 0.3, tw * 1.25); g.fillRect(hi[0] + pw * 0.42 - tw * 0.3, hi[1] - tw * 1.9, tw * 0.3, tw * 1.25);
+  }
+  const bl = G.ball;
+  if (bl) {
+    const r = Math.max(3, tw * 0.42);
+    g.save(); g.globalAlpha *= clamp(bl.life, 0, 1);
+    const rg = g.createRadialGradient(bl.x - r * 0.35, bl.y - r * 0.4, r * 0.1, bl.x, bl.y, r);
+    rg.addColorStop(0, '#ffe2a8'); rg.addColorStop(0.5, rgb(P.amberL)); rg.addColorStop(1, rgb(P.amberD));
+    g.fillStyle = rg; g.beginPath(); g.arc(bl.x, bl.y, r, 0, TAU); g.fill();
+    g.restore();
+  } else {
+    const r = Math.max(3, tw * 0.42);
+    const rg = g.createRadialGradient(hi[0] - r * 0.35, hi[1] - tw * 0.7 - r - r * 0.4, r * 0.1, hi[0], hi[1] - tw * 0.7 - r, r);
+    rg.addColorStop(0, '#ffe2a8'); rg.addColorStop(0.5, rgb(P.amberL)); rg.addColorStop(1, rgb(P.amberD));
+    g.fillStyle = rg; g.beginPath(); g.arc(hi[0], hi[1] - tw * 0.7 - r, r, 0, TAU); g.fill();
+  }
+}
+function drawSwing(g) {
+  const s = swingGeo(), cr = G.creation, rb = cr.s.rb, n = s.n;
+  const th = G.swing.th, len = s.rl * clamp(G.rv.swing * 1.4 - 0.4, 0.05, 1);
+  const sx = s.px + Math.sin(th) * len, sy = s.py + Math.cos(th) * len;
+  const ca = Math.cos(th), sa = Math.sin(th);
+  const half = n >= 2 ? (n >= 4 ? s.half * 1.25 : s.half) : 0;
+  const e1 = [sx - ca * half, sy + sa * half], e2 = [sx + ca * half, sy - sa * half];
+  const wd = Math.max(1.4, L.tree.TH * 0.012);
+  // 縄（絹）
+  const rope = (a, b, k) => { const mx = (a[0] + b[0]) / 2 + Math.sin(G.t * 3 + k) * 0.6, my = (a[1] + b[1]) / 2; silkLine(g, [[a[0], a[1]], [mx, my], [b[0], b[1]]], wd, rb, k); };
+  if (n >= 2) { rope(s.a1, e1, 0); rope(s.a2, e2, 1); } else rope(s.a1, [sx, sy], 0);
+  // 結び目（枝に掛かるところ）
+  [s.a1, s.a2].forEach(a => { g.fillStyle = rgb(P.silkG); g.beginPath(); g.arc(a[0], a[1], wd * 1.6, 0, TAU); g.fill(); });
+  // 座面
+  g.save(); g.translate(sx, sy); g.rotate(-th);
+  if (n === 1) {
+    const r = Math.max(4, s.rl * 0.09);
+    const rg = g.createRadialGradient(-r * 0.3, -r * 0.3, r * 0.1, 0, 0, r);
+    rg.addColorStop(0, rgb(P.silkL)); rg.addColorStop(0.5, rgb(P.silkG)); rg.addColorStop(1, rgb(P.silkGD));
+    g.fillStyle = rg; g.beginPath(); g.arc(0, r * 0.4, r, 0, TAU); g.fill();
+    g.strokeStyle = 'rgba(255,240,200,0.6)'; g.lineWidth = 1; g.beginPath(); g.arc(0, r * 0.4, r * 0.6, -2.6, -0.4); g.stroke();
+  } else {
+    const pw = half * 2 + wd * 4, ph = Math.max(3, s.rl * 0.06);
+    const pg = g.createLinearGradient(0, -ph / 2, 0, ph / 2); pg.addColorStop(0, rgb(P.amberL)); pg.addColorStop(1, rgb(P.amberD));
+    g.fillStyle = pg; g.fillRect(-pw / 2, -ph / 2, pw, ph);
+    if (n >= 4) {   // 背もたれつきの長いす
+      g.fillStyle = pg; g.fillRect(-pw / 2, -ph * 3.2, pw, ph * 0.8);
+      g.fillRect(-pw / 2, -ph * 3.2, ph * 0.6, ph * 2.8); g.fillRect(pw / 2 - ph * 0.6, -ph * 3.2, ph * 0.6, ph * 2.8);
+    }
+    if (n >= 5) {   // 絹の網
+      g.strokeStyle = rgb(P.silkP, 0.8); g.lineWidth = 1;
+      for (let k = -3; k <= 3; k++) { g.beginPath(); g.moveTo(k * pw / 7, ph / 2); g.quadraticCurveTo(k * pw / 7 + 2, ph * 2.4, k * pw / 9, ph * 3.5); g.stroke(); }
+    }
+  }
+  g.restore();
+  // リボン（輪の数だけ）
+  const bs = Math.max(4, s.rl * 0.08);
+  for (let k = 0; k < Math.min(n, 6); k++) {
+    let bx, by;
+    if (n === 1) { bx = lerp(s.a1[0], sx, 0.55); by = lerp(s.a1[1], sy, 0.55); }
+    else { const side = k % 2 === 0 ? [s.a1, e1] : [s.a2, e2], f = 0.25 + 0.5 * (Math.floor(k / 2) + 0.5) / Math.ceil(n / 2); bx = lerp(side[0][0], side[1][0], f); by = lerp(side[0][1], side[1][1], f); }
+    bow(g, bx + Math.sin(G.t * 4 + k) * G.swing.w * 2, by, bs, k % 2 ? P.silkP : P.silkG, rb, k);
+  }
+  if (rb) {   // 虹のガラス玉：揺れると光の点が散る
+    for (let k = 0; k < 5; k++) {
+      const f = 0.2 + k * 0.15, bx = lerp(s.a1[0], e1[0], f), by = lerp(s.a1[1], e1[1], f);
+      const rg = g.createRadialGradient(bx - 1, by - 1, 0.5, bx, by, wd * 2.2);
+      rg.addColorStop(0, '#ffffff'); rg.addColorStop(0.5, ['#ff7070', '#ffd040', '#60e080', '#50c0ff', '#a070ff'][k]); rg.addColorStop(1, 'rgba(80,200,220,0.2)');
+      g.fillStyle = rg; g.beginPath(); g.arc(bx, by, wd * 2.2, 0, TAU); g.fill();
+    }
+    const amp = Math.min(1, Math.abs(G.swing.w) * 0.6);
+    if (amp > 0.05) for (let k = 0; k < 7; k++) {
+      const a = G.t * 1.5 + k * 0.9, x = L.win.w * (0.5 + 0.42 * Math.sin(a + th * 3)), y = L.win.h * (0.3 + 0.25 * Math.cos(a * 1.3));
+      g.fillStyle = rgb(hex(['#ff4f4f', '#ffb02e', '#ffe24a', '#46d17a', '#3ab8ff', '#7a5cff', '#e05cff'][k]), 0.45 * amp);
+      g.beginPath(); g.arc(x, y, 3 + amp * 3, 0, TAU); g.fill();
+    }
+  }
+}
+function drawLinkPreview(g) {
+  if (G.era === 0 || G.phase === 'ff') return;
+  const gb = G.gifts.branch, gs = G.gifts.silk;
+  if (!gb || !gs || !AVAIL.tree[G.era]) return;
+  const gr = tab(TREE_G, G.ev.tree);
+  const pts = brCustom(gb.i, gb.p, gr, false);
+  const tf = G.gifts.tTree < G.gifts.tSilk;
+  const a = polyAt(pts, tf ? 0.84 : 0.24);
+  // 枝から下がる糸の輪（予告）
+  const len = clamp((L.tree.by - a[1]) * 0.55, 14, L.win.h * 0.45) * (0.9 + 0.1 * Math.sin(G.t * 2));
+  const rg = g.createRadialGradient(a[0], a[1], 1, a[0], a[1], 16);
+  rg.addColorStop(0, 'rgba(255,236,170,0.8)'); rg.addColorStop(1, 'rgba(255,236,170,0)');
+  g.fillStyle = rg; g.beginPath(); g.arc(a[0], a[1], 16, 0, TAU); g.fill();
+  silkLine(g, [[a[0], a[1]], [a[0] + Math.sin(G.t * 1.6) * 2.5, a[1] + len * 0.5], [a[0], a[1] + len]], Math.max(2, L.tree.TH * 0.018), gs.rb, 0);
+  bow(g, a[0], a[1] + len, Math.max(6, L.tree.TH * 0.05), P.silkP, gs.rb, 1);
+}
+
+// ---------------------------------------------------------------------
+//  カーテン（絹の輪の数で形が変わる）・窓辺の飾り台
+// ---------------------------------------------------------------------
+function curtainLoops() {
+  const cr = G.creation;
+  if (!cr || !cr.s || cr.b || G.rv.curtain <= 0.01) return 0;
+  return cr.s.n;
+}
+function drawCurtains() {
+  const w = L.win, f = w.f;
+  const n = curtainLoops(), rv = n ? G.rv.curtain : 0, rb = n && G.creation.s.rb;
+  const cw = w.ow * (L.portrait ? 0.105 : 0.16);
+  const top = w.oy - f * 0.4, bot = L.sillY + f * 0.3;
+  const wave = G.curtainWave;
+  // 棒
+  const rodY = top - 2;
+  const rg = ctx.createLinearGradient(0, rodY - 4, 0, rodY + 4); rg.addColorStop(0, rgb(P.amberL)); rg.addColorStop(1, rgb(P.amberD));
+  ctx.fillStyle = rg; ctx.fillRect(w.ox - cw * 0.5, rodY - 3, w.ow + cw, 6);
+  [w.ox - cw * 0.5, w.ox + w.ow + cw * 0.5].forEach(x => { ctx.beginPath(); ctx.arc(x, rodY, 6, 0, TAU); ctx.fill(); });
+  const tieY = lerp(top, bot, 0.62);
+  for (let side = 0; side < 2; side++) {
+    const dir = side === 0 ? 1 : -1;
+    const x0 = side === 0 ? w.ox - cw * 0.35 : w.ox + w.ow + cw * 0.35 - cw;
+    const tied = rv > 0 && (n >= 2 || side === 0);
+    const tk = tied ? easeOut(clamp(rv * 1.3, 0, 1)) : 0;
+    const sw = Math.sin(G.t * 1.1 + side) * 1.5 + wave * Math.sin(G.t * 6 + side) * 6;
+    // 布の形
+    const outer = side === 0 ? x0 : x0 + cw, inner = side === 0 ? x0 + cw : x0;
+    const innerTie = lerp(inner, outer + dir * cw * 0.25, tk * 0.55);
+    ctx.beginPath();
+    ctx.moveTo(outer, top);
+    ctx.lineTo(inner, top);
+    ctx.quadraticCurveTo(lerp(inner, innerTie, 0.6) + sw, lerp(top, tieY, 0.5), innerTie + sw * 0.5, tieY);
+    ctx.quadraticCurveTo(lerp(inner, innerTie, 0.3) + sw, lerp(tieY, bot, 0.6), lerp(inner, innerTie, 0.2) + sw * 1.2, bot);
+    ctx.lineTo(outer + sw * 0.3, bot);
+    ctx.closePath();
+    const cg = ctx.createLinearGradient(x0, 0, x0 + cw, 0);
+    const base = n && rb ? hex('#e07a8a') : P.silkP;
+    for (let k = 0; k <= 6; k++) cg.addColorStop(k / 6, rgb(lit(base, (k % 2 ? 0.18 : -0.12) + (side === 0 ? -k * 0.02 : k * 0.02))));
+    ctx.fillStyle = cg; ctx.fill();
+    // 絹のつや
+    ctx.save(); ctx.clip();
+    const sh = ctx.createLinearGradient(0, top, 0, bot); sh.addColorStop(0, 'rgba(255,240,215,0.25)'); sh.addColorStop(0.5, 'rgba(255,240,215,0.04)'); sh.addColorStop(1, 'rgba(80,20,10,0.2)');
+    ctx.fillStyle = sh; ctx.fillRect(x0 - cw, top, cw * 3, bot - top);
+    ctx.restore();
+    if (tk > 0.05) bow(ctx, innerTie + sw * 0.5 - dir * cw * 0.1, tieY, Math.max(9, L.S * 0.24) * tk, P.silkG, rb, side);
+  }
+  // 上の飾りの波（輪3つ以上）
+  if (n >= 3 && rv > 0) {
+    const sw = n >= 4 ? 2 : 1, k = easeOut(clamp(rv * 1.2 - 0.2, 0, 1));
+    for (let i = 0; i < sw; i++) {
+      const xa = lerp(w.ox, w.ox + w.ow, i / sw), xb = lerp(w.ox, w.ox + w.ow, (i + 1) / sw);
+      const dep = (w.oh * 0.14) * k;
+      ctx.beginPath(); ctx.moveTo(xa, top); ctx.quadraticCurveTo((xa + xb) / 2, top + dep * 2 + Math.sin(G.t * 1.3 + i) * 2, xb, top);
+      ctx.quadraticCurveTo((xa + xb) / 2, top + dep * 0.9, xa, top); ctx.closePath();
+      const sg = ctx.createLinearGradient(0, top, 0, top + dep * 2); sg.addColorStop(0, rgb(lit(P.silkG, 0.2))); sg.addColorStop(1, rgb(lit(P.silkG, -0.25)));
+      ctx.fillStyle = sg; ctx.fill();
+    }
+    const bows = n - 2;   // 残りの輪は上のリボンに
+    for (let i = 0; i < bows; i++) bow(ctx, lerp(w.ox, w.ox + w.ow, (i + 0.5) / bows), top + 3, Math.max(8, L.S * 0.2) * k, i % 2 ? P.silkP : P.silkG, rb, i + 2);
+  }
+}
+function drawStand() {
+  const cr = G.creation;
+  if (!cr || !cr.c) return;
+  const rv = G.rv.gold; if (rv <= 0.01) return;
+  const S = L.S, x = L.stand.x, y = L.sillTop + 1;
+  const hgt = S * 0.75 * easeOut(clamp(rv * 1.5, 0, 1)), wd = S * 0.95;
+  ctx.save();
+  const pg = ctx.createLinearGradient(x - wd / 2, 0, x + wd / 2, 0);
+  pg.addColorStop(0, rgb(lit(P.amber, -0.2))); pg.addColorStop(0.4, rgb(lit(P.amber, 0.15))); pg.addColorStop(1, rgb(lit(P.amber, -0.35)));
+  ctx.fillStyle = pg;
+  ctx.fillRect(x - wd / 2, y - hgt * 0.28, wd, hgt * 0.28);
+  ctx.fillRect(x - wd * 0.28, y - hgt * 0.85, wd * 0.56, hgt * 0.6);
+  ctx.fillRect(x - wd * 0.42, y - hgt, wd * 0.84, hgt * 0.17);
+  ctx.fillStyle = 'rgba(255,230,170,0.6)'; ctx.fillRect(x - wd * 0.42, y - hgt, wd * 0.84, 1.2); ctx.fillRect(x - wd / 2, y - hgt * 0.28, wd, 1);
+  ctx.restore();
+  L.standTop = y - hgt;
+}
+
+// ---------------------------------------------------------------------
+//  机の上（生地・焼き菓子・陶器）、かご（編み物・絹の巻き玉）、昔の棚
+// ---------------------------------------------------------------------
+function glowAt(x, y, r, k, col) {
+  if (k <= 0.01) return;
+  const c = col || [255, 214, 120];
+  const g = ctx.createRadialGradient(x, y, r * 0.1, x, y, r);
+  g.addColorStop(0, rgb(c, 0.7 * k)); g.addColorStop(0.45, rgb(c, 0.32 * k)); g.addColorStop(1, rgb(c, 0));
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
+}
+function inviteK(id) { return G.invite === id ? 0.65 + 0.35 * Math.sin(G.t * 4.2) : 0; }
+function inviteHop(id) { return G.invite === id ? -Math.abs(Math.sin(G.t * 3.2)) * 0.12 : 0; }
+function wig(id) { const w = G.wiggle[id]; return w ? Math.sin(w.t * 38) * Math.exp(-w.t * 7) * 0.07 : 0; }
+
+// ----- 生地の形 -----
+function newDough() { const r = mulberry(17 + G.cyc * 13), o = []; for (let k = 0; k < 24; k++) o.push(0.95 + r() * 0.07); return { o, d: [] }; }
+function shapePts(x, y, R, o, sx, sy, persp) {
+  const pts = [];
+  for (let k = 0; k < 24; k++) { const a = k / 24 * TAU; pts.push([x + Math.cos(a) * R * o[k] * sx, y + Math.sin(a) * R * o[k] * sy * persp]); }
+  return pts;
+}
+function closedSmooth(g, pts) {
+  const n = pts.length;
+  g.moveTo((pts[n - 1][0] + pts[0][0]) / 2, (pts[n - 1][1] + pts[0][1]) / 2);
+  for (let k = 0; k < n; k++) { const p = pts[k], q = pts[(k + 1) % n]; g.quadraticCurveTo(p[0], p[1], (p[0] + q[0]) / 2, (p[1] + q[1]) / 2); }
+  g.closePath();
+}
+const PERSP = 0.6;
+// 生地（やわらかい・つやなし）／焼き菓子（こんがり）を同じ形で描く
+function drawLump(x, y, R, sh, baked, sq, alpha) {
+  if (alpha <= 0.01) return;
+  const sx = 1 + sq * 0.18, sy = 1 - sq * 0.3;
+  const thick = R * (baked ? 0.16 : 0.3) * sy;
+  ctx.save(); ctx.globalAlpha = alpha;
+  // 影
+  ctx.fillStyle = 'rgba(50,25,8,0.28)';
+  ctx.beginPath(); closedSmooth(ctx, shapePts(x + R * 0.06, y + R * 0.1, R * 1.04, sh.o, sx, sy, PERSP)); ctx.fill();
+  // 側面
+  const side = shapePts(x, y, R, sh.o, sx, sy, PERSP);
+  ctx.beginPath(); closedSmooth(ctx, side);
+  ctx.fillStyle = baked ? rgb(P.cookieD) : rgb(P.doughD); ctx.fill();
+  // 上面
+  const top = shapePts(x, y - thick, R, sh.o, sx, sy, PERSP);
+  ctx.beginPath(); closedSmooth(ctx, top);
+  const tg = ctx.createRadialGradient(x - R * 0.3, y - thick - R * 0.25, R * 0.1, x, y - thick, R * 1.1);
+  if (baked) { tg.addColorStop(0, rgb(lit(P.cookie, 0.35))); tg.addColorStop(0.6, rgb(P.cookie)); tg.addColorStop(1, rgb(lit(P.cookieD, 0.1))); }
+  else { tg.addColorStop(0, rgb(lit(P.dough, 0.35))); tg.addColorStop(0.7, rgb(P.dough)); tg.addColorStop(1, rgb(lit(P.doughD, 0.25))); }
+  ctx.fillStyle = tg; ctx.fill();
+  ctx.save(); ctx.clip();
+  // くぼみ
+  for (const d of sh.d) {
+    const dx = x + d[0] * R * sx, dy = y - thick + d[1] * R * sy * PERSP, rr = d[2] * R;
+    ctx.fillStyle = baked ? 'rgba(90,40,10,0.45)' : 'rgba(130,90,50,0.35)';
+    ctx.beginPath(); ctx.ellipse(dx, dy, rr * sx, rr * PERSP * sy, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = baked ? 'rgba(255,200,120,0.4)' : 'rgba(255,245,220,0.55)';
+    ctx.beginPath(); ctx.ellipse(dx + rr * 0.25, dy + rr * 0.2 * PERSP, rr * 0.72 * sx, rr * 0.5 * PERSP * sy, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = baked ? rgb(lit(P.cookie, 0.05)) : rgb(lit(P.dough, 0.05));
+    ctx.beginPath(); ctx.ellipse(dx + rr * 0.12, dy + rr * 0.1 * PERSP, rr * 0.62 * sx, rr * 0.42 * PERSP * sy, 0, 0, TAU); ctx.fill();
+  }
+  // 粉／砂糖のきらめき
+  const r = mulberry(5);
+  for (let k = 0; k < 14; k++) {
+    const a = r() * TAU, d = Math.sqrt(r()) * 0.85;
+    ctx.fillStyle = baked ? 'rgba(255,245,210,' + (0.35 + 0.35 * Math.sin(G.t * 3 + k)).toFixed(3) + ')' : 'rgba(255,255,250,0.55)';
+    ctx.beginPath(); ctx.arc(x + Math.cos(a) * d * R * sx, y - thick + Math.sin(a) * d * R * PERSP * sy, baked ? 1.1 : 0.9, 0, TAU); ctx.fill();
+  }
+  ctx.restore();
+  // ふちの照り
+  ctx.strokeStyle = baked ? 'rgba(255,215,150,0.35)' : 'rgba(255,250,235,0.6)'; ctx.lineWidth = 1.2;
+  ctx.beginPath(); closedSmooth(ctx, top.map(p => [p[0] - 0.5, p[1] - 0.8])); ctx.stroke();
+  ctx.restore();
+}
+function drawPlate(x, y, R, alpha) {
+  if (alpha <= 0.01) return;
+  ctx.save(); ctx.globalAlpha = alpha;
+  ctx.fillStyle = 'rgba(40,20,5,0.25)'; ctx.beginPath(); ctx.ellipse(x + R * 0.05, y + R * 0.12, R * 1.35, R * 1.35 * PERSP, 0, 0, TAU); ctx.fill();
+  let g = ctx.createRadialGradient(x - R * 0.5, y - R * 0.4, R * 0.1, x, y, R * 1.4);
+  g.addColorStop(0, rgb(P.cerL)); g.addColorStop(0.7, rgb(P.cer)); g.addColorStop(1, rgb(P.cerD));
+  ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(x, y, R * 1.32, R * 1.32 * PERSP, 0, 0, TAU); ctx.fill();
+  g = ctx.createRadialGradient(x + R * 0.2, y + R * 0.1, R * 0.1, x, y, R);
+  g.addColorStop(0, rgb(lit(P.cer, -0.02))); g.addColorStop(1, rgb(lit(P.cerD, 0.2)));
+  ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(x, y + R * 0.03, R * 0.95, R * 0.95 * PERSP, 0, 0, TAU); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.ellipse(x, y, R * 1.25, R * 1.25 * PERSP, 0, 3.6, 5.2); ctx.stroke();
+  ctx.strokeStyle = 'rgba(47,143,136,0.55)'; ctx.lineWidth = 1.2;   // 青緑の釉の線
+  ctx.beginPath(); ctx.ellipse(x, y, R * 1.12, R * 1.12 * PERSP, 0, 0, TAU); ctx.stroke();
+  ctx.restore();
+}
+function drawBoard(x, y, R, alpha) {
+  if (alpha <= 0.01) return;
+  ctx.save(); ctx.globalAlpha = alpha;
+  ctx.fillStyle = 'rgba(40,20,5,0.3)'; ctx.beginPath(); ctx.ellipse(x + R * 0.06, y + R * 0.14, R * 1.38, R * 1.38 * PERSP, 0, 0, TAU); ctx.fill();
+  ctx.fillStyle = rgb(lit(P.amber, -0.25)); ctx.beginPath(); ctx.ellipse(x, y + R * 0.08, R * 1.35, R * 1.35 * PERSP, 0, 0, TAU); ctx.fill();
+  const g = ctx.createLinearGradient(x - R, y - R, x + R, y + R);
+  g.addColorStop(0, rgb(lit(P.amberL, 0.1))); g.addColorStop(1, rgb(P.amber));
+  ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(x, y, R * 1.35, R * 1.35 * PERSP, 0, 0, TAU); ctx.fill();
+  ctx.save(); ctx.clip(); grain(ctx, x - R * 1.4, y - R, R * 2.8, R * 2, P.amber, false, 8, 3, 0.8); ctx.restore();
+  ctx.restore();
+}
+// 焼き菓子（いま）：選んだ生地の形、なければ丸いクッキー
+function drawSweets() {
+  const D = L.dough, R = D.r, e = G.ev.sweets;
+  let kPast = sm(inv(0.3, 0.7, e)), kNow = 1 - kPast;
+  if (G.ffDough) {   // 早送り中：生地は道すじを飛んでいる。板→皿へ入れかわる
+    drawBoard(D.x, D.y, R, 1 - G.ffDoughK);
+    drawPlate(D.x, D.y, R, G.ffDoughK);
+    return;
+  }
+  const hop = inviteHop('dough') + wig('dough');
+  if (kNow > 0.01) {
+    drawPlate(D.x, D.y, R, kNow);
+    const cr = G.creation;
+    const ch = G.cookieHop < 1 ? Math.sin(G.cookieHop * Math.PI) * R * 0.25 : 0;
+    if (cr && cr.d && G.rv.cookie > 0.01) {
+      const rv = G.rv.cookie;
+      glowAt(D.x, D.y - R * 0.2, R * 1.8, inviteK('cookie'));
+      drawLump(D.x - R * 0.7, D.y - R * 0.15, R * 0.45, cr.d, true, 0, kNow * rv);
+      drawLump(D.x + R * 0.72, D.y - R * 0.12, R * 0.45, cr.d, true, 0, kNow * rv);
+      drawLump(D.x, D.y + R * 0.05 - ch, R * 0.9 * (0.6 + 0.4 * rv), cr.d, true, 0, kNow * rv);
+    } else {
+      const round = { o: new Array(24).fill(1), d: [[0, 0, 0.22]] };
+      glowAt(D.x, D.y - R * 0.2, R * 1.6, inviteK('cookie'));
+      drawLump(D.x - R * 0.42, D.y - R * 0.1, R * 0.5, round, true, 0, kNow);
+      drawLump(D.x + R * 0.45, D.y - R * 0.05, R * 0.5, round, true, 0, kNow);
+      drawLump(D.x, D.y + R * 0.18 - ch, R * 0.5, round, true, 0, kNow);
+    }
+  }
+  if (kPast > 0.01) {
+    const pop = 1 + Math.sin(kPast * Math.PI) * 0.12;
+    drawBoard(D.x, D.y, R, kPast);
+    glowAt(D.x, D.y - R * 0.2, R * 1.9, inviteK('dough'));
+    if (!G.dough) G.dough = newDough();
+    const sq = G.doughSqT < 1 ? Math.sin(G.doughSqT * Math.PI) * G.doughSq : 0;
+    ctx.save(); ctx.translate(D.x, D.y); ctx.scale(pop, pop); ctx.translate(-D.x, -D.y + hop * R * 2);
+    drawLump(D.x, D.y, R * 0.92, G.dough, false, sq, kPast);
+    ctx.restore();
+  }
+}
+
+// ----- 陶器のコップ -----
+function cupPath(g, x, y, s) {
+  g.moveTo(x - s * 0.46, y - s * 1.12);
+  g.lineTo(x + s * 0.46, y - s * 1.12);
+  g.quadraticCurveTo(x + s * 0.44, y - s * 0.3, x + s * 0.36, y - s * 0.04);
+  g.quadraticCurveTo(x, y + s * 0.08, x - s * 0.36, y - s * 0.04);
+  g.quadraticCurveTo(x - s * 0.44, y - s * 0.3, x - s * 0.46, y - s * 1.12);
+  g.closePath();
+}
+const SEAMS = [
+  [[-0.46, -0.9], [-0.2, -0.75], [-0.05, -0.85], [0.18, -0.6], [0.4, -0.66]],
+  [[-0.1, -1.12], [-0.02, -0.8], [0.1, -0.55], [0.02, -0.3], [0.12, -0.05]],
+  [[-0.44, -0.4], [-0.22, -0.46], [-0.12, -0.28], [0.1, -0.22]],
+  [[0.3, -1.12], [0.24, -0.94], [0.36, -0.78], [0.3, -0.6]],
+  [[-0.38, -0.15], [-0.26, -0.3], [-0.3, -0.6], [-0.42, -0.7]],
+];
+function drawCupAt(x, y, s, kind, rot, shine, seams, alpha) {
+  if (alpha <= 0.01) return;
+  ctx.save(); ctx.globalAlpha = alpha;
+  ctx.translate(x, y); ctx.rotate(rot || 0); ctx.translate(-x, -y);
+  ctx.fillStyle = 'rgba(40,20,5,0.28)'; ctx.beginPath(); ctx.ellipse(x + s * 0.08, y + s * 0.02, s * 0.55, s * 0.13, 0, 0, TAU); ctx.fill();
+  // 取っ手
+  ctx.strokeStyle = rgb(kind === 'old' ? lit(P.cerD, 0.1) : P.cerD); ctx.lineWidth = s * 0.15;
+  ctx.beginPath(); ctx.ellipse(x + s * 0.5, y - s * 0.62, s * 0.22, s * 0.27, 0, -1.4, 1.4); ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,255,255,0.75)'; ctx.lineWidth = s * 0.05;
+  ctx.beginPath(); ctx.ellipse(x + s * 0.5, y - s * 0.64, s * 0.22, s * 0.27, 0, -1.2, 0.2); ctx.stroke();
+  // 胴
+  ctx.beginPath(); cupPath(ctx, x, y, s);
+  const base = kind === 'old' ? hex('#eee6d4') : P.cer;
+  const g = ctx.createLinearGradient(x - s * 0.5, 0, x + s * 0.5, 0);
+  g.addColorStop(0, rgb(lit(base, -0.18))); g.addColorStop(0.28, rgb(lit(base, 0.5))); g.addColorStop(0.5, rgb(base)); g.addColorStop(1, rgb(lit(P.cerD, -0.12)));
+  ctx.fillStyle = g; ctx.fill();
+  ctx.save(); ctx.clip();
+  if (kind === 'old') {   // 貫入（細かなひび模様）
+    const r = mulberry(31); ctx.strokeStyle = 'rgba(120,100,80,0.35)'; ctx.lineWidth = 0.6;
+    for (let k = 0; k < 16; k++) { let px = x + (r() - 0.5) * s, py = y - r() * s * 1.1; ctx.beginPath(); ctx.moveTo(px, py); for (let j = 0; j < 3; j++) { px += (r() - 0.5) * s * 0.3; py += (r() - 0.5) * s * 0.3; ctx.lineTo(px, py); } ctx.stroke(); }
+  }
+  // 青緑の釉の帯
+  ctx.fillStyle = rgb(P.glass, kind === 'old' ? 0.35 : 0.55); ctx.fillRect(x - s * 0.6, y - s * 1.0, s * 1.2, s * 0.08);
+  // 金継ぎ
+  if (seams > 0) {
+    for (let k = 0; k < Math.min(seams, SEAMS.length); k++) {
+      const pts = SEAMS[k].map(p => [x + p[0] * s, y + p[1] * s]);
+      ctx.strokeStyle = 'rgba(255,215,110,0.35)'; ctx.lineWidth = s * 0.12; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.beginPath(); smoothPath(ctx, pts); ctx.stroke();
+      const sg = ctx.createLinearGradient(pts[0][0], pts[0][1], pts[pts.length - 1][0], pts[pts.length - 1][1]);
+      sg.addColorStop(0, rgb(P.goldD)); sg.addColorStop(0.5, rgb(P.goldL)); sg.addColorStop(1, rgb(P.gold));
+      ctx.strokeStyle = sg; ctx.lineWidth = Math.max(1.4, s * 0.05);
+      ctx.beginPath(); smoothPath(ctx, pts); ctx.stroke();
+    }
+  }
+  // 釉の照り
+  ctx.fillStyle = 'rgba(255,255,255,0.75)';
+  ctx.beginPath(); ctx.ellipse(x - s * 0.22, y - s * 0.62, s * 0.06, s * 0.36, 0.05, 0, TAU); ctx.fill();
+  if (shine < 1) {   // 鳴らすと光が走る
+    const sx = x - s * 0.6 + shine * s * 1.4;
+    const lg = ctx.createLinearGradient(sx - s * 0.2, 0, sx + s * 0.2, 0);
+    lg.addColorStop(0, 'rgba(255,255,255,0)'); lg.addColorStop(0.5, seams ? 'rgba(255,236,160,0.85)' : 'rgba(255,255,255,0.8)'); lg.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = lg; ctx.fillRect(x - s, y - s * 1.3, s * 2, s * 1.5);
+  }
+  ctx.restore();
+  // 口
+  ctx.fillStyle = rgb(lit(P.cerD, -0.15)); ctx.beginPath(); ctx.ellipse(x, y - s * 1.12, s * 0.46, s * 0.1, 0, 0, TAU); ctx.fill();
+  ctx.fillStyle = rgb(lit(P.cerD, -0.35)); ctx.beginPath(); ctx.ellipse(x, y - s * 1.1, s * 0.4, s * 0.075, 0, 0, TAU); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.ellipse(x, y - s * 1.12, s * 0.46, s * 0.1, 0, Math.PI * 1.05, Math.PI * 1.9); ctx.stroke();
+  ctx.restore();
+}
+function drawCup() {
+  const c = L.cup, e = G.ev.cup;
+  if (G.ffCup) return;
+  const cr = G.creation;
+  const onStand = cr && cr.c && G.cupHome === 'stand';
+  if (onStand) {   // みらい：金の継ぎ目の器が窓辺の台へ
+    const top = L.standTop || L.sillTop;
+    glowAt(L.stand.x, top - c.s * 0.6, c.s * 1.6, inviteK('goldcup'));
+    drawCupAt(L.stand.x, top, c.s, 'new', G.cupWob, G.goldShine, cr.c.s, G.rv.gold);
+    return;
+  }
+  const kind = e > 0.5 ? 'new' : 'old';
+  const hop = inviteHop('cup');
+  glowAt(c.x, c.y - c.s * 0.55, c.s * 1.5, inviteK('cup'));
+  if (G.gifts.cup && G.era > 0) glowAt(c.x, c.y - c.s * 0.5, c.s * 1.25, 0.35 + 0.15 * Math.sin(G.t * 3), [120, 230, 220]);
+  drawCupAt(c.x, c.y + hop * c.s, c.s, kind, G.cupWob + wig('cup'), G.cupShine, 0, 1);
+}
+
+// ----- かご：編み物 → ほどけた絹の巻き玉 -----
+function knitPatch(x, y, w, h, rows, seed) {
+  ctx.save(); ctx.beginPath(); ctx.ellipse(x, y, w, h, 0, 0, TAU); ctx.clip();
+  const g = ctx.createLinearGradient(x, y - h, x, y + h);
+  g.addColorStop(0, rgb(lit(P.silkP, 0.15))); g.addColorStop(1, rgb(lit(P.silkPD, 0.05)));
+  ctx.fillStyle = g; ctx.fillRect(x - w, y - h, w * 2, h * 2);
+  const rh = (h * 2) / rows;
+  for (let r = 0; r < rows; r++) {
+    const yy = y - h + r * rh;
+    ctx.strokeStyle = r % 3 === 1 ? rgb(lit(P.silkG, 0.1), 0.9) : rgb(lit(P.silkP, 0.3), 0.75); ctx.lineWidth = Math.max(0.8, rh * 0.28);
+    for (let xx = x - w; xx < x + w; xx += rh * 0.9) {
+      ctx.beginPath(); ctx.moveTo(xx, yy); ctx.lineTo(xx + rh * 0.45, yy + rh * 0.8); ctx.lineTo(xx + rh * 0.9, yy); ctx.stroke();
+    }
+  }
+  const sh = ctx.createRadialGradient(x - w * 0.3, y - h * 0.4, 1, x, y, Math.max(w, h));
+  sh.addColorStop(0, 'rgba(255,240,215,0.3)'); sh.addColorStop(1, 'rgba(60,20,10,0.25)');
+  ctx.fillStyle = sh; ctx.fillRect(x - w, y - h, w * 2, h * 2);
+  ctx.restore();
+}
+function drawSilkBall(x, y, r, spin, alpha) {
+  if (alpha <= 0.01) return;
+  ctx.save(); ctx.globalAlpha = alpha;
+  ctx.fillStyle = 'rgba(40,15,5,0.3)'; ctx.beginPath(); ctx.ellipse(x + r * 0.1, y + r * 0.85, r * 0.95, r * 0.25, 0, 0, TAU); ctx.fill();
+  const g = ctx.createRadialGradient(x - r * 0.35, y - r * 0.4, r * 0.1, x, y, r);
+  g.addColorStop(0, rgb(P.silkL)); g.addColorStop(0.45, rgb(lit(P.silkG, 0.15))); g.addColorStop(1, rgb(P.silkGD));
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
+  ctx.save(); ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.clip();
+  for (let k = 0; k < 11; k++) {   // 巻いた糸
+    const a = k * 0.57 + spin;
+    ctx.strokeStyle = k % 3 === 0 ? rgb(lit(P.silkP, 0.1), 0.7) : rgb(lit(P.silkG, -0.25), 0.5); ctx.lineWidth = Math.max(0.8, r * 0.06);
+    ctx.beginPath(); ctx.ellipse(x, y, r * 0.98, r * (0.2 + (k % 4) * 0.2), a, 0, TAU); ctx.stroke();
+  }
+  ctx.fillStyle = 'rgba(255,250,230,0.5)'; ctx.beginPath(); ctx.ellipse(x - r * 0.35, y - r * 0.45, r * 0.32, r * 0.14, -0.6, 0, TAU); ctx.fill();
+  ctx.restore();
+  ctx.restore();
+}
+function loopPos(k, n) {   // 巻き玉から伸びる輪の鎖
+  const b = L.ball, dir = L.portrait ? 1 : -1;   // 部屋のまんなかへ向かって輪が並ぶ
+  const a = -Math.PI / 2 - dir * (0.4 + k * 0.24);
+  const d = b.r * (1.5 + k * 0.58);
+  return [b.x + Math.cos(a) * d * 1.05, b.y + Math.sin(a) * d * 0.95 + b.r * 0.2];
+}
+function drawLoops(n, rb, alpha) {
+  if (n <= 0 || alpha <= 0.01) return;
+  const b = L.ball, rl = b.r * 0.42;
+  ctx.save(); ctx.globalAlpha = alpha; ctx.lineCap = 'round';
+  let prev = [b.x, b.y - b.r * 0.6];
+  for (let k = 0; k < n; k++) {
+    const p = loopPos(k, n), sw = Math.sin(G.t * 2 + k) * rl * 0.15;
+    const col = rb ? hex(['#ff5a5a', '#ffae32', '#f4dc3c', '#4ed07e', '#40b6ff', '#8a64ff'][k % 6]) : (k % 2 ? P.silkP : lit(P.silkG, -0.05));
+    ctx.strokeStyle = rgb(col); ctx.lineWidth = Math.max(1.4, b.r * 0.1);
+    ctx.beginPath(); ctx.moveTo(prev[0], prev[1]); ctx.quadraticCurveTo((prev[0] + p[0]) / 2 + sw, (prev[1] + p[1]) / 2 + rl, p[0], p[1] + rl * 0.8); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(p[0] + sw, p[1], rl, rl * 1.15, 0.3, 0, TAU); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,245,215,0.7)'; ctx.lineWidth = Math.max(0.6, b.r * 0.035);
+    ctx.beginPath(); ctx.ellipse(p[0] + sw - 0.6, p[1] - 0.6, rl, rl * 1.15, 0.3, 3.4, 5.4); ctx.stroke();
+    prev = [p[0], p[1] + rl * 0.8];
+  }
+  ctx.restore();
+}
+function drawBasket() {
+  const B = L.basket, b = L.ball, e = G.ev.knit;
+  blit(C.basketBack);
+  const kFin = 1 - sm(inv(0.25, 0.75, e)), kHalf = sm(inv(0.25, 0.75, e)) * (1 - sm(inv(1.25, 1.75, e))), kBall = sm(inv(1.25, 1.75, e));
+  const hop = inviteHop('silk') * b.r * 2;
+  if (kFin > 0.01) {   // 編み上がった肩かけ
+    ctx.save(); ctx.globalAlpha = kFin;
+    knitPatch(B.x, B.y - B.h * 0.12, B.w * 0.42, B.h * 0.42, 7, 1);
+    knitPatch(B.x + B.w * 0.08, B.y - B.h * 0.32, B.w * 0.32, B.h * 0.3, 5, 2);
+    ctx.restore();
+  }
+  if (kHalf > 0.01) {   // 編みかけと針
+    ctx.save(); ctx.globalAlpha = kHalf;
+    knitPatch(B.x + B.w * 0.12, B.y - B.h * 0.1, B.w * 0.22, B.h * 0.28, 4, 3);
+    ctx.strokeStyle = rgb(P.amberD); ctx.lineWidth = Math.max(1.5, b.r * 0.1); ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(B.x - B.w * 0.05, B.y - B.h * 0.55); ctx.lineTo(B.x + B.w * 0.32, B.y - B.h * 0.05); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(B.x + B.w * 0.36, B.y - B.h * 0.6); ctx.lineTo(B.x + B.w * 0.02, B.y - B.h * 0.02); ctx.stroke();
+    drawSilkBall(b.x - b.r * 0.2, b.y + b.r * 0.15, b.r * 0.75, 0, 1);
+    ctx.restore();
+  }
+  if (kBall > 0.01 && !G.ffSilk) {
+    const n = G.gifts.silk ? G.gifts.silk.n : 0;
+    glowAt(b.x, b.y + hop, b.r * 2.2, inviteK('silk'));
+    drawLoops(n, G.gifts.silk && G.gifts.silk.rb, kBall);
+    drawSilkBall(b.x, b.y + hop, b.r, G.ballSpin, kBall);
+    // ほどけた糸のはし
+    ctx.save(); ctx.globalAlpha = kBall; ctx.strokeStyle = rgb(P.silkP); ctx.lineWidth = Math.max(1.2, b.r * 0.08); ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(b.x + b.r * 0.7, b.y + b.r * 0.4 + hop);
+    ctx.bezierCurveTo(b.x + b.r * 1.5, b.y + b.r * 0.2, b.x + b.r * 1.2, b.y + b.r * 1.2, b.x + b.r * 1.9 + Math.sin(G.t * 1.5) * 2, b.y + b.r * 0.9);
+    ctx.stroke(); ctx.restore();
+    // ゆびに向かって伸びる輪
+    const la = G.loopAnim;
+    if (la) {
+      const k = clamp(la.t / 0.18, 0, 1), fx = lerp(b.x, la.x, k), fy = lerp(b.y, la.y, k), rl = b.r * 0.55;
+      ctx.save(); ctx.strokeStyle = rgb(la.rb ? hex('#ff8a5a') : P.silkP); ctx.lineWidth = Math.max(1.4, b.r * 0.1); ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(b.x, b.y - b.r * 0.5); ctx.quadraticCurveTo((b.x + fx) / 2, Math.max(b.y, fy) + b.r, fx, fy + rl); ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(fx, fy, rl, rl * 1.2, 0.2, 0, TAU); ctx.stroke();
+      ctx.restore();
+    }
+  }
+  blit(C.basketFront);
+}
+
+// ----- 昔の棚：前の周の材料 -----
+function slotOf(k) { return L.slots[{ b: 0, s: 1, d: 2, c: 3 }[k]]; }
+function shelfShown(k) { return !!G.shelf[k] && !G.gifts.used[k] && G.ev.shelf > 0.5 && G.phase !== 'ff'; }
+function drawTwig(x, y, sz, rel, alpha) {
+  // 保存した枝の形を小さく
+  let minx = 0, maxx = 0, miny = 0, maxy = 0;
+  rel.forEach(p => { minx = Math.min(minx, p[0]); maxx = Math.max(maxx, p[0]); miny = Math.min(miny, p[1]); maxy = Math.max(maxy, p[1]); });
+  const k = sz / Math.max(0.05, maxx - minx, maxy - miny);
+  const ox = x - (minx + maxx) / 2 * k, oy = y - sz * 0.35 - (miny + maxy) / 2 * k;
+  const pts = rel.map(p => [ox + p[0] * k, oy + p[1] * k]);
+  ctx.save(); ctx.globalAlpha = alpha;
+  ctx.beginPath(); taperPath(ctx, pts, Math.max(3, sz * 0.14), Math.max(1.5, sz * 0.05)); ctx.fillStyle = rgb(P.bark); ctx.fill();
+  ctx.strokeStyle = rgb(lit(P.bark, 0.4), 0.6); ctx.lineWidth = 1; ctx.beginPath(); smoothPath(ctx, pts.map(p => [p[0] - 0.8, p[1] - 0.8])); ctx.stroke();
+  const tip = pts[pts.length - 1]; leaf(ctx, tip[0], tip[1], sz * 0.3, -1.2, 1);
+  ctx.restore();
+}
+function drawSkein(x, y, sz, n, rb, alpha) {
+  ctx.save(); ctx.globalAlpha = alpha; ctx.lineCap = 'round';
+  for (let k = 0; k < n; k++) {
+    const a = (k / Math.max(1, n)) * TAU * 0.5 - 0.8;
+    const col = rb ? hex(['#ff5a5a', '#ffae32', '#f4dc3c', '#4ed07e', '#40b6ff', '#8a64ff'][k % 6]) : (k % 2 ? P.silkP : P.silkG);
+    ctx.strokeStyle = rgb(col); ctx.lineWidth = Math.max(1.5, sz * 0.08);
+    ctx.beginPath(); ctx.ellipse(x + Math.cos(a) * sz * 0.18, y - sz * 0.38 + Math.sin(a) * sz * 0.1, sz * 0.36, sz * 0.26, a * 0.5, 0, TAU); ctx.stroke();
+  }
+  ctx.strokeStyle = 'rgba(255,245,215,0.6)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.ellipse(x - 1, y - sz * 0.4, sz * 0.36, sz * 0.26, 0, 3.5, 5.2); ctx.stroke();
+  ctx.restore();
+}
+function drawMold(x, y, sz, d, alpha) {
+  ctx.save(); ctx.globalAlpha = alpha;
+  const pts = shapePts(x, y - sz * 0.32, sz * 0.48, d.o, 1, 1, 0.8);
+  ctx.beginPath(); closedSmooth(ctx, pts); ctx.lineWidth = Math.max(3, sz * 0.13);
+  ctx.strokeStyle = rgb(P.cerD); ctx.stroke();
+  ctx.lineWidth = Math.max(1.2, sz * 0.05); ctx.strokeStyle = rgb(P.cerL); ctx.beginPath(); closedSmooth(ctx, pts.map(p => [p[0] - 0.8, p[1] - 0.8])); ctx.stroke();
+  d.d.slice(0, 4).forEach(q => { ctx.fillStyle = rgb(P.cer); ctx.beginPath(); ctx.arc(x + q[0] * sz * 0.48, y - sz * 0.32 + q[1] * sz * 0.38, Math.max(1.5, q[2] * sz * 0.35), 0, TAU); ctx.fill(); });
+  ctx.restore();
+}
+function drawGoldDish(x, y, sz, alpha) {
+  ctx.save(); ctx.globalAlpha = alpha;
+  const g = ctx.createRadialGradient(x - sz * 0.2, y - sz * 0.25, 1, x, y - sz * 0.12, sz * 0.5);
+  g.addColorStop(0, rgb(P.cerL)); g.addColorStop(1, rgb(P.cerD));
+  ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(x, y - sz * 0.12, sz * 0.48, sz * 0.16, 0, 0, TAU); ctx.fill();
+  const r = mulberry(4);
+  for (let k = 0; k < 9; k++) {
+    ctx.fillStyle = rgb(k % 2 ? P.goldL : P.gold, 0.7 + 0.3 * Math.sin(G.t * 4 + k));
+    ctx.beginPath(); ctx.arc(x + (r() - 0.5) * sz * 0.6, y - sz * 0.15 + (r() - 0.5) * sz * 0.12, 1 + r() * 1.6, 0, TAU); ctx.fill();
+  }
+  ctx.restore();
+}
+function drawMaterial(k, x, y, sz, alpha) {
+  const m = G.shelf[k];
+  if (!m) return;
+  if (k === 'b') drawTwig(x, y, sz, m.p, alpha);
+  else if (k === 's') drawSkein(x, y, sz, m.n, m.rb, alpha);
+  else if (k === 'd') drawMold(x, y, sz, m, alpha);
+  else drawGoldDish(x, y, sz, alpha);
+}
+function drawShelfItems() {
+  const sz = L.slotR * 1.6;
+  // ガラスのびん（飾り。横長の画面だけ）
+  const jx = L.shelf.x + L.shelf.w * 0.93, jy = L.shelf.y1, js = L.slotR * 0.8;
+  if (!L.portrait) {
+  ctx.save(); ctx.translate(jx, jy); ctx.rotate(wig('jar'));
+  const jg = ctx.createLinearGradient(-js * 0.4, 0, js * 0.4, 0);
+  jg.addColorStop(0, rgb(P.glassD, 0.75)); jg.addColorStop(0.35, rgb(P.glassL, 0.6)); jg.addColorStop(1, rgb(P.glassD, 0.8));
+  ctx.fillStyle = jg; ctx.beginPath(); ctx.moveTo(-js * 0.18, -js * 1.2); ctx.lineTo(js * 0.18, -js * 1.2); ctx.lineTo(js * 0.2, -js * 0.95);
+  ctx.quadraticCurveTo(js * 0.45, -js * 0.8, js * 0.42, -js * 0.3); ctx.lineTo(js * 0.4, 0); ctx.lineTo(-js * 0.4, 0); ctx.lineTo(-js * 0.42, -js * 0.3);
+  ctx.quadraticCurveTo(-js * 0.45, -js * 0.8, -js * 0.2, -js * 0.95); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.fillRect(-js * 0.28, -js * 0.75, js * 0.07, js * 0.55);
+  ctx.restore();
+  }
+  ['b', 's', 'd', 'c'].forEach(k => {
+    const fl = G.flights.some(f => f.mat === k && f.to === 'shelf' && !f.done);
+    if (!shelfShown(k) || fl) return;
+    const s = slotOf(k);
+    glowAt(s.x, s.y - sz * 0.35, sz * 0.9, inviteK('shelf_' + k));
+    const hop = inviteHop('shelf_' + k) * sz;
+    ctx.save(); ctx.translate(s.x, s.y); ctx.rotate(wig('shelf_' + k)); ctx.translate(-s.x, -s.y);
+    drawMaterial(k, s.x, s.y + hop, sz, clamp((G.ev.shelf - 0.5) * 2, 0, 1));
+    ctx.restore();
+  });
+}
+
+// ---------------------------------------------------------------------
+//  ゆり椅子とおばあちゃん（焼き陶器の顔・絹の服）。年齢 a: 0=おばあちゃん … 4=あかちゃん
+// ---------------------------------------------------------------------
+const AGE = {
+  headR: [1.00, 1.00, 0.98, 0.90, 0.80],
+  headY: [-3.12, -3.28, -3.36, -2.62, -1.92],
+  shY: [-2.02, -2.14, -2.22, -1.72, -1.16],
+  shW: [1.22, 1.16, 1.06, 0.80, 0.66],
+  waistW: [1.06, 0.98, 0.84, 0.68, 0.74],
+  seatW: [1.30, 1.24, 1.14, 0.88, 0.82],
+  hemY: [2.30, 2.30, 2.28, 0.82, 0.36],
+  hemW: [1.48, 1.44, 1.38, 1.00, 0.86],
+  legs: [0, 0, 0, 1, 1],
+  footY: [2.40, 2.40, 2.40, 1.66, 0.86],
+  hunch: [1, 0.35, 0, 0, 0],
+  glasses: [1, 0, 0, 0, 0],
+  wrinkle: [1, 0.4, 0, 0, 0],
+  blush: [0.25, 0.32, 0.44, 0.62, 0.8],
+  energy: [0.25, 0.45, 0.75, 1.05, 1.35],
+  shawl: [1, 0.45, 0, 0, 0],
+};
+const DRESS = ['#97474a', '#ab5450', '#c2614e', '#cf7f3a', '#d99a42'].map(hex);
+const HAIR_ROOT = ['#b08848', '#ae783c', '#ab6832', '#bc7f2e', '#cd943a'].map(hex);
+const HAIR_MID = ['#e2bd76', '#e5ac69', '#e89a5f', '#ebaa4b', '#efba59'].map(hex);
+const HAIR_TIP = ['#efb28c', '#f2a582', '#f39476', '#f4ac60', '#f7c070'].map(hex);
+const SKIN = ['#efdcca', '#f1d9c3', '#f2d6bd', '#f4d4b8', '#f6d3b5'].map(hex);
+
+const F = { x: 0, y: 0, px: 0, py: 0, S: 40, a: 0, rot: 0, hx: 0, hy: 0, hr: 40, tilt: 0, lh: [0, 0], rh: [0, 0], comb: 0 };
+function ap(k) { return tab(AGE[k], F.a); }
+function toW(lx, ly) {   // 椅子の座面を原点にした S 単位 → 画面（揺れの回転こみ）
+  const x = F.x + lx * F.S, y = F.y + ly * F.S;
+  const dx = x - F.px, dy = y - F.py, c = Math.cos(F.rot), s = Math.sin(F.rot);
+  return [F.px + dx * c - dy * s, F.py + dx * s + dy * c];
+}
+function updateFigure(dt) {
+  const S = L.S, t = G.t, fc = G.face;
+  F.S = S; F.a = G.ev.fig; F.x = L.cx; F.y = L.baseY - 2.55 * S; F.px = L.cx; F.py = L.baseY;
+  // ゆり椅子：ふだんはゆっくり。驚く・笑うと大きく
+  const R = G.rock;
+  R.kick = Math.max(0, R.kick - dt * 0.35);
+  const amp = R.amp * (0.6 + ap('energy') * 0.5) + R.kick * 0.09;
+  R.ang = Math.sin(t * (1.1 + ap('energy') * 0.4)) * amp;
+  F.rot = R.ang;
+  const en = ap('energy');
+  // 顔の向き：触った所 → 次に触る物 → まっすぐ
+  let tx = 0, ty = 0;
+  if (t < fc.lookUntil) { tx = fc.lookX; ty = fc.lookY; }
+  else if (G.inviteAt) { tx = G.inviteAt[0]; ty = G.inviteAt[1]; }
+  else { tx = F.x; ty = F.y + S * 3; }
+  const hp = toW(0, ap('headY'));
+  fc.tlx = clamp((tx - hp[0]) / (S * 4), -1, 1); fc.tly = clamp((ty - hp[1]) / (S * 4), -1, 1);
+  const sp = t < fc.lookUntil ? 24 : 5;
+  fc.lx += (fc.tlx - fc.lx) * Math.min(1, dt * sp); fc.ly += (fc.tly - fc.ly) * Math.min(1, dt * sp);
+  fc.sur = Math.max(0, fc.sur - dt * 1.6); fc.laugh = Math.max(0, fc.laugh - dt * 0.55); fc.giggle = Math.max(0, fc.giggle - dt);
+  // まばたき
+  const bp = (t * 0.37 + 0.3) % 1; fc.blink = bp > 0.965 ? Math.sin((bp - 0.965) / 0.035 * Math.PI) : 0;
+  // 頭の位置（猫背・呼吸・笑いの揺れ・赤ちゃんの弾み）
+  const breath = Math.sin(t * 1.6) * 0.03;
+  const bounce = (fc.laugh > 0 ? Math.abs(Math.sin(t * 14)) * 0.12 * fc.laugh : 0) + (F.a > 3.2 ? Math.abs(Math.sin(t * 5)) * 0.08 * (F.a - 3.2) : 0);
+  const lhx = ap('hunch') * 0.05;
+  F.hlx = fc.lx * 0.12 + lhx; F.hly = ap('headY') + ap('hunch') * 0.14 + breath - bounce;
+  const hw = toW(F.hlx, F.hly);
+  F.hx = hw[0]; F.hy = hw[1]; F.hr = ap('headR') * S;
+  F.tilt = fc.lx * 0.08 + Math.sin(t * 0.8) * 0.02 + (fc.laugh > 0 ? Math.sin(t * 9) * 0.05 * fc.laugh : 0) + F.rot;
+  // 手：くしで髪をとかす（若いほど速く元気に）
+  G.combT += dt * (0.45 + en * 0.45);
+  const cp = G.combT % 1, down = cp < 0.68, k = down ? cp / 0.68 : 1 - (cp - 0.68) / 0.32;
+  const shY = ap('shY'), shW = ap('shW');
+  let rx = lerp(shW * 0.7, shW + 0.2, k), ry = lerp(shY + 0.55, -0.15 + (1 - ap('legs')) * 0.2, k);
+  let lx = -0.38, ly = -0.22;
+  if (F.a > 1.4 && F.a <= 2.6) { lx = -0.4 + Math.sin(t * 2.2) * 0.1; ly = -0.3 + Math.sin(t * 3.1) * 0.12; }
+  if (F.a > 2.6) {   // こども：手をたたく／赤ちゃん：手をふる
+    const ck = F.a < 3.5 ? 1 - (F.a - 2.6) / 0.9 : 0;
+    const clap = Math.abs(Math.sin(t * 3.2));
+    const wave = Math.sin(t * 6);
+    const cx = lerp(0.08 + clap * 0.4, 0.55 + wave * 0.25, 1 - ck), cy = lerp(shY + 0.75, shY - 0.35 + wave * 0.2, 1 - ck);
+    rx = lerp(rx, cx, clamp((F.a - 2.6) * 2, 0, 1)); ry = lerp(ry, cy, clamp((F.a - 2.6) * 2, 0, 1));
+    lx = lerp(lx, -cx, clamp((F.a - 2.6) * 2, 0, 1)); ly = lerp(ly, cy + (F.a > 3.5 ? -wave * 0.4 : 0), clamp((F.a - 2.6) * 2, 0, 1));
+  }
+  if (fc.laugh > 0.2 && F.a <= 2.6) { lx = lerp(lx, -0.25, fc.laugh * 0.6); ly = lerp(ly, shY + 0.9, fc.laugh * 0.6); }
+  F.rhL = [rx, ry]; F.lhL = [lx, ly];
+  F.combing = F.a < 2.6 && down;
+  F.rh = toW(rx, ry); F.lh = toW(lx, ly);
+}
+
+// ----- 椅子（描きおき） -----
+function buildChair() {
+  const S = L.S;
+  const w = S * 6.2, h = S * 8.2, ox = w / 2, oy = S * 5.1;
+  const ch = mkCanvas(w, h), g = ch.g;
+  const X = v => ox + v * S, Y = v => oy + v * S;
+  const wood = (x, y, ww, hh, vert, seed) => woodBox(g, x, y, ww, hh, P.amber, vert, seed, 1.1);
+  // ゆり木
+  g.beginPath();
+  g.moveTo(X(-2.85), Y(2.05)); g.quadraticCurveTo(X(0), Y(2.95), X(2.85), Y(2.05));
+  g.lineTo(X(2.75), Y(2.3)); g.quadraticCurveTo(X(0), Y(3.15) - 0.1 * S, X(-2.75), Y(2.3)); g.closePath();
+  let gd = g.createLinearGradient(0, Y(2.0), 0, Y(2.9)); gd.addColorStop(0, rgb(lit(P.amber, 0.2))); gd.addColorStop(1, rgb(P.amberD));
+  g.fillStyle = gd; g.fill();
+  // 背もたれの柱
+  [-1.58, 1.58].forEach((x, i) => { wood(X(x) - S * 0.13, Y(-4.6), S * 0.26, S * 4.7, true, 500 + i); });
+  // 笠木
+  g.beginPath(); g.moveTo(X(-1.72), Y(-4.35)); g.quadraticCurveTo(X(0), Y(-5.05), X(1.72), Y(-4.35)); g.lineTo(X(1.72), Y(-3.95)); g.quadraticCurveTo(X(0), Y(-4.6), X(-1.72), Y(-3.95)); g.closePath();
+  g.save(); g.clip(); wood(X(-1.8), Y(-5.1), S * 3.6, S * 1.2, false, 510); g.restore();
+  // 背の桟
+  [-1.0, -0.5, 0, 0.5, 1.0].forEach((x, i) => {
+    const lg = g.createLinearGradient(X(x) - S * 0.08, 0, X(x) + S * 0.08, 0);
+    lg.addColorStop(0, rgb(lit(P.amber, -0.25))); lg.addColorStop(0.4, rgb(lit(P.amber, 0.2))); lg.addColorStop(1, rgb(lit(P.amber, -0.35)));
+    g.fillStyle = lg; g.fillRect(X(x) - S * 0.08, Y(-4.25) + Math.abs(x) * S * 0.12, S * 0.16, S * 4.0);
+  });
+  wood(X(-1.6), Y(-0.45), S * 3.2, S * 0.28, false, 520);
+  // 座面
+  wood(X(-1.78), Y(-0.08), S * 3.56, S * 0.36, false, 530);
+  g.fillStyle = 'rgba(255,230,180,0.5)'; g.fillRect(X(-1.78), Y(-0.08), S * 3.56, 1.2);
+  // 前脚
+  [-1, 1].forEach((sd, i) => {
+    g.beginPath(); g.moveTo(X(sd * 1.5) - S * 0.12, Y(0.28)); g.lineTo(X(sd * 1.5) + S * 0.12, Y(0.28)); g.lineTo(X(sd * 1.78) + S * 0.14, Y(2.32)); g.lineTo(X(sd * 1.78) - S * 0.14, Y(2.32)); g.closePath();
+    const lg = g.createLinearGradient(X(sd * 1.6) - S * 0.15, 0, X(sd * 1.6) + S * 0.15, 0);
+    lg.addColorStop(0, rgb(lit(P.amber, -0.2))); lg.addColorStop(0.45, rgb(lit(P.amber, 0.18))); lg.addColorStop(1, rgb(lit(P.amber, -0.4)));
+    g.fillStyle = lg; g.fill();
+  });
+  // ひじ掛け
+  [-1, 1].forEach((sd, i) => {
+    wood(X(sd * 1.62) - S * 0.1, Y(-1.1), S * 0.2, S * 1.1, true, 540 + i);
+    g.beginPath(); g.ellipse(X(sd * 1.72), Y(-1.12), S * 0.42, S * 0.15, 0, 0, TAU);
+    const ag = g.createLinearGradient(0, Y(-1.3), 0, Y(-0.95)); ag.addColorStop(0, rgb(lit(P.amber, 0.3))); ag.addColorStop(1, rgb(lit(P.amber, -0.3)));
+    g.fillStyle = ag; g.fill();
+  });
+  C.chair = { c: ch.c, w, h, ox, oy };
+}
+function drawChair() {
+  const ch = C.chair; if (!ch) return;
+  ctx.save();
+  ctx.translate(F.px, F.py); ctx.rotate(F.rot); ctx.translate(-F.px, -F.py);
+  // 床への影（回らない）
+  ctx.drawImage(ch.c, F.x - ch.ox, F.y - ch.oy, ch.w, ch.h);
+  ctx.restore();
+}
+function drawFloorShadow() {
+  const S = L.S;
+  const g = ctx.createRadialGradient(F.px, F.py, S * 0.3, F.px, F.py, S * 3.4);
+  g.addColorStop(0, 'rgba(40,18,5,0.45)'); g.addColorStop(1, 'rgba(40,18,5,0)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(F.px, F.py + S * 0.1, S * 3.4, S * 0.7, 0, 0, TAU); ctx.fill();
+}
+
+// ----- からだ -----
+function dressPath(g) {
+  const shY = ap('shY'), shW = ap('shW'), wW = ap('waistW'), sW = ap('seatW'), hY = ap('hemY'), hW = ap('hemW');
+  const nY = ap('headY') + ap('headR') * 0.82, wY = lerp(shY, 0, 0.62);
+  const P2 = (x, y) => [F.x + x * F.S, F.y + y * F.S];
+  const pts = {
+    nl: P2(-0.26, nY), nr: P2(0.26, nY), stl: P2(-shW * 0.72, shY - 0.1), str: P2(shW * 0.72, shY - 0.1),
+    sol: P2(-shW, shY + 0.28), sor: P2(shW, shY + 0.28), wl: P2(-wW, wY), wr: P2(wW, wY),
+    sl: P2(-sW, 0.08), sr: P2(sW, 0.08), hl: P2(-hW, hY), hr: P2(hW, hY), hm: P2(0, hY + 0.12),
+  };
+  g.moveTo(pts.nl[0], pts.nl[1]);
+  g.quadraticCurveTo(pts.stl[0], pts.stl[1] - F.S * 0.05, pts.sol[0], pts.sol[1]);
+  g.quadraticCurveTo(pts.wl[0] - F.S * 0.05, pts.wl[1], pts.sl[0], pts.sl[1]);
+  g.quadraticCurveTo(pts.hl[0] + F.S * 0.1, (pts.sl[1] + pts.hl[1]) / 2, pts.hl[0], pts.hl[1]);
+  g.quadraticCurveTo(pts.hm[0], pts.hm[1] + F.S * 0.1, pts.hr[0], pts.hr[1]);
+  g.quadraticCurveTo(pts.hr[0] - F.S * 0.1, (pts.sr[1] + pts.hr[1]) / 2, pts.sr[0], pts.sr[1]);
+  g.quadraticCurveTo(pts.wr[0] + F.S * 0.05, pts.wr[1], pts.sor[0], pts.sor[1]);
+  g.quadraticCurveTo(pts.str[0], pts.str[1] - F.S * 0.05, pts.nr[0], pts.nr[1]);
+  g.closePath();
+}
+function ceramicBall(x, y, r, base, sx) {
+  sx = sx || 1;
+  const g = ctx.createRadialGradient(x - r * 0.35, y - r * 0.4, r * 0.08, x, y, r * 1.05);
+  g.addColorStop(0, rgb(lit(base, 0.3))); g.addColorStop(0.55, rgb(base)); g.addColorStop(1, rgb(lit(base, -0.28)));
+  ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(x, y, r * sx, r, 0, 0, TAU); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.beginPath(); ctx.ellipse(x - r * 0.35, y - r * 0.42, r * 0.2, r * 0.1, -0.6, 0, TAU); ctx.fill();
+}
+function drawBody() {
+  const S = F.S, t = G.t, dress = tabC(DRESS, F.a), skin = tabC(SKIN, F.a);
+  ctx.save();
+  ctx.translate(F.px, F.py); ctx.rotate(F.rot); ctx.translate(-F.px, -F.py);
+  // 脚（こども・赤ちゃん）
+  const legs = ap('legs');
+  if (legs > 0.01) {
+    ctx.save(); ctx.globalAlpha = legs;
+    for (let sd = -1; sd <= 1; sd += 2) {
+      const baby = F.a > 3.4;
+      const sw = baby ? Math.sin(t * 7 + sd) * 0.35 : Math.sin(t * 2.6 + (sd > 0 ? 0 : 1.6)) * 0.28;
+      const hx = F.x + sd * 0.34 * S, hy = F.y + ap('hemY') * S * 0.7;
+      const len = (ap('footY') - ap('hemY') * 0.7) * S;
+      const ang = sd * 0.08 + sw;
+      const fx = hx + Math.sin(ang) * len * (baby ? 1.5 : 1), fy = hy + Math.cos(ang) * len;
+      ctx.strokeStyle = rgb(skin); ctx.lineCap = 'round'; ctx.lineWidth = S * (baby ? 0.36 : 0.26);
+      ctx.beginPath(); ctx.moveTo(hx, hy); ctx.lineTo(fx, fy); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = S * 0.07; ctx.beginPath(); ctx.moveTo(hx - S * 0.06, hy); ctx.lineTo(fx - S * 0.06, fy); ctx.stroke();
+      if (baby) ceramicBall(fx, fy, S * 0.22, skin);
+      else { const sg = ctx.createLinearGradient(0, fy - S * 0.1, 0, fy + S * 0.15); sg.addColorStop(0, rgb(lit(P.amber, 0.1))); sg.addColorStop(1, rgb(P.amberD)); ctx.fillStyle = sg; ctx.beginPath(); ctx.ellipse(fx + sd * S * 0.05, fy + S * 0.05, S * 0.22, S * 0.13, 0, 0, TAU); ctx.fill(); }
+    }
+    ctx.restore();
+  }
+  if (legs < 0.99) {   // おとなの靴
+    ctx.save(); ctx.globalAlpha = 1 - legs;
+    for (let sd = -1; sd <= 1; sd += 2) {
+      const fx = F.x + sd * 0.42 * S, fy = F.y + 2.36 * S;
+      const sg = ctx.createLinearGradient(0, fy - S * 0.1, 0, fy + S * 0.15); sg.addColorStop(0, rgb(lit(P.amber, 0.05))); sg.addColorStop(1, rgb(P.amberD));
+      ctx.fillStyle = sg; ctx.beginPath(); ctx.ellipse(fx, fy, S * 0.28, S * 0.15, 0, 0, TAU); ctx.fill();
+    }
+    ctx.restore();
+  }
+  // 服（絹）
+  ctx.beginPath(); dressPath(ctx);
+  const x0 = F.x - ap('hemW') * S, x1 = F.x + ap('hemW') * S;
+  const dg = ctx.createLinearGradient(x0, 0, x1, 0);
+  dg.addColorStop(0, rgb(lit(dress, -0.3))); dg.addColorStop(0.3, rgb(lit(dress, 0.12))); dg.addColorStop(0.45, rgb(lit(dress, 0.28))); dg.addColorStop(0.6, rgb(dress)); dg.addColorStop(1, rgb(lit(dress, -0.38)));
+  ctx.fillStyle = dg; ctx.fill();
+  ctx.save(); ctx.clip();
+  // ひだ
+  for (let k = -2; k <= 2; k++) {
+    const fx = F.x + k * S * 0.42 + Math.sin(t * 0.5 + k) * S * 0.03;
+    const fg = ctx.createLinearGradient(fx - S * 0.18, 0, fx + S * 0.18, 0);
+    fg.addColorStop(0, 'rgba(60,15,10,0)'); fg.addColorStop(0.5, 'rgba(60,15,10,0.18)'); fg.addColorStop(1, 'rgba(255,230,210,0.12)');
+    ctx.fillStyle = fg; ctx.fillRect(fx - S * 0.18, F.y - S * 0.2, S * 0.36, S * 3);
+  }
+  // 絹の照り
+  const sg = ctx.createLinearGradient(0, F.y + ap('shY') * S, 0, F.y + ap('hemY') * S);
+  sg.addColorStop(0, 'rgba(255,235,215,0.3)'); sg.addColorStop(0.3, 'rgba(255,235,215,0)'); sg.addColorStop(0.55, 'rgba(255,235,215,0.12)'); sg.addColorStop(1, 'rgba(40,10,5,0.25)');
+  ctx.fillStyle = sg; ctx.fillRect(x0, F.y + (ap('shY') - 0.5) * S, x1 - x0, S * 5);
+  // ひざかけ（編み物）
+  const sh = ap('shawl');
+  if (sh > 0.01) {
+    ctx.globalAlpha = sh;
+    const top = F.y + (ap('shY') - 0.05) * S, sw = ap('shW') * S * 1.06;
+    ctx.beginPath(); ctx.moveTo(F.x - S * 0.3, top - S * 0.05); ctx.quadraticCurveTo(F.x - sw * 0.8, top, F.x - sw, top + S * 0.5);
+    ctx.quadraticCurveTo(F.x - sw * 0.7, top + S * 0.85, F.x, top + S * 0.95); ctx.quadraticCurveTo(F.x + sw * 0.7, top + S * 0.85, F.x + sw, top + S * 0.5);
+    ctx.quadraticCurveTo(F.x + sw * 0.8, top, F.x + S * 0.3, top - S * 0.05); ctx.quadraticCurveTo(F.x, top + S * 0.25, F.x - S * 0.3, top - S * 0.05); ctx.closePath();
+    const kg = ctx.createLinearGradient(0, top, 0, top + S); kg.addColorStop(0, rgb(lit(P.amberL, -0.05))); kg.addColorStop(1, rgb(lit(P.amber, -0.1)));
+    ctx.fillStyle = kg; ctx.fill();
+    ctx.save(); ctx.clip();
+    const rh = Math.max(3, S * 0.12);
+    for (let yy = top - rh; yy < top + S * 1.1; yy += rh) {
+      ctx.strokeStyle = 'rgba(255,225,170,0.28)'; ctx.lineWidth = Math.max(0.8, rh * 0.22);
+      for (let xx = F.x - sw; xx < F.x + sw; xx += rh * 0.9) { ctx.beginPath(); ctx.moveTo(xx, yy); ctx.lineTo(xx + rh * 0.45, yy + rh * 0.8); ctx.lineTo(xx + rh * 0.9, yy); ctx.stroke(); }
+    }
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  }
+  ctx.restore();
+  // 腕（そで）
+  const arm = (sd, hand) => {
+    const s0 = [F.x + sd * (ap('shW') - 0.12) * S, F.y + (ap('shY') + 0.3) * S];
+    const el = [F.x + sd * (ap('shW') + 0.1) * S, F.y + (ap('shY') + 1.15) * S];
+    const h = [F.x + hand[0] * S, F.y + hand[1] * S];
+    const mid = [(el[0] + h[0]) / 2 + sd * S * 0.05, (el[1] + h[1]) / 2];
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.strokeStyle = rgb(lit(dress, -0.12)); ctx.lineWidth = S * 0.4 * (0.75 + 0.25 * ap('headR'));
+    ctx.beginPath(); ctx.moveTo(s0[0], s0[1]); ctx.quadraticCurveTo(el[0], el[1], mid[0], mid[1]); ctx.lineTo(h[0], h[1]); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,230,210,0.28)'; ctx.lineWidth = S * 0.1;
+    ctx.beginPath(); ctx.moveTo(s0[0] - S * 0.06, s0[1]); ctx.quadraticCurveTo(el[0] - S * 0.06, el[1], mid[0] - S * 0.05, mid[1]); ctx.stroke();
+  };
+  arm(-1, F.lhL); arm(1, F.rhL);
+  // 首
+  const nk = F.y + (ap('headY') + ap('headR') * 0.6) * S;
+  const ng = ctx.createLinearGradient(F.x - S * 0.25, 0, F.x + S * 0.25, 0); ng.addColorStop(0, rgb(lit(skin, -0.2))); ng.addColorStop(0.4, rgb(skin)); ng.addColorStop(1, rgb(lit(skin, -0.28)));
+  ctx.fillStyle = ng; ctx.fillRect(F.x - S * 0.22, nk, S * 0.44, S * 0.55);
+  ctx.restore();
+}
+function drawHands() {
+  const S = F.S, skin = tabC(SKIN, F.a);
+  ctx.save();
+  ctx.translate(F.px, F.py); ctx.rotate(F.rot); ctx.translate(-F.px, -F.py);
+  const hr = S * 0.19 * (0.8 + 0.2 * ap('headR'));
+  const lh = [F.x + F.lhL[0] * S, F.y + F.lhL[1] * S], rh = [F.x + F.rhL[0] * S, F.y + F.rhL[1] * S];
+  ceramicBall(lh[0], lh[1], hr, skin, 1.15);
+  // くし（琥珀の木）
+  if (F.a < 2.7) {
+    ctx.save(); ctx.globalAlpha = clamp((2.7 - F.a) * 2, 0, 1);
+    ctx.translate(rh[0] + hr * 0.6, rh[1] - hr * 0.2); ctx.rotate(0.35);
+    const cg = ctx.createLinearGradient(0, -hr, 0, hr); cg.addColorStop(0, rgb(P.amberL)); cg.addColorStop(1, rgb(P.amberD));
+    ctx.fillStyle = cg; ctx.fillRect(-hr * 0.25, -hr * 1.1, hr * 0.5, hr * 2.2);
+    ctx.fillStyle = rgb(lit(P.amber, -0.1));
+    for (let k = 0; k < 7; k++) ctx.fillRect(hr * 0.2, -hr * 1.0 + k * hr * 0.31, hr * 0.55, hr * 0.12);
+    ctx.restore();
+  }
+  ceramicBall(rh[0], rh[1], hr, skin, 1.15);
+  ctx.restore();
+}
+
+// ----- 頭と顔 -----
+function drawHead() {
+  const fc = G.face, r = F.hr, x = F.hx, y = F.hy, skin = tabC(SKIN, F.a);
+  const hairR = tabC(HAIR_ROOT, F.a), hairM = tabC(HAIR_MID, F.a);
+  ctx.save();
+  ctx.translate(x, y); ctx.rotate(F.tilt);
+  // 頭の後ろの髪（陰）
+  const bh = ctx.createLinearGradient(0, -r, 0, r);
+  bh.addColorStop(0, rgb(hairR)); bh.addColorStop(1, rgb(lit(hairM, -0.12)));
+  ctx.fillStyle = bh;
+  ctx.beginPath(); ctx.ellipse(0, r * 0.08, r * 1.1, r * 1.06, 0, 0, TAU); ctx.fill();
+  // 焼き陶器の顔
+  const g = ctx.createRadialGradient(-r * 0.32, -r * 0.38, r * 0.08, 0, 0, r * 1.05);
+  g.addColorStop(0, rgb(lit(skin, 0.6))); g.addColorStop(0.5, rgb(skin)); g.addColorStop(1, rgb(lit(skin, -0.2)));
+  ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(0, 0, r * 0.94, r, 0, 0, TAU); ctx.fill();
+  const lx = fc.lx * r * 0.14, ly = fc.ly * r * 0.08;
+  // ほお
+  const bl = ap('blush') * (1 + fc.laugh * 0.4);
+  [-1, 1].forEach(sd => {
+    const cg = ctx.createRadialGradient(sd * r * 0.5 + lx, r * 0.32 + ly, 1, sd * r * 0.5 + lx, r * 0.32 + ly, r * 0.32);
+    cg.addColorStop(0, 'rgba(230,110,95,' + (0.5 * bl).toFixed(3) + ')'); cg.addColorStop(1, 'rgba(230,110,95,0)');
+    ctx.fillStyle = cg; ctx.beginPath(); ctx.arc(sd * r * 0.5 + lx, r * 0.32 + ly, r * 0.32, 0, TAU); ctx.fill();
+  });
+  // しわ
+  const wr = ap('wrinkle');
+  if (wr > 0.02) {
+    ctx.strokeStyle = 'rgba(150,100,80,' + (0.32 * wr).toFixed(3) + ')'; ctx.lineWidth = Math.max(0.7, r * 0.025); ctx.lineCap = 'round';
+    [-1, 1].forEach(sd => {
+      for (let k = 0; k < 2; k++) { ctx.beginPath(); ctx.arc(sd * r * 0.62 + lx, r * 0.02 + ly + k * r * 0.09, r * 0.09, sd > 0 ? -0.6 : Math.PI - 0.6, sd > 0 ? 0.6 : Math.PI + 0.6); ctx.stroke(); }
+      ctx.beginPath(); ctx.arc(sd * r * 0.28 + lx, r * 0.45 + ly, r * 0.22, sd > 0 ? 0.2 : 2.3, sd > 0 ? 0.85 : 2.95); ctx.stroke();
+    });
+    ctx.beginPath(); ctx.moveTo(-r * 0.25 + lx * 0.5, -r * 0.48); ctx.quadraticCurveTo(lx * 0.5, -r * 0.53, r * 0.25 + lx * 0.5, -r * 0.48); ctx.stroke();
+  }
+  // 目
+  const ey = r * 0.05 + ly, ex = r * 0.35;
+  [-1, 1].forEach(sd => {
+    const cx = sd * ex + lx;
+    if (fc.laugh > 0.45 || fc.giggle > 0.3) {
+      ctx.strokeStyle = rgb(P.ink); ctx.lineWidth = Math.max(1.5, r * 0.085); ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.arc(cx, ey + r * 0.07, r * 0.12, Math.PI * 1.15, Math.PI * 1.85); ctx.stroke();
+    } else {
+      const s = 1 + fc.sur * 0.55 + (F.a > 2.5 ? 0.15 : 0);
+      const ew = r * 0.105 * s, eh = r * 0.14 * s * (1 - fc.blink * 0.92);
+      ctx.fillStyle = rgb(P.ink); ctx.beginPath(); ctx.ellipse(cx + fc.lx * r * 0.03, ey + fc.ly * r * 0.03, ew, Math.max(0.6, eh), 0, 0, TAU); ctx.fill();
+      if (eh > ew * 0.4) {
+        ctx.fillStyle = 'rgba(255,255,255,0.95)'; ctx.beginPath(); ctx.arc(cx - ew * 0.35 + fc.lx * r * 0.03, ey - eh * 0.4, ew * 0.38, 0, TAU); ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.beginPath(); ctx.arc(cx + ew * 0.35, ey + eh * 0.35, ew * 0.18, 0, TAU); ctx.fill();
+      }
+    }
+    // まゆ
+    ctx.strokeStyle = rgb(lit(hairR, -0.2), 0.75); ctx.lineWidth = Math.max(1, r * 0.04); ctx.lineCap = 'round';
+    const by = ey - r * (0.27 + fc.sur * 0.12);
+    ctx.beginPath(); ctx.moveTo(cx - sd * r * 0.12 - r * 0.0, by + r * 0.02); ctx.quadraticCurveTo(cx, by - r * 0.05, cx + sd * r * 0.13, by + r * 0.03); ctx.stroke();
+  });
+  // 鼻
+  const ng = ctx.createRadialGradient(lx * 1.2, r * 0.25 + ly, 0.5, lx * 1.2, r * 0.25 + ly, r * 0.12);
+  ng.addColorStop(0, 'rgba(200,130,100,0.35)'); ng.addColorStop(1, 'rgba(200,130,100,0)');
+  ctx.fillStyle = ng; ctx.beginPath(); ctx.arc(lx * 1.2, r * 0.25 + ly, r * 0.12, 0, TAU); ctx.fill();
+  // 口
+  const my = r * 0.5 + ly, mx = lx * 1.1;
+  if (fc.laugh > 0.3 || fc.giggle > 0.3) {
+    const op = Math.max(fc.laugh, fc.giggle) * (0.75 + 0.25 * Math.abs(Math.sin(G.t * 14)));
+    ctx.fillStyle = '#6e2a20'; ctx.beginPath(); ctx.moveTo(mx - r * 0.2, my - r * 0.02); ctx.quadraticCurveTo(mx, my + r * 0.36 * op, mx + r * 0.2, my - r * 0.02); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#d8695f'; ctx.beginPath(); ctx.ellipse(mx, my + r * 0.18 * op, r * 0.1, r * 0.06 * op, 0, 0, TAU); ctx.fill();
+  } else if (fc.sur > 0.35) {
+    ctx.fillStyle = '#6e2a20'; ctx.beginPath(); ctx.ellipse(mx, my + r * 0.02, r * 0.07 * (0.6 + fc.sur * 0.4), r * 0.09 * (0.6 + fc.sur * 0.5), 0, 0, TAU); ctx.fill();
+  } else {
+    ctx.fillStyle = '#a4483c'; ctx.beginPath(); ctx.moveTo(mx - r * 0.15, my - r * 0.02); ctx.quadraticCurveTo(mx, my + r * 0.15 * (0.5 + fc.smile), mx + r * 0.15, my - r * 0.02); ctx.quadraticCurveTo(mx, my + r * 0.06, mx - r * 0.15, my - r * 0.02); ctx.fill();
+  }
+  // 釉の照り
+  ctx.fillStyle = 'rgba(255,255,255,0.45)'; ctx.beginPath(); ctx.ellipse(-r * 0.42, -r * 0.5, r * 0.18, r * 0.1, -0.7, 0, TAU); ctx.fill();
+  // めがね（いちばん年をとった時代だけ）
+  const gl = ap('glasses');
+  if (gl > 0.02) {
+    ctx.save(); ctx.globalAlpha = gl;
+    [-1, 1].forEach(sd => {
+      const cx = sd * ex + lx * 0.9;
+      ctx.fillStyle = 'rgba(80,190,180,0.16)'; ctx.beginPath(); ctx.arc(cx, ey, r * 0.21, 0, TAU); ctx.fill();
+      ctx.strokeStyle = rgb(P.gold); ctx.lineWidth = Math.max(1, r * 0.035); ctx.beginPath(); ctx.arc(cx, ey, r * 0.21, 0, TAU); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = Math.max(0.8, r * 0.03); ctx.beginPath(); ctx.arc(cx, ey, r * 0.15, 3.6, 4.4); ctx.stroke();
+    });
+    ctx.strokeStyle = rgb(P.gold); ctx.lineWidth = Math.max(1, r * 0.03);
+    ctx.beginPath(); ctx.moveTo(-ex + r * 0.21 + lx * 0.9, ey); ctx.quadraticCurveTo(lx, ey - r * 0.08, ex - r * 0.21 + lx * 0.9, ey); ctx.stroke();
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+// 頭頂の髪（房の根元の上に重ねる）：分け目と天使の輪
+function drawHairCap() {
+  const fc = G.face, r = F.hr, x = F.hx, y = F.hy;
+  const hairR = tabC(HAIR_ROOT, F.a), hairM = tabC(HAIR_MID, F.a);
+  const lx = fc.lx * r * 0.14;
+  ctx.save();
+  ctx.translate(x, y); ctx.rotate(F.tilt);
+  const bab = clamp((F.a - 3.3) / 0.7, 0, 1);
+  ctx.beginPath();
+  const capBot = lerp(r * 0.1, -r * 0.55, bab), hl = lerp(-r * 0.36, -r * 0.62, bab);
+  ctx.moveTo(-r * 1.04, capBot + r * 0.2);
+  ctx.bezierCurveTo(-r * 1.16, -r * 1.36, r * 1.16, -r * 1.36, r * 1.04, capBot + r * 0.2);
+  ctx.quadraticCurveTo(r * 0.78, capBot - r * 0.35, r * 0.42 + lx * 0.4, hl + r * 0.06);
+  ctx.quadraticCurveTo(lx * 0.6, hl - r * 0.08, -r * 0.42 + lx * 0.4, hl + r * 0.06);
+  ctx.quadraticCurveTo(-r * 0.78, capBot - r * 0.35, -r * 1.04, capBot + r * 0.2);
+  ctx.closePath();
+  const hg = ctx.createLinearGradient(0, -r * 1.1, 0, capBot + r * 0.3);
+  hg.addColorStop(0, rgb(hairR)); hg.addColorStop(0.55, rgb(hairM)); hg.addColorStop(1, rgb(lit(hairM, -0.1)));
+  ctx.fillStyle = hg; ctx.fill();
+  ctx.save(); ctx.clip();   // つやと毛すじは髪の形の内側だけ
+  ctx.strokeStyle = 'rgba(255,240,205,0.4)'; ctx.lineWidth = Math.max(1.5, r * 0.08);
+  ctx.beginPath(); ctx.ellipse(0, -r * 0.5, r * 0.74, r * 0.3, 0, Math.PI * 1.12, Math.PI * 1.88); ctx.stroke();
+  ctx.strokeStyle = rgb(lit(hairR, -0.25), 0.5); ctx.lineWidth = Math.max(0.8, r * 0.03);
+  ctx.beginPath(); ctx.moveTo(lx * 0.3, -r * 1.08); ctx.quadraticCurveTo(lx * 0.45, -r * 0.8, lx * 0.6, hl - r * 0.05); ctx.stroke();
+  // 毛すじ
+  ctx.strokeStyle = rgb(lit(hairR, -0.15), 0.35); ctx.lineWidth = Math.max(0.7, r * 0.022);
+  for (let k = -3; k <= 3; k++) { if (!k) continue; ctx.beginPath(); ctx.moveTo(lx * 0.3 + k * r * 0.03, -r * 1.06); ctx.quadraticCurveTo(k * r * 0.3, -r * 0.95, k * r * 0.33 + Math.sign(k) * r * 0.1, capBot - r * 0.1); ctx.stroke(); }
+  ctx.restore();
+  if (bab > 0.01) {   // 赤ちゃんのくるんとした毛
+    ctx.save(); ctx.globalAlpha = bab;
+    ctx.strokeStyle = rgb(hairM); ctx.lineWidth = Math.max(2, r * 0.12); ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(0, -r * 0.95); ctx.bezierCurveTo(r * 0.1, -r * 1.35, r * 0.45, -r * 1.25, r * 0.3, -r * 1.05); ctx.stroke();
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+// ---------------------------------------------------------------------
+//  絹の髪：ばねで形に戻る房。ゆびで押す・引っぱる・切る
+// ---------------------------------------------------------------------
+const KS = 11, NODES = 14;              // 片側の房の数・房の節
+const HR = { strands: [], debris: [], grab: null, lockIdx: [] };
+// 最後の一房になる房（右側のまんなか）
+for (let k = 4; k <= 6; k++) HR.lockIdx.push(KS + k);
+function strandLenTarget(j, eraLen) {
+  if (G.era === 3 && G.phase !== 'ff' && HR.lockIdx.indexOf(j) >= 0) return LOCK_LEN;
+  return eraLen;
+}
+function initHair() {
+  HR.strands = [];
+  for (let j = 0; j < KS * 2; j++) {
+    const side = j < KS ? -1 : 1, k = j % KS, u = k / (KS - 1);
+    const nodes = [];
+    for (let i = 0; i < NODES; i++) nodes.push({ x: L.cx, y: L.baseY, vx: 0, vy: 0 });
+    HR.strands.push({ side, u, len: HAIR_LEN[G.era], nodes, rest: null, glint: Math.random(), w: 0.85 + ((k * 7) % 5) * 0.06 });
+  }
+  hairRest();
+  HR.strands.forEach(s => s.nodes.forEach((n, i) => { n.x = s.restN[i][0]; n.y = s.restN[i][1]; }));
+}
+// 房ごとの「形」（S 単位の座面基準 → 画面）
+function catmull(pts, seg) {
+  const out = [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[Math.max(0, i - 1)], p1 = pts[i], p2 = pts[i + 1], p3 = pts[Math.min(pts.length - 1, i + 2)];
+    for (let s = 0; s < seg; s++) {
+      const t = s / seg, t2 = t * t, t3 = t2 * t;
+      out.push([
+        0.5 * ((2 * p1[0]) + (-p0[0] + p2[0]) * t + (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2 + (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3),
+        0.5 * ((2 * p1[1]) + (-p0[1] + p2[1]) * t + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2 + (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3)]);
+    }
+  }
+  out.push(pts[pts.length - 1]);
+  return out;
+}
+function hairRest() {
+  const r = ap('headR'), hx = F.hlx, hy = F.hly, shY = ap('shY'), shW = ap('shW'), sW = ap('seatW'), hW = ap('hemW');
+  const pool = 2.62;
+  const tiltC = Math.cos(F.tilt - F.rot), tiltS = Math.sin(F.tilt - F.rot);
+  HR.strands.forEach(s => {
+    const sd = s.side, u = s.u;
+    const phi = lerp(0.42, 1.5, u);
+    const rx = Math.sin(phi) * r * 0.9 * sd, ry = -Math.cos(phi) * r * 0.9;
+    const root = [hx + rx * tiltC - ry * tiltS, hy + rx * tiltS + ry * tiltC];
+    const ctrl = [
+      root,
+      [hx + sd * r * (0.9 + 0.32 * u), hy + r * (0.05 + 0.3 * u)],
+      [sd * (shW * lerp(0.62, 1.12, u) + r * 0.12), shY + r * lerp(0.3, 0.55, u)],
+      [sd * (sW * lerp(0.42, 1.3, u)), -0.12],
+      [sd * (hW * lerp(0.36, 1.32, u)), pool - 0.34],
+      [sd * (hW * lerp(0.45, 1.62, u) + r * 0.35 * u), pool + 0.04 + 0.1 * u],
+      [sd * (hW * lerp(0.55, 1.95, u) + r * 0.6 * u), pool + 0.13 + 0.08 * u],
+    ];
+    const path = catmull(ctrl, 7);
+    // 弧長の表
+    const cum = [0];
+    for (let i = 1; i < path.length; i++) cum.push(cum[i - 1] + Math.hypot(path[i][0] - path[i - 1][0], path[i][1] - path[i - 1][1]));
+    s.path = path; s.cum = cum; s.full = cum[cum.length - 1];
+    const L0 = Math.min(s.len, s.full);
+    s.restN = [];
+    let pi = 1;
+    for (let i = 0; i < NODES; i++) {
+      const want = L0 * i / (NODES - 1);
+      while (pi < cum.length - 1 && cum[pi] < want) pi++;
+      const a = path[pi - 1], b = path[pi], seg = cum[pi] - cum[pi - 1];
+      const f = seg > 0 ? clamp((want - cum[pi - 1]) / seg, 0, 1) : 0;
+      s.restN.push(toW(a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f));
+    }
+    s.segLen = (L0 * F.S) / (NODES - 1);
+  });
+}
+// 押す（たたく）：まわりの糸を外へはじく
+function hairPoke(px, py, power) {
+  const rad = L.S * 1.3;
+  HR.strands.forEach(s => s.nodes.forEach((n, i) => {
+    if (i === 0) return;
+    const dx = n.x - px, dy = n.y - py, d = Math.hypot(dx, dy);
+    if (d < rad) { const k = (1 - d / rad) * power; n.vx += (dx / (d || 1)) * k * 900 + (Math.random() - 0.5) * 40; n.vy += (dy / (d || 1)) * k * 500; }
+  }));
+}
+function hairHit(px, py, tol) {
+  let best = 1e9;
+  for (const s of HR.strands) {
+    const nd = s.nodes;
+    for (let i = 1; i < nd.length; i++) { const d = segDist(px, py, nd[i - 1].x, nd[i - 1].y, nd[i].x, nd[i].y); if (d < best) best = d; }
+  }
+  // 頭まわりも髪あつかい（顔の上の髪）
+  const dh = Math.hypot(px - F.hx, py - F.hy) - F.hr * 1.05;
+  return Math.min(best, Math.max(0, dh)) < tol;
+}
+function updateHair(dt) {
+  hairRest();
+  const gb = HR.grab;
+  const k = 70, damp = 9;
+  const fy = L.baseY + L.S * 0.22;
+  HR.strands.forEach((s, j) => {
+    const nd = s.nodes, rest = s.restN;
+    nd[0].x = rest[0][0]; nd[0].y = rest[0][1]; nd[0].vx = 0; nd[0].vy = 0;
+    for (let i = 1; i < NODES; i++) {
+      const n = nd[i];
+      let tx = rest[i][0], ty = rest[i][1];
+      if (gb && gb.active) {   // ゆびで引っぱる：近い節ほど指先に寄る
+        const w = Math.exp(-Math.pow((rest[i][1] - gb.y0) / (L.S * 1.15), 2)) * gb.pull;
+        if (w > 0.002) { tx = lerp(tx, gb.x, w); ty = lerp(ty, gb.y, w * 0.6); }
+      }
+      // くしでとかす手
+      if (F.combing && s.side > 0 && s.u < 0.6) {
+        const d = Math.hypot(n.x - F.rh[0], n.y - F.rh[1]);
+        if (d < L.S * 0.6) { tx += (F.rh[0] - n.x) * 0.25; ty += 6; }
+      }
+      // 誘いのときは髪がゆらゆら
+      if (G.invite === 'hair' || G.invite === 'lock') tx += Math.sin(G.t * 2.4 + i * 0.5 + j * 0.3) * L.S * 0.05 * (i / NODES);
+      const ax = (tx - n.x) * k - n.vx * damp, ay = (ty - n.y) * k - n.vy * damp;
+      n.vx += ax * dt; n.vy += ay * dt;
+      n.x += n.vx * dt; n.y += n.vy * dt;
+      if (n.y > fy) { n.y = fy; n.vy *= -0.2; }
+    }
+    // 伸びすぎない
+    const maxL = s.segLen * (gb && gb.active ? 2.2 : 1.35);
+    for (let i = 1; i < NODES; i++) {
+      const a = nd[i - 1], b = nd[i];
+      const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy);
+      if (d > maxL && d > 0) { const f = maxL / d; b.x = a.x + dx * f; b.y = a.y + dy * f; }
+    }
+    s.glint = (s.glint + dt * 0.18) % 1.4;
+  });
+  // 切れた房が落ちる
+  for (let i = HR.debris.length - 1; i >= 0; i--) {
+    const d = HR.debris[i];
+    d.t += dt; d.vy += 900 * dt; d.vx *= 0.985; d.x += d.vx * dt; d.y += d.vy * dt; d.rot += d.vr * dt;
+    if (d.y > L.H * 0.1 + d.y0 && d.vy > 0 && d.t > 0.3) { d.vy *= 0.3; }
+    if (d.t > 1.5) {
+      for (let k2 = 0; k2 < 3; k2++) spark(d.cx + d.x, d.cy + d.y, 'gold');
+      HR.debris.splice(i, 1);
+    }
+  }
+}
+// 長さを変える：見た目が飛ばないよう、いまの曲がりに沿って節を置き直す
+function setHairLen(newLen, cutOff) {
+  HR.strands.forEach((s, j) => {
+    const target = strandLenTarget(j, newLen);
+    const old = Math.min(s.len, s.full || s.len);
+    if (cutOff && target < old - 0.05) {
+      // 切り落とす部分を記録
+      const keep = target / old;
+      const pts = [];
+      const nd = s.nodes;
+      const cum = [0];
+      for (let i = 1; i < nd.length; i++) cum.push(cum[i - 1] + Math.hypot(nd[i].x - nd[i - 1].x, nd[i].y - nd[i - 1].y));
+      const tot = cum[cum.length - 1], cutAt = tot * keep;
+      let pi = 1;
+      while (pi < cum.length - 1 && cum[pi] < cutAt) pi++;
+      const a = nd[pi - 1], b = nd[pi], seg = cum[pi] - cum[pi - 1], f = seg > 0 ? clamp((cutAt - cum[pi - 1]) / seg, 0, 1) : 0;
+      pts.push([a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f]);
+      for (let i = pi; i < nd.length; i++) pts.push([nd[i].x, nd[i].y]);
+      cutOff.push({ pts, side: s.side, u: s.u, w: s.w });
+      // 残る部分へ節を詰め直す
+      const np = [];
+      for (let i = 0; i < NODES; i++) {
+        const want = cutAt * i / (NODES - 1);
+        let q = 1; while (q < cum.length - 1 && cum[q] < want) q++;
+        const A = nd[q - 1], B = nd[q], sg = cum[q] - cum[q - 1], ff = sg > 0 ? clamp((want - cum[q - 1]) / sg, 0, 1) : 0;
+        np.push({ x: A.x + (B.x - A.x) * ff, y: A.y + (B.y - A.y) * ff, vx: lerp(A.vx, B.vx, ff), vy: lerp(A.vy, B.vy, ff) });
+      }
+      s.nodes = np;
+    }
+    s.len = target;
+  });
+}
+function cutHair(newLen, dirx) {
+  const cut = [];
+  setHairLen(newLen, cut);
+  if (cut.length) {
+    let cx = 0, cy = 0, n = 0;
+    cut.forEach(c => { cx += c.pts[0][0]; cy += c.pts[0][1]; n++; });
+    cx /= n; cy /= n;
+    const deb = { strands: cut.map(c => ({ pts: c.pts.map(p => [p[0] - cx, p[1] - cy]), side: c.side, u: c.u, w: c.w })), cx, cy, x: 0, y: 0, y0: 0, vx: dirx * 260, vy: -160, rot: 0, vr: dirx * 1.4, t: 0 };
+    HR.debris.push(deb);
+    if (HR.debris.length > 3) HR.debris.shift();
+    for (let k = 0; k < 10; k++) spark(cx + (Math.random() - 0.5) * L.S * 2, cy + (Math.random() - 0.5) * L.S * 0.6, k % 2 ? 'hair' : 'gold');
+  }
+}
+// ----- 描く -----
+function hairCols() { return [tabC(HAIR_ROOT, F.a), tabC(HAIR_MID, F.a), tabC(HAIR_TIP, F.a)]; }
+function strandPath(g, pts) { smoothPath(g, pts); }
+function drawHair() {
+  const S = F.S, cols = hairCols();
+  const gr = ctx.createLinearGradient(0, F.hy - F.hr, 0, L.baseY + S * 0.3);
+  gr.addColorStop(0, rgb(cols[0])); gr.addColorStop(0.35, rgb(cols[1])); gr.addColorStop(1, rgb(cols[2]));
+  const grD = ctx.createLinearGradient(0, F.hy - F.hr, 0, L.baseY + S * 0.3);
+  grD.addColorStop(0, rgb(lit(cols[0], -0.2))); grD.addColorStop(1, rgb(lit(cols[2], -0.2)));
+  const tension = HR.grab && HR.grab.active ? HR.grab.ten : 0;
+  ctx.save(); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  // かたまり（左右）：糸の間を埋める絹のシート
+  for (let sd = 0; sd < 2; sd++) {
+    const inner = HR.strands[sd * KS], outer = HR.strands[sd * KS + KS - 1];
+    const n1 = inner.nodes, n2 = outer.nodes;
+    ctx.beginPath(); ctx.moveTo(n1[0].x, n1[0].y);
+    for (let i = 1; i < NODES; i++) ctx.lineTo(n1[i].x, n1[i].y);
+    for (let i = NODES - 1; i >= 0; i--) ctx.lineTo(n2[i].x, n2[i].y);
+    ctx.closePath(); ctx.fillStyle = grD; ctx.globalAlpha = 0.9; ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  // 房
+  const lw = S * 0.24;
+  HR.strands.forEach((s, j) => {
+    const all = s.nodes.map(n => [n.x, n.y]);
+    // 根元は頭のかぶりにまかせ、こめかみから下を房として描く
+    const pts = all.length > 3 ? [[lerp(all[0][0], all[1][0], 0.6), lerp(all[0][1], all[1][1], 0.6)]].concat(all.slice(1)) : all;
+    const isLock = G.era === 3 && HR.lockIdx.indexOf(j) >= 0;
+    if (!Q.level) { ctx.globalAlpha = 0.75; ctx.strokeStyle = grD; ctx.lineWidth = lw * s.w * 1.22; ctx.beginPath(); strandPath(ctx, pts); ctx.stroke(); ctx.globalAlpha = 1; }
+    ctx.strokeStyle = gr; ctx.lineWidth = lw * s.w * 0.85;
+    ctx.beginPath(); strandPath(ctx, pts.map(p => [p[0] - lw * 0.12, p[1]])); ctx.stroke();
+    // 繊維のつや（張ると明るく）
+    ctx.strokeStyle = 'rgba(255,246,222,' + (0.28 + tension * 0.45 + (isLock && G.invite === 'lock' ? 0.25 + 0.2 * Math.sin(G.t * 5) : 0)).toFixed(3) + ')';
+    ctx.lineWidth = Math.max(0.8, lw * 0.18);
+    ctx.beginPath(); strandPath(ctx, pts.map(p => [p[0] - lw * 0.28, p[1]])); ctx.stroke();
+  });
+  // 流れる光（絹の照り）：房に沿って短い光のすじが下りていく
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.strokeStyle = 'rgba(255,236,190,0.30)'; ctx.lineWidth = Math.max(1, lw * 0.32);
+  HR.strands.forEach((s, j) => {
+    if (j % 2) return;
+    const f = s.glint; if (f > 1) return;
+    const nd = s.nodes, idx = Math.min(NODES - 2, Math.floor(f * (NODES - 2)) + 1);
+    const a = nd[idx - 1], b = nd[idx], c = nd[idx + 1];
+    ctx.beginPath(); ctx.moveTo(a.x - lw * 0.2, a.y); ctx.quadraticCurveTo(b.x - lw * 0.2, b.y, (b.x + c.x) / 2 - lw * 0.2, (b.y + c.y) / 2); ctx.stroke();
+  });
+  ctx.globalCompositeOperation = 'source-over';
+  // 最後の一房のむすび目
+  if (G.era === 3 && G.phase !== 'ff') {
+    const s = HR.strands[HR.lockIdx[1]], n = s.nodes[Math.floor(NODES * 0.35)];
+    bow(ctx, n.x, n.y, S * 0.16, P.silkG, false, 0);
+  }
+  ctx.restore();
+}
+function drawDebris() {
+  if (!HR.debris.length) return;
+  const S = F.S, cols = hairCols();
+  ctx.save(); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  HR.debris.forEach(d => {
+    const a = clamp(1.5 - d.t, 0, 1);
+    ctx.save(); ctx.globalAlpha = a;
+    ctx.translate(d.cx + d.x, d.cy + d.y); ctx.rotate(d.rot);
+    d.strands.forEach(s => {
+      ctx.strokeStyle = rgb(lit(cols[2], -0.15)); ctx.lineWidth = S * 0.2 * s.w;
+      ctx.beginPath(); smoothPath(ctx, s.pts); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,246,222,0.45)'; ctx.lineWidth = S * 0.04;
+      ctx.beginPath(); smoothPath(ctx, s.pts.map(p => [p[0] - S * 0.05, p[1]])); ctx.stroke();
+    });
+    ctx.restore();
+  });
+  ctx.restore();
+}
+
+// ---------------------------------------------------------------------
+//  時間の流れ：切る→昔へ、最後の一房→赤ちゃん→早送り→新しいみらい
+// ---------------------------------------------------------------------
+G.sched = []; G.rbFade = 0; G.ripples = []; G.flash = 0; G.cupHome = 'table'; G.leaving = false;
+G.ffDough = false; G.ffDoughK = 0; G.ffCup = false; G.ffSilk = false; G.hairGrow = null;
+function at(delay, fn) { G.sched.push({ t: G.t + delay, fn }); }
+function updateSched() {
+  for (let i = 0; i < G.sched.length; i++) {
+    if (G.t >= G.sched[i].t) { const f = G.sched[i].fn; G.sched.splice(i, 1); i--; try { f(); } catch (e) { reportErr(e); } }
+  }
+}
+function tween(obj, key, to, dur, delay, ease) {
+  G.tweens = G.tweens.filter(t => !(t.obj === obj && t.key === key));
+  G.tweens.push({ obj, key, from: null, to, dur, delay: delay || 0, ease: ease || easeIO, t: 0 });
+}
+function updateTweens(dt) {
+  for (let i = G.tweens.length - 1; i >= 0; i--) {
+    const tw = G.tweens[i];
+    tw.t += dt;
+    if (tw.t < tw.delay) continue;
+    if (tw.from === null) tw.from = tw.obj[tw.key];
+    const k = tw.dur > 0 ? clamp((tw.t - tw.delay) / tw.dur, 0, 1) : 1;
+    tw.obj[tw.key] = lerp(tw.from, tw.to, tw.ease(k));
+    if (k >= 1) G.tweens.splice(i, 1);
+  }
+}
+function ripple(x, y, kind) { G.ripples.push({ x, y, t: 0, kind: kind || 'back' }); if (G.ripples.length > 4) G.ripples.shift(); }
+
+// ----- 粒（上限つき） -----
+function spark(x, y, kind) {
+  if (G.parts.length >= (Q.level >= 2 ? MAX_PARTS >> 1 : MAX_PARTS)) G.parts.shift();
+  const up = kind === 'gold' || kind === 'rain' ? 1 : 0;
+  G.parts.push({ x, y, vx: (Math.random() - 0.5) * 170, vy: -Math.random() * 150 - 40 * up, life: 0, max: 0.7 + Math.random() * 0.7, kind, s: 1.4 + Math.random() * 2.4, rot: Math.random() * TAU, vr: (Math.random() - 0.5) * 9, c: (Math.random() * 7) | 0 });
+}
+function updateParts(dt) {
+  for (let i = G.parts.length - 1; i >= 0; i--) {
+    const p = G.parts[i];
+    p.life += dt;
+    const grav = p.kind === 'gold' || p.kind === 'rain' ? 40 : p.kind === 'flour' ? 60 : 520;
+    p.vy += grav * dt; p.vx *= 0.98; p.x += p.vx * dt; p.y += p.vy * dt; p.rot += p.vr * dt;
+    if (p.life > p.max) G.parts.splice(i, 1);
+  }
+}
+const RB = ['#ff4f4f', '#ffa020', '#ffe24a', '#46d17a', '#3ab8ff', '#6a5cff', '#d05cff'].map(hex);
+function drawParts() {
+  for (const p of G.parts) {
+    const a = clamp(1 - p.life / p.max, 0, 1);
+    ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot);
+    if (p.kind === 'gold' || p.kind === 'rain') {
+      const c = p.kind === 'rain' ? RB[p.c] : P.goldL;
+      ctx.fillStyle = rgb(c, a); ctx.beginPath();
+      ctx.moveTo(0, -p.s * 1.6); ctx.lineTo(p.s * 0.4, -p.s * 0.4); ctx.lineTo(p.s * 1.6, 0); ctx.lineTo(p.s * 0.4, p.s * 0.4);
+      ctx.lineTo(0, p.s * 1.6); ctx.lineTo(-p.s * 0.4, p.s * 0.4); ctx.lineTo(-p.s * 1.6, 0); ctx.lineTo(-p.s * 0.4, -p.s * 0.4); ctx.closePath(); ctx.fill();
+    } else if (p.kind === 'hair') {
+      ctx.strokeStyle = rgb(tabC(HAIR_TIP, F.a), a); ctx.lineWidth = 1.2; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(-p.s * 2, 0); ctx.quadraticCurveTo(0, -p.s * 1.5, p.s * 2, 0); ctx.stroke();
+    } else if (p.kind === 'crumb') {
+      ctx.fillStyle = rgb(lit(P.cookie, (p.c % 3) * 0.1), a); ctx.fillRect(-p.s * 0.6, -p.s * 0.5, p.s * 1.2, p.s);
+    } else if (p.kind === 'flour') {
+      ctx.fillStyle = 'rgba(255,252,240,' + (a * 0.8).toFixed(3) + ')'; ctx.beginPath(); ctx.arc(0, 0, p.s * 0.7, 0, TAU); ctx.fill();
+    } else if (p.kind === 'leaf') {
+      ctx.fillStyle = rgb(P.leaf, a); ctx.beginPath(); ctx.ellipse(0, 0, p.s * 1.6, p.s * 0.7, 0, 0, TAU); ctx.fill();
+    } else if (p.kind === 'glaze') {
+      ctx.fillStyle = 'rgba(200,255,245,' + a.toFixed(3) + ')'; ctx.beginPath(); ctx.arc(0, 0, p.s * 0.8, 0, TAU); ctx.fill();
+    }
+    ctx.restore();
+  }
+}
+function drawRipples(dt) {
+  for (let i = G.ripples.length - 1; i >= 0; i--) {
+    const r = G.ripples[i]; r.t += dt;
+    const k = r.t / 0.9; if (k >= 1) { G.ripples.splice(i, 1); continue; }
+    const rad = L.S * (0.4 + 2.9 * easeOut(k));
+    ctx.save(); ctx.globalAlpha = (1 - k) * 0.6;
+    ctx.lineWidth = Math.max(2, L.S * 0.12 * (1 - k));
+    ctx.strokeStyle = r.kind === 'fwd' ? 'rgba(255,230,140,0.9)' : 'rgba(150,240,225,0.9)';
+    ctx.beginPath(); ctx.arc(r.x, r.y, rad, 0, TAU); ctx.stroke();
+    ctx.strokeStyle = r.kind === 'fwd' ? 'rgba(255,170,90,0.6)' : 'rgba(255,215,140,0.6)'; ctx.lineWidth *= 0.5;
+    ctx.beginPath(); ctx.arc(r.x, r.y, rad * 0.82, 0, TAU); ctx.stroke();
+    ctx.restore();
+  }
+  if (G.flash > 0.01) {   // 時間がもどる一瞬の色
+    ctx.fillStyle = 'rgba(255,214,150,' + (G.flash * 0.22).toFixed(3) + ')'; ctx.fillRect(0, 0, L.W, L.H);
+  }
+}
+
+// ----- 飛ぶもの（材料の行き先・贈り物の道すじ） -----
+function flight(o) { o.t = -(o.delay || 0); o.done = false; G.flights.push(o); return o; }
+function bez(a, c, b, k) { const u = 1 - k; return [u * u * a[0] + 2 * u * k * c[0] + k * k * b[0], u * u * a[1] + 2 * u * k * c[1] + k * k * b[1]]; }
+function flightEnd(f) { if (f.to === 'shelf') { const s = slotOf(f.mat); return [s.x, s.y - L.slotR * 0.5]; } return typeof f.to === 'function' ? f.to() : f.to; }
+function flightAt(f, k) {
+  const a = f.from, b = flightEnd(f);
+  const c = f.via || [(a[0] + b[0]) / 2, Math.min(a[1], b[1]) - Math.max(L.S * 1.5, Math.abs(a[0] - b[0]) * 0.35)];
+  return bez(a, c, b, k);
+}
+function updateFlights(dt) {
+  for (let i = 0; i < G.flights.length; i++) {
+    const f = G.flights[i];
+    const was = f.t;
+    f.t += dt;
+    if (was < 0 && f.t >= 0 && f.onStart) f.onStart();
+    if (!f.done && f.t >= f.dur) { f.done = true; if (f.onArrive) { try { f.onArrive(); } catch (e) { reportErr(e); } } }
+    if (f.t >= 0 && !f.done && Math.random() < dt * 30) { const p = flightAt(f, easeIO(clamp(f.t / f.dur, 0, 1))); spark(p[0], p[1], f.rb ? 'rain' : 'gold'); }
+  }
+  G.flights = G.flights.filter(f => !f.done);
+}
+function drawFlights() {
+  for (const f of G.flights) {
+    if (f.t < 0) continue;
+    const k = easeIO(clamp(f.t / f.dur, 0, 1));
+    const p = flightAt(f, k);
+    if (f.trail) {   // 道すじ（糸）を描く
+      const pts = []; for (let j = 0; j <= 16; j++) pts.push(flightAt(f, k * j / 16));
+      silkLine(ctx, pts, Math.max(1.5, L.S * 0.06), f.rb, 0);
+    } else {
+      const pts = []; for (let j = 0; j <= 10; j++) pts.push(flightAt(f, Math.max(0, k - 0.25) + (k - Math.max(0, k - 0.25)) * j / 10));
+      ctx.save(); ctx.lineCap = 'round'; ctx.strokeStyle = 'rgba(255,225,140,0.45)'; ctx.lineWidth = Math.max(2, L.S * 0.12);
+      ctx.beginPath(); smoothPath(ctx, pts); ctx.stroke(); ctx.restore();
+    }
+    glowAt(p[0], p[1], L.S * 1.1, 0.7);
+    if (f.draw) f.draw(p[0], p[1], k);
+    else if (f.mat) drawMaterial(f.mat, p[0], p[1] + L.slotR * 0.5, L.slotR * 1.6, 1);
+  }
+}
+
+// ----- 時代を動かす -----
+const EVK = ['fig', 'sky', 'tree', 'sweets', 'knit', 'cup', 'shelf'];
+const STAG = { fig: 0, sky: 0.08, tree: 0.16, sweets: 0.3, knit: 0.42, cup: 0.54, shelf: 0.66 };
+function rewindTo(era, steps) {
+  // 家具が少しずつ時間差で逆再生される
+  EVK.forEach(k => {
+    const dl = STAG[k];
+    tween(G.ev, k, Math.min(era, k === 'shelf' ? 1 : era), 0.75, dl, easeIO);
+    at(dl, () => { G.wiggle['ev_' + k] = { t: 0 }; });
+  });
+  ['dough', 'cup', 'silk', 'tree', 'jar'].forEach((id, i) => at(0.25 + i * 0.12, () => { G.wiggle[id] = { t: 0 }; }));
+}
+function rollRainbow() {
+  const on = G.forceRainbow >= 0 ? G.forceRainbow === 1 : Math.random() < 0.14;
+  G.rainbow = on;
+  tween(G, 'rbFade', on ? 1 : 0, 0.8, 0.5);
+}
+function startCycle() {
+  // みらいの物を材料にして昔の棚へもどす
+  const cr = G.creation;
+  G.gifts = newGifts(); G.dough = newDough(); G.branchSel = null; G.loopAnim = null;
+  if (cr) {
+    G.leaving = true;
+    ['slide', 'swing', 'curtain', 'cookie', 'gold'].forEach(k => tween(G.rv, k, 0, 0.5, 0.05));
+    const mats = [];
+    if (cr.b) mats.push(['b', () => { const pts = futBranch(), m = pts[Math.floor(pts.length / 2)]; return [L.win.x + m[0], L.win.y + m[1]]; }]);
+    if (cr.s) mats.push(['s', () => { if (cr.b) { const s = swingGeo(); return [L.win.x + s.px, L.win.y + s.py + s.rl * 0.6]; } return [L.win.ox, lerp(L.win.oy, L.sillY, 0.6)]; }]);
+    if (cr.d) mats.push(['d', () => [L.dough.x, L.dough.y - L.dough.r * 0.3]]);
+    if (cr.c) mats.push(['c', () => [L.stand.x, (L.standTop || L.sillTop) - L.cup.s * 0.5]]);
+    mats.forEach((m, i) => {
+      const from = m[1]();
+      flight({ mat: m[0], from, to: 'shelf', delay: 0.2 + i * 0.2, dur: 1.05, onStart: () => sFly(), onArrive: () => {
+        G.shelf[m[0]] = JSON.parse(JSON.stringify(cr[m[0]]));
+        if (m[0] === 'b' || m[0] === 's') G.shelf.tf = cr.tf;
+        const s = slotOf(m[0]); for (let k = 0; k < 6; k++) spark(s.x, s.y - L.slotR * 0.4, 'gold');
+        sShelf(); writeSave();
+      } });
+    });
+    if (cr.c && G.cupHome === 'stand') {   // 器は新品にもどって机へ
+      const c = L.cup;
+      G.ffCup = true; G.cupHome = 'table';
+      flight({ kind: 'cupback', from: [L.stand.x, (L.standTop || L.sillTop)], to: [c.x, c.y], dur: 0.9,
+        draw: (px, py, k) => drawCupAt(px, py, c.s, 'new', Math.sin(k * 10) * 0.06, 1, k < 0.5 ? cr.c.s : 0, 1),
+        onArrive: () => { G.ffCup = false; G.cupWobV += 1.2; sTick(1500, 0.05); } });
+    }
+    at(0.6, () => { G.creation = null; G.leaving = false; G.cupHome = 'table'; G.touched = {}; });
+  }
+}
+function doCut(dirx, x, y) {
+  if (G.phase !== 'play' || G.era >= 4) return false;
+  const from = G.era, to = from + 1;
+  if (from === 0) startCycle();
+  G.era = to;
+  if (to === 4) { finalCut(dirx, x, y); return true; }
+  cutHair(HAIR_LEN[to], dirx);
+  rewindTo(to, 1);
+  if (to >= 1) rollRainbow();
+  G.visit = { era: to, choices: 0, touches: 0 };
+  const fc = G.face; fc.sur = 1; fc.laugh = 0; fc.lookUntil = G.t + 0.8; fc.lookX = x; fc.lookY = y;
+  at(0.4, () => { fc.laugh = 1.1; sGiggle(); });
+  G.rock.kick = 1;
+  G.flash = 1; tween(G, 'flash', 0, 0.7);
+  ripple(x, y, 'back');
+  sSnip(to); sRewind(to);
+  return true;
+}
+// ----- 最後の一房 → 赤ちゃん → 早送り -----
+function finalCut(dirx, x, y) {
+  cutHair(HAIR_LEN[4], dirx);
+  G.phase = 'ff';
+  const gf = G.gifts;
+  const cr = { b: gf.branch ? JSON.parse(JSON.stringify(gf.branch)) : null, s: gf.silk ? JSON.parse(JSON.stringify(gf.silk)) : null, d: gf.dough ? JSON.parse(JSON.stringify(gf.dough)) : null, c: null, tf: true };
+  if (gf.cup) cr.c = { e: gf.cup.e, s: clamp(gf.cup.e + (gf.cup.reuse ? 1 : 0), 1, 5) };
+  if (cr.b && cr.s) cr.tf = gf.tTree <= gf.tSilk;
+  G.creation = cr;
+  ['slide', 'swing', 'curtain', 'cookie', 'gold'].forEach(k => { G.rv[k] = 0; });
+  G.touched = {};
+  G.ff = { t: 0 };
+  const fc = G.face; fc.sur = 1; fc.lookUntil = G.t + 0.6; fc.lookX = x; fc.lookY = y;
+  tween(G.ev, 'fig', 4, 0.7, 0.05); tween(G.ev, 'tree', 4, 0.9, 0.1); tween(G.ev, 'sky', 4, 0.9, 0.1);
+  tween(G, 'rbFade', 0, 0.5); G.rainbow = false;
+  sSnip(4);
+  ripple(x, y, 'back'); G.flash = 1; tween(G, 'flash', 0, 0.9);
+  for (let k = 0; k < 16; k++) spark(F.hx + (Math.random() - 0.5) * L.S * 3, F.hy + (Math.random() - 0.3) * L.S * 3, 'gold');
+  // 赤ちゃんの大笑い
+  at(0.7, () => { fc.laugh = 2.6; fc.sur = 0; sLaugh(true); G.rock.kick = 1.5; });
+  // 髪が伸びはじめる
+  const T0 = 1.8;
+  at(T0, () => { G.hairGrow = { t: 0, dur: 5.2, from: HAIR_LEN[4] }; });
+  // 部屋の早送り（同じ部屋が組み替わる）
+  [3, 2, 1, 0].forEach((e, i) => at(T0 + i * 1.2, () => {
+    tween(G.ev, 'fig', e, 1.1); tween(G.ev, 'tree', e, 1.1, 0.1); tween(G.ev, 'sky', e, 1.1, 0.05);
+    if (e === 0) { tween(G.ev, 'shelf', 0, 0.8); G.era = 0; }
+    sForward(i); ripple(F.hx, F.hy, 'fwd');
+    for (let k = 0; k < 5; k++) sGrowNote(i * 2 + k);
+  }));
+  // 贈り物の道すじ
+  const D = L.dough;
+  if (cr.d) {
+    const shape = cr.d;
+    flight({ kind: 'dough', from: [D.x, D.y], to: [D.x, D.y], via: [lerp(D.x, L.win.x + L.win.w * 0.5, 0.55), L.sillY + L.S * 0.2], delay: T0 + 0.5, dur: 2.0,
+      onStart: () => { G.ffDough = true; sFly(); },
+      draw: (px, py, k) => { G.ffDoughK = k; glowAt(px, py, D.r * 2.2, 0.4 + 0.5 * Math.sin(k * Math.PI), [255, 170, 80]); drawLump(px, py, D.r * 0.92, shape, false, 0, 1 - sm(inv(0.35, 0.65, k))); drawLump(px, py, D.r * 0.92, shape, true, 0, sm(inv(0.35, 0.65, k))); },
+      onArrive: () => { G.ffDough = false; G.ev.sweets = 0; tween(G.rv, 'cookie', 1, 0.5); sSuccess(1); for (let k = 0; k < 8; k++) spark(D.x, D.y - D.r * 0.4, 'gold'); } });
+  } else at(T0 + 2.4, () => tween(G.ev, 'sweets', 0, 0.8));
+  if (cr.c) {
+    const c = L.cup;
+    at(T0 + 2.4, () => tween(G.rv, 'gold', 1, 1.2));
+    flight({ kind: 'cup', from: [c.x, c.y], to: () => [L.stand.x, (L.standTop || L.sillTop)], delay: T0 + 1.7, dur: 1.8,
+      onStart: () => { G.ffCup = true; sFly(); },
+      draw: (px, py, k) => { drawCupAt(px, py, c.s, 'new', Math.sin(k * 12) * 0.08, 1, Math.round(cr.c.s * sm(inv(0.4, 1, k))), 1); },
+      onArrive: () => { G.ffCup = false; G.cupHome = 'stand'; G.ev.cup = 0; G.goldShine = 0; sCup(true, 0); for (let k = 0; k < 10; k++) spark(L.stand.x, (L.standTop || L.sillTop) - c.s * 0.6, 'gold'); } });
+  } else at(T0 + 2.8, () => tween(G.ev, 'cup', 0, 0.8));
+  if (cr.s) {
+    const b = L.ball;
+    const dest = () => {
+      if (cr.b) { const gr = 1, pts = brCustom(cr.b.i, cr.b.p, gr, true), a = polyAt(pts, cr.tf ? 0.84 : 0.24); return [L.win.x + a[0], L.win.y + a[1]]; }
+      return [L.win.ox + L.win.ow * 0.08, lerp(L.win.oy, L.sillY, 0.6)];
+    };
+    flight({ kind: 'silk', trail: true, rb: cr.s.rb, from: [b.x, b.y], to: dest, delay: T0 + 2.6, dur: 1.9,
+      onStart: () => { G.ffSilk = true; sFly(); for (let k = 0; k < cr.s.n; k++) at(k * 0.18, () => sLoop(k + 1)); },
+      draw: (px, py, k) => { drawSilkBall(b.x, b.y, b.r * (1 - k * 0.4), G.t * 6, 1 - k * 0.5); drawLoops(Math.max(1, Math.round(cr.s.n * (1 - k))), cr.s.rb, 1); },
+      onArrive: () => { G.ffSilk = false; tween(G.ev, 'knit', 0, 0.9); tween(G.rv, cr.b ? 'swing' : 'curtain', 1, 1.4); sSuccess(2); const p = dest(); for (let k = 0; k < 10; k++) spark(p[0], p[1], cr.s.rb ? 'rain' : 'gold'); } });
+  } else at(T0 + 1.2, () => tween(G.ev, 'knit', 0, 0.9));
+  if (cr.b && !cr.s) at(T0 + 3.9, () => { tween(G.rv, 'slide', 1, 1.4); sBranch(6); });
+  if (cr.b && cr.s) at(T0 + 3.6, () => { /* 枝が先に育ち、糸の到着でブランコになる */ sBranch(5); });
+  // できあがり
+  at(T0 + 5.6, () => {
+    fc.laugh = 1.4; sSuccess(3); G.rock.kick = 1;
+    G.hairGrow = null; setHairLen(HAIR_LEN[0], null);
+    ['slide', 'swing', 'curtain', 'cookie', 'gold'].forEach(k => { if (G.rv[k] < 1 && hasPart(k)) tween(G.rv, k, 1, 0.6); });
+    for (let k = 0; k < 14; k++) spark(L.cx + (Math.random() - 0.5) * L.W * 0.8, L.H * (0.2 + Math.random() * 0.5), 'gold');
+  });
+  at(T0 + 6.4, () => {
+    G.phase = 'play'; G.ff = null; G.cyc += 1; G.gifts = newGifts(); G.dough = newDough();
+    G.visit = { era: 0, choices: 0, touches: 0 };
+    writeSave();
+  });
+}
+function hasPart(k) {
+  const cr = G.creation; if (!cr) return false;
+  return (k === 'slide' && cr.b && !cr.s) || (k === 'swing' && cr.b && cr.s) || (k === 'curtain' && cr.s && !cr.b) || (k === 'cookie' && cr.d) || (k === 'gold' && cr.c);
+}
+function updateFF(dt) {
+  if (G.ff) G.ff.t += dt;
+  const hg = G.hairGrow;
+  if (hg) {
+    hg.t += dt;
+    const k = easeIO(clamp(hg.t / hg.dur, 0, 1));
+    setHairLen(lerp(hg.from, 9.5, k), null);
+    if (Math.random() < dt * 12) { const s = HR.strands[(Math.random() * HR.strands.length) | 0], n = s.nodes[NODES - 1]; spark(n.x, n.y, 'gold'); }
+  }
+}
+
+// ----- 贈り物を選ぶ -----
+function noteChoice(kind, first) {
+  if (first) { G.visit.choices++; sSuccess(G.visit.choices); }
+  G.face.smile = 0.9; G.face.lookUntil = G.t + 1.2;
+}
+function markOrder(kind) {
+  const gf = G.gifts; gf.seq++;
+  if (kind === 'tree' && gf.tTree < 0) gf.tTree = gf.seq;
+  if (kind === 'silk' && gf.tSilk < 0) gf.tSilk = gf.seq;
+}
+function pressDough(px, py, first) {
+  const D = L.dough, R = D.r * 0.92, thick = R * 0.3;
+  const u = (px - D.x) / R, v = (py - (D.y - thick)) / (R * PERSP);
+  const d = Math.hypot(u, v), sh = G.dough;
+  if (d > 0.62) {   // ふちを押す → 形がへこむ
+    const a = Math.atan2(v, u);
+    for (let k = 0; k < 24; k++) {
+      let da = Math.abs(k / 24 * TAU - a); da = Math.min(da, TAU - da);
+      sh.o[k] = Math.max(0.42, sh.o[k] - 0.24 * Math.exp(-Math.pow(da / 0.32, 2)));
+    }
+  } else {   // まんなかを押す → 指のあと
+    sh.d.push([clamp(u, -0.8, 0.8), clamp(v, -0.8, 0.8), 0.2]);
+    if (sh.d.length > 9) sh.d.shift();
+  }
+  G.doughSq = 0.7; G.doughSqT = 0;
+  for (let k = 0; k < 4; k++) spark(px, py, 'flour');
+  sDough(d);
+  const had = !!G.gifts.dough;
+  G.gifts.dough = { o: sh.o.slice(), d: sh.d.map(q => q.slice()), e: G.era };
+  if (first) noteChoice('dough', !had);
+}
+function ringCup() {
+  G.cupWobV += 2.4; G.cupShine = 0; G.cupRings++;
+  for (let k = 0; k < 4; k++) spark(L.cup.x + (Math.random() - 0.5) * L.cup.s, L.cup.y - L.cup.s * 1.1, 'glaze');
+  const had = !!G.gifts.cup;
+  sCup(false, G.cupRings);
+  if (!had) G.gifts.cup = { e: G.era, reuse: false };
+  noteChoice('cup', !had);
+}
+function addLoop() {
+  const gf = G.gifts, had = !!gf.silk;
+  const n = had ? gf.silk.n : 0;
+  if (n >= MAX_LOOPS) { G.ballSpin += 3; sSilk(0.6); return; }
+  gf.silk = { n: n + 1, e: G.era, rb: (had && gf.silk.rb) || G.rainbow };
+  if (!had) markOrder('silk');
+  sLoop(n + 1);
+  const p = loopPos(n, n + 1);
+  for (let k = 0; k < 4; k++) spark(p[0], p[1], gf.silk.rb ? 'rain' : 'gold');
+  noteChoice('silk', !had);
+}
+function finishBranch() {
+  const bs = G.branchSel; if (!bs) return;
+  const gr = tab(TREE_G, G.ev.tree), base = brBase(bs.i, gr), th = trunkH(gr);
+  const all = bs.def.concat(bs.ext);
+  // 点を間引いて保存
+  const pts = [all[0]]; let acc = 0;
+  for (let k = 1; k < all.length; k++) { acc += Math.hypot(all[k][0] - all[k - 1][0], all[k][1] - all[k - 1][1]); if (acc > th * 0.06 || k === all.length - 1) { pts.push(all[k]); acc = 0; } }
+  while (pts.length > 16) pts.splice(1 + ((pts.length - 2) >> 1), 1);
+  const rel = pts.map(p => [clamp((p[0] - base[0]) / th, -2.9, 2.9), clamp((p[1] - base[1]) / th, -2.9, 2.9)]);
+  const had = !!G.gifts.branch;
+  G.gifts.branch = { i: bs.i, p: rel, e: G.era };
+  if (!had) markOrder('tree');
+  bs.done = true;
+  noteChoice('tree', !had);
+}
+
+// ----- 次に触るもの（いつも一つだけ） -----
+function computeInvite() {
+  if (G.phase !== 'play') return null;
+  if (G.era === 0) {
+    const cr = G.creation;
+    if (cr && !G.leaving) {
+      const order = [];
+      if (cr.b) order.push('play');
+      if (cr.s && !cr.b) order.push('curtain');
+      if (cr.d) order.push('cookie');
+      if (cr.c) order.push('goldcup');
+      for (const id of order) if (!G.touched[id]) return id;
+    }
+    return 'hair';
+  }
+  const e = G.era;
+  if (e >= 4) return null;
+  const finalId = e === 3 ? 'lock' : 'hair';
+  if (G.visit.choices >= 2) return finalId;
+  const cand = [];
+  if (shelfShown('b') && AVAIL.tree[e]) cand.push('shelf_b');
+  if (shelfShown('s') && AVAIL.silk[e]) cand.push('shelf_s');
+  if (shelfShown('d') && AVAIL.dough[e]) cand.push('shelf_d');
+  if (shelfShown('c') && AVAIL.cup[e]) cand.push('shelf_c');
+  if (AVAIL.tree[e] && !G.gifts.branch) cand.push('tree');
+  if (AVAIL.silk[e] && !G.gifts.silk) cand.push('silk');
+  if (AVAIL.dough[e] && !G.gifts.dough) cand.push('dough');
+  if (AVAIL.cup[e] && !G.gifts.cup) cand.push('cup');
+  return cand.length ? cand[0] : finalId;
+}
+function anchorOf(id) {
+  if (!id) return null;
+  const S = L.S;
+  switch (id) {
+    case 'hair': return hairAnchor();
+    case 'lock': { const s = HR.strands[HR.lockIdx[1]]; const n = s.nodes[Math.floor(NODES * 0.6)]; return [n.x, n.y]; }
+    case 'dough': case 'cookie': return [L.dough.x, L.dough.y - L.dough.r * 0.3];
+    case 'cup': return [L.cup.x, L.cup.y - L.cup.s * 0.55];
+    case 'goldcup': return [L.stand.x, (L.standTop || L.sillTop) - L.cup.s * 0.55];
+    case 'silk': return [L.ball.x, L.ball.y];
+    case 'tree': { const gr = tab(TREE_G, G.ev.tree), i = treeHintBranch(), pts = brDefault(i, gr), tp = pts[pts.length - 1]; return [L.win.x + tp[0], L.win.y + tp[1]]; }
+    case 'play': {
+      if (!G.creation || !G.creation.b) return null;
+      if (G.creation.s) { const s = swingGeo(); return [L.win.x + s.px + Math.sin(G.swing.th) * s.rl, L.win.y + s.py + Math.cos(G.swing.th) * s.rl]; }
+      const pts = futBranch(), m = polyAt(pts, 0.5); return [L.win.x + m[0], L.win.y + m[1]];
+    }
+    case 'curtain': return [L.win.ox + L.win.ow * 0.03, lerp(L.win.oy, L.sillY, 0.62)];
+    default:
+      if (id.indexOf('shelf_') === 0) { const s = slotOf(id.slice(6)); return [s.x, s.y - L.slotR * 0.5]; }
+  }
+  return null;
+}
+function treeHintBranch() { return L.portrait ? 1 : 0; }
+function hairAnchor() {
+  const s = HR.strands[Math.floor(KS * 0.55)];
+  if (!s) return [F.x - L.S * 1.2, F.y - L.S];
+  const n = s.restN[Math.floor(NODES * 0.55)] || s.restN[NODES - 1];
+  return [n[0], n[1]];
+}
+
+// ----- 指のお手本（約4秒さわらないとき、種類ごとに一度だけ） -----
+function hintKind(id) { if (!id) return null; if (id.indexOf('shelf_') === 0) return 'shelf'; if (['play', 'curtain', 'cookie', 'goldcup'].indexOf(id) >= 0) return 'future'; return id; }
+function updateHint(dt) {
+  if (G.hint) {
+    G.hint.t += dt;
+    if (G.hint.t > G.hint.dur || G.invite !== G.hint.id) G.hint = null;
+    return;
+  }
+  if (G.phase !== 'play' || !G.invite || G.ptr) return;
+  if (G.t - Math.max(G.lastInput, 0) < 4) return;
+  const kind = hintKind(G.invite);
+  if (!kind || G.hintDone[kind]) return;
+  G.hintDone[kind] = true;
+  G.hint = { id: G.invite, kind, t: 0, dur: (kind === 'hair' || kind === 'lock' || kind === 'tree') ? 2.1 : 1.6 };
+}
+function drawHand(x, y, s, press, alpha) {
+  ctx.save(); ctx.globalAlpha = alpha; ctx.translate(x, y); ctx.rotate(-0.35); ctx.scale(s * (1 - press * 0.08), s * (1 - press * 0.12));
+  // 影
+  ctx.fillStyle = 'rgba(30,15,5,0.25)'; ctx.beginPath(); ctx.ellipse(6, 50, 26, 30, 0, 0, TAU); ctx.fill();
+  const g = ctx.createLinearGradient(-30, 0, 30, 0);
+  g.addColorStop(0, '#d9cbb8'); g.addColorStop(0.35, '#fffaf2'); g.addColorStop(1, '#cbbba4');
+  ctx.fillStyle = g;
+  // ゆび（人さし指）
+  ctx.beginPath(); ctx.moveTo(-8, 4); ctx.quadraticCurveTo(-9, -32, 0, -34); ctx.quadraticCurveTo(9, -32, 8, 4); ctx.closePath(); ctx.fill();
+  // こぶし
+  ctx.beginPath(); ctx.moveTo(-22, 8); ctx.quadraticCurveTo(-26, 50, 2, 58); ctx.quadraticCurveTo(28, 52, 26, 14); ctx.quadraticCurveTo(18, -2, -8, 2); ctx.quadraticCurveTo(-20, 0, -22, 8); ctx.fill();
+  ctx.strokeStyle = 'rgba(150,130,110,0.35)'; ctx.lineWidth = 2;
+  [16, 27, 38].forEach(yy => { ctx.beginPath(); ctx.moveTo(-14, yy); ctx.quadraticCurveTo(4, yy - 4, 20, yy); ctx.stroke(); });
+  ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.beginPath(); ctx.ellipse(-3, -24, 2.5, 6, 0, 0, TAU); ctx.fill();
+  ctx.restore();
+}
+function drawHint() {
+  const h = G.hint; if (!h) return;
+  const a0 = anchorOf(h.id); if (!a0) return;
+  const t = h.t, s = clamp(L.S / 55, 0.6, 1.3);
+  const fade = Math.min(1, t / 0.25, (h.dur - t) / 0.35);
+  if (h.kind === 'hair' || h.kind === 'lock') {
+    const k = easeIO(clamp((t - 0.3) / 1.1, 0, 1)), w = L.S * 1.7;
+    const x = a0[0] - w * 0.5 + w * k, y = a0[1];
+    if (k > 0 && k < 1) { ctx.save(); ctx.strokeStyle = 'rgba(255,240,200,0.6)'; ctx.lineWidth = 4 * s; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(a0[0] - w * 0.5, y); ctx.lineTo(x, y); ctx.stroke(); ctx.restore(); }
+    drawHand(x, y + 34 * s, s, 0, fade * 0.92);
+  } else if (h.kind === 'tree') {
+    const k = easeIO(clamp((t - 0.5) / 1.0, 0, 1));
+    const dir = L.portrait ? 1 : -1;
+    const x = a0[0] + dir * L.S * 0.9 * k, y = a0[1] - L.S * 0.5 * k;
+    const press = t > 0.3 ? 1 : t / 0.3;
+    drawHand(x, y + 34 * s, s, press, fade * 0.92);
+  } else {
+    const k = t < 0.5 ? 0 : t < 0.8 ? (t - 0.5) / 0.3 : t < 1.1 ? 1 - (t - 0.8) / 0.3 : 0;
+    if (k > 0.5) { ctx.save(); ctx.strokeStyle = 'rgba(255,240,200,' + (0.7 * fade).toFixed(3) + ')'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(a0[0], a0[1], L.S * 0.4 * (1 + (k - 0.5)), 0, TAU); ctx.stroke(); ctx.restore(); }
+    drawHand(a0[0], a0[1] + 34 * s - k * 6 * s, s, k, fade * 0.92);
+  }
+}
+
+// ----- 毎フレームの小物の動き -----
+function updateItems(dt) {
+  G.cupWobV += (-G.cupWob * 300 - G.cupWobV * 6) * dt; G.cupWob += G.cupWobV * dt;
+  G.cupShine = Math.min(1, G.cupShine + dt * 1.6); G.goldShine = Math.min(1, G.goldShine + dt * 1.2);
+  G.doughSqT = Math.min(1, G.doughSqT + dt * 4);
+  G.cookieHop = Math.min(1, G.cookieHop + dt * 3);
+  G.curtainWave = Math.max(0, G.curtainWave - dt * 0.7);
+  G.ballSpin += dt * (0.3 + (G.loopAnim ? 4 : 0));
+  for (const k in G.wiggle) { G.wiggle[k].t += dt; if (G.wiggle[k].t > 1) delete G.wiggle[k]; }
+  if (G.loopAnim) G.loopAnim.t += dt;
+  // 枝が指先へ伸びる
+  const bs = G.branchSel;
+  if (bs) {
+    const all = bs.def.concat(bs.ext);
+    bs.grow = Math.min(bs.grow + dt * L.win.h * 2.2, polyLen(all) + 1);
+    const tot = polyLen(all), k = tot > 0 ? clamp(bs.grow / tot, 0, 1) : 1;
+    const lv = []; const defLen = polyLen(bs.def);
+    const want = Math.max(defLen, bs.grow);
+    let acc = 0; lv.push(all[0]);
+    for (let i = 1; i < all.length; i++) {
+      const l = Math.hypot(all[i][0] - all[i - 1][0], all[i][1] - all[i - 1][1]);
+      if (acc + l <= want) { lv.push(all[i]); acc += l; }
+      else { const f = l > 0 ? (want - acc) / l : 0; lv.push([lerp(all[i - 1][0], all[i][0], f), lerp(all[i - 1][1], all[i][1], f)]); break; }
+    }
+    bs.live = lv.length > 1 ? lv : bs.def;
+    if (bs.done && k >= 1) G.branchSel = null;
+    if (Math.random() < dt * 10 && bs.live.length) { const tp = bs.live[bs.live.length - 1]; spark(L.win.x + tp[0], L.win.y + tp[1], 'leaf'); }
+  }
+  // ブランコ（ふりこ）
+  const sw = G.swing;
+  if (G.creation && G.creation.b && G.creation.s) {
+    const sg = swingGeo(); const gk = 9.8 * 60 / Math.max(20, sg.rl);
+    sw.w += (-gk * Math.sin(sw.th) - sw.w * 0.35) * dt; sw.th += sw.w * dt;
+    sw.th = clamp(sw.th, -1.2, 1.2);
+    if (Math.abs(sw.w) > 0.6 && Math.sign(sw.w) !== Math.sign(sw.prevW || 0) && G.creation.s.rb) for (let k = 0; k < 3; k++) spark(L.win.x + sg.px + Math.sin(sw.th) * sg.rl, L.win.y + sg.py + Math.cos(sw.th) * sg.rl, 'rain');
+    sw.prevW = sw.w;
+  } else { sw.th *= 0.9; sw.w = 0; }
+  // 枝のすべり台を転がる木の玉
+  const bl = G.ball;
+  if (bl) {
+    const pts = G.creation && G.creation.b ? futBranch() : null;
+    if (!pts) G.ball = null;
+    else if (bl.ph === 'roll') {
+      bl.v = Math.min(bl.v + dt * 1.1, 1.6); bl.s += bl.v * dt * (bl.dir);
+      const f = clamp(bl.s, 0, 1), p = polyAt(pts, f), r = Math.max(3, trunkW(1) * 0.42);
+      bl.x = p[0]; bl.y = p[1] - trunkW(1) * 0.55 - r * 0.6;
+      if (bl.s >= 1 || bl.s <= 0) { bl.ph = 'fly'; const q = polyAt(pts, f), dir = bl.dir; bl.vx = Math.cos(q[2]) * dir * 140; bl.vy = Math.sin(q[2]) * dir * 140 - 20; }
+    } else {
+      bl.vy += 700 * dt; bl.x += bl.vx * dt; bl.y += bl.vy * dt;
+      const gy = L.tree.by - 4;
+      if (bl.y > gy) { bl.y = gy; bl.vy = -Math.abs(bl.vy) * 0.45; bl.vx *= 0.7; bl.bounces = (bl.bounces || 0) + 1; if (bl.bounces <= 2) sTock(); }
+      if (bl.bounces >= 2) bl.life -= dt * 1.2;
+      if (bl.life <= 0 || bl.x < -20 || bl.x > L.win.w + 20) G.ball = null;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------
+//  一本指の操作（Pointer Events）。二本目の指・キャンセル・画面外でも固まらない
+// ---------------------------------------------------------------------
+G.ptr = null;
+function look(x, y, dur) { const f = G.face; f.lookUntil = G.t + (dur || 1.4); f.lookX = x; f.lookY = y; }
+function wiggleOn(id) { G.wiggle[id] = { t: 0 }; }
+function hitDough(x, y) { const D = L.dough, R = D.r; const dx = (x - D.x) / (R * 1.45 + 12), dy = (y - (D.y - R * 0.25)) / (R * 1.05 + 14); return dx * dx + dy * dy <= 1; }
+function hitCup(x, y) { const c = L.cup; return Math.abs(x - c.x - c.s * 0.1) < c.s * 0.8 + 12 && y > c.y - c.s * 1.35 - 12 && y < c.y + 14; }
+function hitGoldCup(x, y) { const c = L.cup, top = L.standTop || L.sillTop; return Math.abs(x - L.stand.x) < c.s * 0.8 + 14 && y > top - c.s * 1.4 - 12 && y < top + 12; }
+function hitBall(x, y) {
+  const b = L.ball; if (Math.hypot(x - b.x, y - b.y) < b.r * 1.5 + 14) return true;
+  const n = G.gifts.silk ? G.gifts.silk.n : 0;
+  for (let k = 0; k < n; k++) { const p = loopPos(k, n); if (Math.hypot(x - p[0], y - p[1]) < b.r * 0.7 + 8) return true; }
+  return false;
+}
+function hitShelf(x, y) {
+  for (const k of ['b', 's', 'd', 'c']) {
+    if (!shelfShown(k)) continue;
+    const s = slotOf(k);
+    if (Math.hypot(x - s.x, y - (s.y - L.slotR * 0.5)) < L.slotR * 1.25 + 4) return k;
+  }
+  return null;
+}
+function inWin(x, y, pad) { const w = L.win; pad = pad || 0; return x > w.x - pad && x < w.x + w.w + pad && y > w.y - pad && y < w.y + w.h + pad; }
+function hitBranch(x, y) {
+  if (!inWin(x, y, 10)) return -1;
+  const gr = tab(TREE_G, G.ev.tree); if (gr <= 0.13) return -1;
+  const lx = x - L.win.x, ly = y - L.win.y;
+  let best = -1, bd = Math.max(36, L.S * 0.8);
+  for (let i = 0; i < 4; i++) {
+    const pts = branchPts(i, gr) || brDefault(i, gr);
+    const d = polyDist(lx, ly, pts);
+    if (d < bd) { bd = d; best = i; }
+  }
+  return best;
+}
+function hitFuture(x, y) {
+  const cr = G.creation; if (!cr) return null;
+  if (cr.b && inWin(x, y, 6)) {
+    const lx = x - L.win.x, ly = y - L.win.y;
+    if (cr.s) {
+      const s = swingGeo(), sx = s.px + Math.sin(G.swing.th) * s.rl, sy = s.py + Math.cos(G.swing.th) * s.rl;
+      if (Math.hypot(lx - sx, ly - sy) < Math.max(34, L.S * 0.9) || segDist(lx, ly, s.px, s.py, sx, sy) < Math.max(22, L.S * 0.45)) return 'play';
+    }
+    if (polyDist(lx, ly, futBranch()) < Math.max(28, L.S * 0.6)) return 'play';
+  }
+  if (curtainLoops() > 0) {
+    const w = L.win, cw = w.ow * (L.portrait ? 0.105 : 0.16), top = w.oy - w.f * 0.4, bot = L.sillY + w.f * 0.3;
+    if (y > top - 10 && y < bot + 10 && ((x > w.ox - cw * 0.5 && x < w.ox + cw * 0.75) || (x > w.ox + w.ow - cw * 0.75 && x < w.ox + w.ow + cw * 0.5))) return 'curtain';
+  }
+  if (cr.d && hitDough(x, y)) return 'cookie';
+  if (cr.c && G.cupHome === 'stand' && hitGoldCup(x, y)) return 'goldcup';
+  return null;
+}
+function touchFuture(id, x, y) {
+  G.touched[id] = true; look(x, y);
+  const cr = G.creation;
+  if (id === 'play') {
+    if (cr.s) {
+      const s = swingGeo(), sx = L.win.x + s.px + Math.sin(G.swing.th) * s.rl;
+      G.swing.w += (x < sx ? 1 : -1) * 1.7;
+      sSwing(Math.min(1, Math.abs(G.swing.w) / 3));
+    } else if (!G.ball) {
+      const pts = futBranch(), hi0 = pts[0][1] <= pts[pts.length - 1][1];
+      G.ball = { s: hi0 ? 0 : 1, dir: hi0 ? 1 : -1, v: 0.3, ph: 'roll', life: 1, x: 0, y: 0, bounces: 0 };
+      sRoll(1.1); sWood();
+    } else { sWood(); }
+    G.face.laugh = Math.max(G.face.laugh, 0.6);
+  } else if (id === 'curtain') { G.curtainWave = 1; sCurtain(); }
+  else if (id === 'cookie') { G.cookieHop = 0; sCrunch(); for (let k = 0; k < 6; k++) spark(L.dough.x, L.dough.y - L.dough.r * 0.4, 'crumb'); }
+  else if (id === 'goldcup') { G.cupWobV += 2.0; G.goldShine = 0; G.cupRings++; sCup(true, G.cupRings); for (let k = 0; k < 5; k++) spark(L.stand.x, (L.standTop || L.sillTop) - L.cup.s, 'gold'); }
+}
+function hitOther(x, y) {
+  const e = G.era, B = L.basket;
+  const jx = L.shelf.x + L.shelf.w * 0.93, jy = L.shelf.y1 - L.slotR * 0.4;
+  if (!L.portrait && Math.hypot(x - jx, y - jy) < L.slotR * 0.9 + 6) return 'jar';
+  if (Math.abs(x - B.x) < B.w * 0.5 + 6 && y > B.y - B.h * 0.7 && y < B.y + B.h + 10 && !(AVAIL.silk[e])) return 'knit';
+  if (e === 0) {
+    if (!(G.creation && G.creation.d) && hitDough(x, y)) return 'cookie0';
+    if (G.cupHome === 'table' && hitCup(x, y)) return 'cup0';
+  }
+  if (inWin(x, y, 0)) return 'win';
+  return null;
+}
+function touchOther(id, x, y) {
+  wiggleOn(id);
+  if (id === 'jar') sTick(1700, 0.04);
+  else if (id === 'knit') sSilk(0.5);
+  else if (id === 'cookie0') { G.cookieHop = 0.4; sCrunch(); spark(x, y, 'crumb'); }
+  else if (id === 'cup0') { G.cupWobV += 1.0; sDull(); }
+  else if (id === 'win') { sTick(1300, 0.03); }
+}
+function useShelf(k, x, y) {
+  const m = G.shelf[k], e = G.era;
+  const ok = k === 'b' ? AVAIL.tree[e] : k === 's' ? AVAIL.silk[e] : k === 'd' ? AVAIL.dough[e] : AVAIL.cup[e];
+  look(x, y);
+  if (!ok || !m) { wiggleOn('shelf_' + k); sDull(); return; }
+  G.gifts.used[k] = true;
+  const s = slotOf(k);
+  const dest = k === 'b' ? () => { const gr = tab(TREE_G, G.ev.tree), b = brBase(m.i, gr); return [L.win.x + b[0], L.win.y + b[1]]; }
+    : k === 's' ? [L.ball.x, L.ball.y] : k === 'd' ? [L.dough.x, L.dough.y - L.dough.r * 0.3] : [L.cup.x, L.cup.y - L.cup.s * 0.5];
+  sShelf();
+  flight({ mat: k, from: [s.x, s.y - L.slotR * 0.5], to: dest, dur: 0.85, onArrive: () => applyMaterial(k, m) });
+}
+function applyMaterial(k, m) {
+  const gf = G.gifts, e = G.era;
+  if (e < 1 || e > 3 || G.phase !== 'play') return;
+  if (k === 'b') {
+    const had = !!gf.branch; gf.branch = { i: m.i, p: m.p.map(q => q.slice()), e }; G.branchSel = null;
+    if (!had) markOrder('tree'); sBranch(4); noteChoice('tree', !had);
+    const gr = tab(TREE_G, G.ev.tree), pts = brCustom(m.i, m.p, gr, false), tp = pts[pts.length - 1];
+    for (let j = 0; j < 6; j++) spark(L.win.x + tp[0], L.win.y + tp[1], 'leaf');
+  } else if (k === 's') {
+    const had = !!gf.silk; gf.silk = { n: m.n, e, rb: m.rb || G.rainbow };
+    if (!had) markOrder('silk'); sLoop(m.n); noteChoice('silk', !had);
+  } else if (k === 'd') {
+    const had = !!gf.dough; G.dough = { o: m.o.slice(), d: m.d.map(q => q.slice()) };
+    gf.dough = { o: m.o.slice(), d: m.d.map(q => q.slice()), e };
+    G.doughSq = 0.8; G.doughSqT = 0; sDough(0.5); noteChoice('dough', !had);
+  } else if (k === 'c') {
+    const had = !!gf.cup; gf.cup = { e, reuse: true }; G.cupWobV += 2.4; G.cupShine = 0; sCup(false, 2); noteChoice('cup', !had);
+  }
+}
+function startBranch(i, x, y) {
+  const gr = tab(TREE_G, G.ev.tree);
+  const def = brDefault(i, gr), tip = def[def.length - 1];
+  const lx = clamp(x - L.win.x, 4, L.win.w - 4), ly = clamp(y - L.win.y, 4, L.tree.by - 6);
+  let tapTgt;
+  if (polyDist(lx, ly, def) < 16) {
+    const a = def[def.length - 2]; const dx = tip[0] - a[0], dy = tip[1] - a[1], l = Math.hypot(dx, dy) || 1;
+    tapTgt = [clamp(tip[0] + dx / l * L.tree.TH * 0.16, 4, L.win.w - 4), clamp(tip[1] + dy / l * L.tree.TH * 0.16, 4, L.tree.by - 6)];
+  } else tapTgt = [lx, ly];
+  G.branchSel = { i, def, ext: [], tapTgt, grow: polyLen(def), live: def, done: false, maxExt: L.tree.TH * 0.55 };
+  if (polyDist(lx, ly, def) >= 16) G.branchSel.ext.push(tapTgt);
+  sBranch(1); look(x, y);
+}
+function moveBranch(x, y) {
+  const bs = G.branchSel; if (!bs || bs.done) return;
+  const lx = clamp(x - L.win.x, 4, L.win.w - 4), ly = clamp(y - L.win.y, 4, L.tree.by - 6);
+  if (!bs.ext.length && polyDist(lx, ly, bs.def) < 16) return;
+  const last = bs.ext.length ? bs.ext[bs.ext.length - 1] : bs.def[bs.def.length - 1];
+  if (Math.hypot(lx - last[0], ly - last[1]) > 7) {
+    const extLen = polyLen([bs.def[bs.def.length - 1]].concat(bs.ext, [[lx, ly]]));
+    if (extLen < bs.maxExt) { bs.ext.push([lx, ly]); if (bs.ext.length % 3 === 0) sBranch(Math.min(8, bs.ext.length / 3)); }
+  }
+}
+function endBranch() {
+  const bs = G.branchSel; if (!bs || bs.done) return;
+  if (!bs.ext.length) bs.ext.push(bs.tapTgt);
+  finishBranch();
+}
+function startGrab(p, x, y, soft) {
+  p.mode = 'grab';
+  HR.grab = { active: true, x, y, x0: x, y0: y, xs: x, ten: 0, pull: 0, cuts: 0, resist: false };
+  hairPoke(x, y, soft ? 0.25 : 0.6);
+  if (!soft) sSilk(1);
+  tensionStart(); tensionSet(0);
+  look(x, y, 1.6); G.face.sur = Math.max(G.face.sur, 0.45);
+  G.rock.kick = Math.max(G.rock.kick, 0.35);
+  for (let k = 0; k < 2; k++) spark(x, y, 'gold');
+}
+function moveGrab(p, x, y) {
+  const gb = HR.grab; if (!gb) return;
+  gb.x = x; gb.y = y;
+  const dxs = x - gb.xs;
+  let ten = Math.abs(dxs) / L.cutDist;
+  const canCut = G.phase === 'play' && G.era < 4 && gb.cuts < 2 && !(G.era === 3 && gb.cuts >= 1);
+  if (!canCut) { ten = Math.min(ten, 0.9); if (ten > 0.85 && !gb.resist) { gb.resist = true; G.face.sur = 0.9; } }
+  gb.ten = clamp(ten, 0, 1); gb.pull = clamp(gb.ten * 0.95, 0, 0.88);
+  tensionSet(gb.ten);
+  look(x, y, 0.6);
+  if (ten >= 1 && canCut) {
+    const dir = dxs >= 0 ? 1 : -1;
+    HR.strands.forEach(s => s.nodes.forEach((n, i) => { if (i) { n.vx -= dir * (150 + Math.random() * 250); n.vy -= Math.random() * 120; } }));
+    gb.cuts++;
+    doCut(dir, x, y);
+    if (G.phase !== 'play') { endGrab(); p.mode = 'none'; return; }
+    gb.xs = x; gb.y0 = y; gb.ten = 0; gb.pull = 0; tensionSet(0);
+  }
+}
+function endGrab() {
+  const gb = HR.grab; tensionStop();
+  if (gb) {
+    if (gb.resist || (gb.cuts === 0 && gb.ten > 0.25)) { sBoing(); HR.strands.forEach(s => s.nodes.forEach((n, i) => { if (i) n.vx += (Math.random() - 0.5) * 300; })); }
+  }
+  HR.grab = null;
+}
+function beginPointer(p) {
+  const x = p.x0, y = p.y0, fc = G.face;
+  if (G.phase === 'ff') {
+    if (Math.hypot(x - F.hx, y - F.hy) < F.hr * 2.4) { fc.giggle = 1; if (Math.random() < 0.5) sGiggle(); else sBabyCoo(); spark(F.hx, F.hy - F.hr, 'gold'); }
+    look(x, y); return;
+  }
+  if (G.creation && !G.leaving) {
+    const id = hitFuture(x, y);
+    if (id) { touchFuture(id, x, y); p.mode = 'tap'; return; }
+  }
+  const e = G.era;
+  if (e >= 1 && e <= 3) {
+    const sk = hitShelf(x, y);
+    if (sk) { useShelf(sk, x, y); p.mode = 'tap'; return; }
+    if (AVAIL.tree[e]) { const bi = hitBranch(x, y); if (bi >= 0) { startBranch(bi, x, y); p.mode = 'branch'; return; } }
+    if (AVAIL.silk[e] && hitBall(x, y)) { G.loopAnim = { x, y, t: 0, rb: G.rainbow }; sSilk(1); look(x, y); p.mode = 'loop'; return; }
+    if (AVAIL.dough[e] && hitDough(x, y)) { pressDough(x, y, true); look(x, y); p.mode = 'dough'; p.lastDent = [x, y]; return; }
+    if (AVAIL.cup[e] && hitCup(x, y)) { ringCup(); look(x, y); p.mode = 'tap'; return; }
+  }
+  const other = hitOther(x, y);
+  if (other) { touchOther(other, x, y); look(x, y); p.mode = 'tap'; return; }
+  if (hairHit(x, y, Math.max(L.S * 0.45, 22))) { startGrab(p, x, y, false); return; }
+  // 何もない所：おばあちゃんがそちらを見る（最初のタップでも変化が見える）
+  look(x, y); fc.sur = Math.max(fc.sur, 0.25);
+  p.mode = 'free';
+}
+function movePointer(p, x, y) {
+  if (Math.hypot(x - p.x0, y - p.y0) > 8) p.moved = true;
+  switch (p.mode) {
+    case 'grab': moveGrab(p, x, y); break;
+    case 'branch': moveBranch(x, y); break;
+    case 'loop': if (G.loopAnim) { G.loopAnim.x = x; G.loopAnim.y = y; } break;
+    case 'dough':
+      if (hitDough(x, y) && Math.hypot(x - p.lastDent[0], y - p.lastDent[1]) > L.dough.r * 0.32) { pressDough(x, y, false); p.lastDent = [x, y]; }
+      break;
+    case 'free':
+      if (G.phase === 'play' && hairHit(x, y, Math.max(L.S * 0.35, 18))) {
+        startGrab(p, x, y, true);
+        // 髪の外から払い始めても、髪に入る前の動きも一部数える（寛容な判定）
+        const pre = x - p.x0, gb = HR.grab;
+        if (gb) gb.xs = x - Math.sign(pre) * Math.min(Math.abs(pre), L.cutDist * 0.6);
+      }
+      break;
+  }
+  p.lx = x; p.ly = y;
+}
+function endPointer(p, cancelled) {
+  switch (p.mode) {
+    case 'grab': endGrab(); break;
+    case 'branch': endBranch(); break;
+    case 'loop':
+      if (G.loopAnim) { if (!cancelled || G.loopAnim.t > 0.08) addLoop(); G.loopAnim = null; }
+      break;
+  }
+  p.mode = 'none';
+  if (G.ptr === p) G.ptr = null;
+}
+function onDown(e) {
+  if (e.cancelable) e.preventDefault();
+  audioStart();
+  const x = e.clientX, y = e.clientY;
+  G.lastInput = G.t; G.anyInput = true; G.hint = null;
+  if (G.firstTapT < 0) G.firstTapT = G.t;
+  if (G.ptr) {
+    const old = G.ptr;
+    // 置いたまま動かない指（手のひら等）があれば、新しい指へ乗りかえる
+    if (!old.moved && G.t - old.t0 > 0.45 && old.mode !== 'grab') endPointer(old, true);
+    else return;
+  }
+  try { cv.setPointerCapture(e.pointerId); } catch (err) { /* noop */ }
+  const p = { id: e.pointerId, x0: x, y0: y, x, y, lx: x, ly: y, t0: G.t, moved: false, mode: 'none' };
+  G.ptr = p;
+  try { beginPointer(p); } catch (err) { reportErr(err); G.ptr = null; }
+}
+function onMove(e) {
+  const p = G.ptr; if (!p || e.pointerId !== p.id) return;
+  if (e.cancelable) e.preventDefault();
+  G.lastInput = G.t;
+  try { movePointer(p, e.clientX, e.clientY); } catch (err) { reportErr(err); }
+}
+function onUp(e) {
+  audioStart();
+  const p = G.ptr; if (!p || e.pointerId !== p.id) return;
+  if (e.cancelable) e.preventDefault();
+  G.lastInput = G.t;
+  try { endPointer(p, false); } catch (err) { reportErr(err); G.ptr = null; }
+}
+function onCancel(e) {
+  const p = G.ptr; if (!p || e.pointerId !== p.id) return;
+  try { endPointer(p, true); } catch (err) { reportErr(err); G.ptr = null; }
+}
+function releaseAll() { if (G.ptr) { try { endPointer(G.ptr, true); } catch (err) { G.ptr = null; } } tensionStop(); HR.grab = null; }
+cv.addEventListener('pointerdown', onDown, { passive: false });
+window.addEventListener('pointermove', onMove, { passive: false });
+window.addEventListener('pointerup', onUp, { passive: false });
+window.addEventListener('pointercancel', onCancel);
+cv.addEventListener('lostpointercapture', e => { const p = G.ptr; if (p && e.pointerId === p.id) setTimeout(() => { if (G.ptr === p) onCancel(e); }, 0); });
+window.addEventListener('blur', releaseAll);
+['contextmenu', 'selectstart', 'dragstart', 'gesturestart', 'gesturechange', 'gestureend', 'dblclick'].forEach(n => document.addEventListener(n, e => { if (e.cancelable) e.preventDefault(); }, { passive: false }));
+document.addEventListener('touchmove', e => { if (e.cancelable) e.preventDefault(); }, { passive: false });
+document.addEventListener('touchend', () => audioStart(), { passive: true });
+
+// ---------------------------------------------------------------------
+//  まわす：requestAnimationFrame だけ。見えないときは止める
+// ---------------------------------------------------------------------
+const ERRS = [];
+function reportErr(e) { if (ERRS.length < 20) ERRS.push(String((e && e.stack) || e)); }
+function update(dt) {
+  G.t += dt;
+  updateSched();
+  updateTweens(dt);
+  updateFF(dt);
+  updateFigure(dt);
+  updateHair(dt);
+  updateItems(dt);
+  updateFlights(dt);
+  updateParts(dt);
+  G.invite = computeInvite();
+  G.inviteAt = anchorOf(G.invite);
+  updateHint(dt);
+  G.invSpark = (G.invSpark || 0) + dt;
+  if (G.invite && G.inviteAt && !G.ptr && G.phase === 'play' && G.invSpark > 0.42) {
+    G.invSpark = 0;
+    const a = Math.random() * TAU, d = L.S * (0.25 + Math.random() * 0.45);
+    spark(G.inviteAt[0] + Math.cos(a) * d, G.inviteAt[1] + Math.sin(a) * d * 0.7, 'gold');
+  }
+}
+function render(dt) {
+  ctx.setTransform(L.dpr, 0, 0, L.dpr, 0, 0);
+  ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+  ctx.drawImage(C.bg.c, 0, 0, L.W, L.H);
+  drawSunbeam();
+  drawWindow();
+  drawCurtains();
+  drawStand();
+  drawShelfItems();
+  drawFloorShadow();
+  drawChair();
+  drawBody();
+  drawHead();
+  drawHair();
+  drawHairCap();
+  drawHands();
+  drawDebris();
+  blit(C.table);
+  drawSweets();
+  drawCup();
+  drawBasket();
+  drawFlights();
+  drawParts();
+  drawRipples(dt);
+  drawHint();
+  drawVignette();
+}
+let raf = 0, lastTs = 0, running = false;
+const PERF = { u: 0, r: 0 };
+function frame(ts) {
+  raf = 0;
+  if (!running) return;
+  let dt = lastTs ? (ts - lastTs) / 1000 : 1 / 60;
+  lastTs = ts;
+  if (!Q.fixed && dt > 0 && dt < 0.25) {
+    Q.acc += dt; Q.n++;
+    if (Q.n >= 120) {
+      const avg = Q.acc / Q.n; Q.acc = 0; Q.n = 0;
+      if (avg > 1 / 48 && Q.level < 2) {
+        Q.level++;
+        if (Q.level === 2 && Q.dprCap > 1.5) { Q.dprCap = 1.5; onResize(); }
+      }
+    }
+  }
+  dt = clamp(dt, 0, 1 / 20);
+  const t0 = performance.now();
+  try { update(dt); } catch (e) { reportErr(e); }
+  const t1 = performance.now();
+  try { render(dt); } catch (e) { reportErr(e); }
+  const t2 = performance.now();
+  PERF.u = PERF.u * 0.95 + (t1 - t0) * 0.05; PERF.r = PERF.r * 0.95 + (t2 - t1) * 0.05;
+  G.frame++;
+  raf = requestAnimationFrame(frame);
+}
+function start() { if (running) return; running = true; lastTs = 0; raf = requestAnimationFrame(frame); }
+function stop() { running = false; if (raf) cancelAnimationFrame(raf); raf = 0; }
+function rebuild() {
+  layout(); buildRoom(); buildChair(); C.vig = null; C.out = null;
+  updateFigure(0); hairRest();
+  HR.strands.forEach(s => { s.nodes.forEach((n, i) => { const r = s.restN[i]; n.x = r[0]; n.y = r[1]; n.vx = 0; n.vy = 0; }); });
+}
+let rsPending = false;
+function onResize() {
+  if (rsPending) return; rsPending = true;
+  requestAnimationFrame(() => { rsPending = false; try { releaseAll(); rebuild(); if (!running && !document.hidden) start(); else if (!running) { update(0); render(0); } } catch (e) { reportErr(e); } });
+}
+window.addEventListener('resize', onResize);
+window.addEventListener('orientationchange', onResize);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    stop(); releaseAll();
+    try { if (AU.ctx && AU.ctx.state === 'running') AU.ctx.suspend(); } catch (e) { /* noop */ }
+  } else {
+    start();
+    try { if (AU.ctx && AU.started) AU.ctx.resume(); } catch (e) { /* noop */ }
+  }
+});
+window.addEventListener('pagehide', () => { stop(); releaseAll(); });
+window.addEventListener('pageshow', () => { if (!document.hidden) start(); });
+
+// ---------------------------------------------------------------------
+//  はじまり：開始メニューなし。部屋がそのまま遊び場
+// ---------------------------------------------------------------------
+if (window.__gfFixedQuality) Q.fixed = true;
+loadSave();
+layout(); buildRoom(); buildChair();
+G.dough = newDough();
+if (G.creation) {
+  ['slide', 'swing', 'curtain', 'cookie', 'gold'].forEach(k => { G.rv[k] = 1; });
+  G.cupHome = G.creation.c ? 'stand' : 'table';
+}
+updateFigure(0);
+initHair();
+update(0); render(0);
+if (!document.hidden) start();
+
+// 自動テスト用の読み取り口（画面には何も出さない）
+window.__gf11 = {
+  errors: ERRS,
+  state() {
+    return {
+      era: G.era, phase: G.phase, cyc: G.cyc, invite: G.invite, hint: G.hint ? G.hint.kind : null, hintDone: Object.keys(G.hintDone),
+      gifts: JSON.parse(JSON.stringify({ branch: G.gifts.branch, silk: G.gifts.silk, dough: G.gifts.dough, cup: G.gifts.cup, tTree: G.gifts.tTree, tSilk: G.gifts.tSilk, used: G.gifts.used })),
+      creation: G.creation ? JSON.parse(JSON.stringify(G.creation)) : null, shelf: JSON.parse(JSON.stringify(G.shelf)),
+      store: store.mode, canWrite: store.canWrite, audio: AU.ctx ? AU.ctx.state : 'none', frames: G.frame, running,
+      parts: G.parts.length, maxParts: MAX_PARTS, rainbow: G.rainbow, hairLen: HR.strands.length ? HR.strands[0].len : 0,
+      lockLen: HR.strands.length ? HR.strands[HR.lockIdx[0]].len : 0, tension: HR.grab ? HR.grab.ten : 0, grab: !!HR.grab, ptr: !!G.ptr,
+      ev: Object.assign({}, G.ev), q: Q.level, rv: Object.assign({}, G.rv), cupHome: G.cupHome, swing: G.swing.w, ball: !!G.ball, flights: G.flights.length,
+      visit: Object.assign({}, G.visit), touched: Object.assign({}, G.touched), dpr: L.dpr, W: L.W, H: L.H, S: L.S, cutDist: L.cutDist,
+    };
+  },
+  pos(id) {
+    switch (id) {
+      case 'hairMid': return hairAnchor();
+      case 'head': return [F.hx, F.hy];
+      case 'seat': return [F.x, F.y];
+      case 'ball': return [L.ball.x, L.ball.y];
+      case 'dough': return [L.dough.x, L.dough.y - L.dough.r * 0.3];
+      case 'cup': return [L.cup.x, L.cup.y - L.cup.s * 0.55];
+      case 'win': return [L.win.x, L.win.y, L.win.w, L.win.h];
+      default:
+        if (id && id.indexOf('slot_') === 0) { const s = slotOf(id.slice(5)); return [s.x, s.y - L.slotR * 0.5]; }
+        if (id && id.indexOf('branch_') === 0) { const i = +id.slice(7), gr = tab(TREE_G, G.ev.tree), pts = branchPts(i, gr) || brDefault(i, gr), tp = pts[pts.length - 1], b = pts[0]; return [L.win.x + tp[0], L.win.y + tp[1], L.win.x + b[0], L.win.y + b[1]]; }
+        return anchorOf(id);
+    }
+  },
+  layout() { return JSON.parse(JSON.stringify({ win: L.win, table: L.table, dough: L.dough, cup: L.cup, ball: L.ball, basket: L.basket, shelf: L.shelf, slots: L.slots, slotR: L.slotR, S: L.S, floorY: L.floorY, baseY: L.baseY, cx: L.cx, stand: L.stand, sillTop: L.sillTop, ins: L.ins })); },
+  forceRainbow(v) { G.forceRainbow = v; },
+  perf() { return { u: +PERF.u.toFixed(2), r: +PERF.r.toFixed(2) }; },
+  profile(n) {   // 描画の内訳（ms）
+    const parts = { bg: () => ctx.drawImage(C.bg.c, 0, 0, L.W, L.H), sun: drawSunbeam, win: drawWindow, curt: drawCurtains, shelf: drawShelfItems, chair: drawChair, body: drawBody, head: drawHead, hair: drawHair, cap: drawHairCap, hands: drawHands, table: () => { blit(C.table); drawSweets(); drawCup(); }, basket: drawBasket, parts: drawParts, vig: drawVignette };
+    const out = {};
+    ctx.setTransform(L.dpr, 0, 0, L.dpr, 0, 0);
+    for (const k in parts) { const t = performance.now(); for (let i = 0; i < n; i++) parts[k](); out[k] = +((performance.now() - t) / n).toFixed(2); }
+    const t = performance.now(); for (let i = 0; i < n; i++) update(1 / 60); out.update = +((performance.now() - t) / n).toFixed(2);
+    return out;
+  },
+};
+})();
+</script>
+</body>
+</html>
