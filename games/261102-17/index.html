@@ -1405,6 +1405,7 @@ function updateBallLook(b,dt){
  b.contact-=dt; b.onRamp=(b.onRamp||0)-dt; b.onPlate=(b.onPlate||0)-dt; b.onBoat=(b.onBoat||0)-dt;
  // つぶれのばね
  const k=SQK[b.mat]; b.sq.v+=(-k[0]*b.sq.amt-k[1]*b.sq.v)*dt; b.sq.amt+=b.sq.v*dt;
+ if(DRAG.b===b&&!DRAG.moved){ b.sq.a=0; b.sq.amt=.3; b.sq.v=0; b.face.ex='squish'; b.face.hold=.35; }
  if(b.mode==='drag'){ const sp=hyp(b.vx,b.vy); if(sp>300){ b.sq.a=Math.atan2(b.vy,b.vx)+PI/2; b.sq.amt=lerp(b.sq.amt,-clamp(sp/5000,0,.22),.2);} }
  else if(b.contact<=0&&b.mode==='free'){ const sp=hyp(b.vx,b.vy); if(sp>700){ b.sq.a=Math.atan2(b.vy,b.vx)+PI/2; b.sq.amt=lerp(b.sq.amt,-clamp((sp-700)/9000,0,.12),.08);} }
  // 顔
@@ -1736,10 +1737,12 @@ function pick(wx,wy){
 function onDown(e){
  e.preventDefault();
  ensureAudio();
- const p=toWorld(e.clientX,e.clientY); lastInput=now; firstInputDone=true; if(DEMO) DEMO=null; demoDone=demoDone||true;
  if(DRAG.id!=null||HANDLE.id!=null) return; // 2本目の指は無視
+ const p=toWorld(e.clientX,e.clientY); lastInput=now; DEMO=null;
  const h=pick(p.x,p.y);
- if(!h) return;
+ // 開始時の空振りは玉を運ぶお手本だけで応答し、実際の玉や仕掛けは動かさない。
+ if(!h){ if(BALL&&BALL.mat==='clay'&&!BALL.got.length) DEMO={t0:now}; return; }
+ firstInputDone=true; demoDone=true;
  try{ cv.setPointerCapture(e.pointerId); }catch(_){ }
  if(h.k==='ball'){
   const b=h.b;
@@ -1783,12 +1786,11 @@ function onUp(e,cancel){
  try{ cv.releasePointerCapture(e.pointerId); }catch(_){ }
 }
 function release(b,cancel){
- const dur=now-DRAG.t0;
  if(b.mode==='climb'||b.mode==='script'||b.mode==='trophy') return;
  if(DRAG.fromHeld&&b.mode==='held'){ if(!cancel) magRelease(); return; }
  if(b.mode==='held') return;
  if(cancel){ b.mode='free'; unstick(b); b.vx*=.2; b.vy=Math.min(b.vy*.2,0); return; }
- if(!DRAG.moved&&dur<.45){ b.mode='free'; tapBall(b); return; }
+ if(!DRAG.moved){ b.mode='free'; tapBall(b); return; }
  b.mode='free'; b.relT=now; unstick(b);
  // 指の速度
  const h=DRAG.hist; let vx=0,vy=0;
@@ -1941,7 +1943,7 @@ function updateHint(dt){
  const ib=ST.park?PBALL:BALL;
  if(firstInputDone&&ib&&ib.mode==='free'&&ib.contact>0&&!ib.stuck&&now-lastInput>5&&now-(HINT.nudge||0)>3.2&&Math.abs(ib.vx)<20&&ib.mat!=='rubber'&&(ib.lastK==='f'||ib.lastK==='w'||ib.lastK==='park'||ib.lastK==='blk'||ib.lastK==='slope')){ HINT.nudge=now; ib.vy=-300; ib.face.ex='happy'; ib.face.hold=.6; }
  // 最初だけ: 4秒触らなければ手のお手本
- if(!firstInputDone&&!DEMO&&now-lastInput>4&&now>4) DEMO={t0:now};
+ if(!firstInputDone&&!demoDone&&!DEMO&&now-lastInput>4&&now>4) DEMO={t0:now};
 }
 /* ===================== 70 遊園地 (棚が展開する) ===================== */
 /* 6つの遊具は 玉が素材に触れた順 (PBALL.order) に並ぶ。各遊具の入口の上に素材タイル(k:'ptile')。
