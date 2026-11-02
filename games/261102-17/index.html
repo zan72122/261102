@@ -1855,7 +1855,7 @@ function pkBar(c,x0,y0,x1,y1,wd){ // 真鍮の棒 (向き自由)
 }
 /* カップと星 (動物は使わない) */
 const PKCUP=[['#e8574a','#ffb6a6','#7c1d14'],['#3fb3a6','#c2f4ea','#1b625a'],['#f2c14a','#fff2bd','#8e620e'],['#e98bb0','#ffdbe8','#953e62'],['#6f9de0','#d6e6ff','#2c4f8c']];
-function drawCup(c,x,y,s,i){
+function pkCup(c,x,y,s,i){
  const k=i%5;
  c.save(); c.translate(x,y); c.scale(s,s);
  c.fillStyle=pkU('saucer',g=>pkLG(g,-.8,0,.8,0,[0,'#9a8e7c',.4,'#fffaf0',1,'#8a7e6c'])); c.beginPath(); c.ellipse(0,-.06,.78,.14,0,0,TAU); c.fill();
@@ -1866,7 +1866,7 @@ function drawCup(c,x,y,s,i){
  c.fillStyle=pkU('cupsp',g=>pkRG(g,-.3,-.6,0,-.3,-.6,.3,[0,'rgba(255,255,255,.75)',1,'rgba(255,255,255,0)'])); c.beginPath(); c.ellipse(-.3,-.6,.12,.2,.2,0,TAU); c.fill();
  c.restore();
 }
-function drawStar(c,x,y,s,rot){
+function pkStar(c,x,y,s,rot){
  c.save(); c.translate(x,y); c.rotate(rot||0); c.scale(s,s);
  c.fillStyle=pkU('star',g=>pkRG(g,-.3,-.35,0,0,0,1,[0,'#fffbe0',.35,'#ffd65a',1,'#b27a10']));
  c.beginPath(); for(let j=0;j<10;j++){ const a=-PI/2+j*PI/5, q=j%2?.45:1; c.lineTo(Math.cos(a)*q,Math.sin(a)*q); } c.closePath(); c.fill(); c.restore();
@@ -1874,31 +1874,40 @@ function drawStar(c,x,y,s,rot){
 
 /* ---- 区画 (遊具1つぶん) ---- u: 入口からの距離, v: 床からの高さ */
 function pkSlot(i,x0,x1,ty,fy,dir,row){ return {i,x0,x1,w:x1-x0,cx:(x0+x1)/2,ty,fy,h:fy-ty,dir,row,X:u=>dir>0?x0+u:x1-u,Y:v=>fy-v}; }
-function pkRide(kind,m,s,r){ return {kind,mat:m,s,r,D:s.dir,S:[],aim:{x:s.cx,y:s.fy-r},focus:{x:s.cx,y:s.fy-r},hr:50,pokeT:-9,tile:null,box:{x0:s.x0,y0:s.ty,x1:s.x1,y1:s.fy}}; }
+function pkTip(b,s,ny){ // 支柱の先などの「点」の上で止まらないよう、そっと転がす
+ if(ny>-.85||b.mode!=='free'||Math.abs(b.vx)>30) return;
+ const q=closest(s.ax,s.ay,s.bx,s.by,b.x,b.y); if(q.t>.001&&q.t<.999) return;
+ b.vx+=(b.x>q.x+.5?1:b.x<q.x-.5?-1:(vrand()<.5?-1:1))*18;
+}
+function pkBusy(t0,lim){ return now-Math.max(lastInput,t0)<lim; } // さわってから少しの間だけ にぎやかに (放置で音が鳴り続けない)
+function pkTouch(b,sg,nx,ny,imp){ if(b!==PBALL) return; pkTip(b,sg,ny); if(this.hit) this.hit(b,sg,nx,ny,imp); }
+function pkInPoly(P,x,y){ let c=false; for(let i=0,j=P.length-2;i<P.length;j=i,i+=2){ const xi=P[i],yi=P[i+1],xj=P[j],yj=P[j+1]; if((yi>y)!==(yj>y)&&x<(xj-xi)*(y-yi)/(yj-yi)+xi) c=!c; } return c; }
+function pkRide(kind,m,s,r){ return {kind,mat:m,s,r,D:s.dir,S:[],TS:[],solid:null,touch:pkTouch,aim:{x:s.cx,y:s.fy-r},focus:{x:s.cx,y:s.fy-r},hr:50,pokeT:-9,tile:null,box:{x0:s.x0,y0:s.ty,x1:s.x1,y1:s.fy}}; }
 function pkTile(rd,u){ // 天井からひもで下がった小さな素材タイル
  const s=rd.s, r=rd.r, tw=46, th=26, tv=Math.min(s.h-83,2*r+200), cx=s.X(u), cy=s.Y(tv), m=rd.mat;
- const t={m,x:cx-tw/2,y:cy-th/2,w:tw,h:th,cx,cy,wt:-9,aim:null}; t.aim={x:cx,y:t.y+th+r-2}; rd.tile=t;
- rd.S.push(pkSeg(t.x,t.y,t.x+tw,t.y,m,'','ptile'),pkSeg(t.x+tw,t.y,t.x+tw,t.y+th,m,'','ptile'),pkSeg(t.x+tw,t.y+th,t.x,t.y+th,m,'','ptile'),pkSeg(t.x,t.y+th,t.x,t.y,m,'','ptile'));
+ const t={m,x:cx-tw/2,y:cy-th/2,w:tw,h:th,cx,cy,wt:-9,aim:null}; t.aim={x:cx,y:t.y+th+r*.5}; rd.tile=t;
+ rd.TS=[pkSeg(t.x,t.y,t.x+tw,t.y,m,'','ptile'),pkSeg(t.x+tw,t.y,t.x+tw,t.y+th,m,'','ptile'),pkSeg(t.x+tw,t.y+th,t.x,t.y+th,m,'','ptile'),pkSeg(t.x,t.y+th,t.x,t.y,m,'','ptile')];
+ rd.S.push(...rd.TS);
 }
 const PKR={};
 
 /* ===== 1 トランポリン (ゴム) ===== */
 PKR.tramp=function(rd){
  const s=rd.s,r=rd.r,w=s.w,X=s.X,Y=s.Y,fy=s.fy;
- pkTile(rd,.2*w);
+ pkTile(rd,.25*w);
  const pc=.58*w, ph=Math.min(.26*w,2.2*r), pv=14;
- const xa=Math.min(X(pc-ph),X(pc+ph)), xb=Math.max(X(pc-ph),X(pc+ph)), py=Y(pv);
- Object.assign(rd,{xa,xb,ph,px:(xa+xb)/2,pv,py,sag:0,sagV:0,load:0,lastB:-9,chain:0,chainT:-9,cups:[],
+ const xa=Math.min(X(pc-ph),X(pc+ph)), xb=Math.max(X(pc-ph),X(pc+ph)), py=Y(pv), rn=clamp(w-pc-ph-1,14,26);
+ Object.assign(rd,{xa,xb,rn,ph,px:(xa+xb)/2,pv,py,sag:0,sagV:0,load:0,lastB:-9,chain:0,chainT:-9,cups:[],
   vmax:Math.sqrt(2*G*Math.max(140,s.h-pv-2*r-34))});
- rd.r1=pkSeg(xa-26,fy,xa,py,rd,'ramp'); rd.pad=pkSeg(xa,py,xb,py,rd,'pad'); rd.r2=pkSeg(xb,py,xb+26,fy,rd,'ramp');
+ rd.r1=pkSeg(xa-rn,fy,xa,py,rd,'ramp'); rd.pad=pkSeg(xa,py,xb,py,rd,'pad'); rd.r2=pkSeg(xb,py,xb+rn,fy,rd,'ramp');
  rd.S.push(rd.r1,rd.pad,rd.r2);
  for(let i=0;i<3;i++) rd.cups.push({x:lerp(xa+ph*.3,xb-ph*.3,i/2),y:Y(pv+2*r+16),h:0,vh:0,d:0,k:0,c:(i*2+s.i)%5});
  rd.aim={x:rd.px,y:py-r-2}; rd.focus={x:rd.px,y:py-r*.7}; rd.hr=ph+16;
- rd.box={x0:xa-26,x1:xb+26,y0:Y(pv+2*r+34),y1:fy};
+ rd.box={x0:xa-rn,x1:xb+rn,y0:Y(pv+2*r+34),y1:fy};
  rd.hop=function(v){ for(let i=0;i<3;i++){ const c=this.cups[i]; c.d=.03+Math.abs(i-1)*.06+vrand()*.03; c.k=v*(.85+.3*vrand()); } };
  rd.poke=function(){ this.sagV+=50; this.hop(120); };
- rd.touch=function(b,sg,nx,ny,imp){
-  if(b!==PBALL||sg.part!=='pad'||ny>-.5) return;
+ rd.hit=function(b,sg,nx,ny,imp){
+  if(sg.part!=='pad'||ny>-.5) return;
   this.load=.08;
   if(imp<70||now-this.lastB<.14||b.mode!=='free') return;
   this.lastB=now; const m=b.mat, st=clamp(imp/900,.15,1);
@@ -1928,15 +1937,15 @@ PKR.tramp=function(rd){
  rd.drawStatic=function(g){
   const xa=this.xa, xb=this.xb, py=this.py, fy=this.s.fy;
   g.fillStyle=pkLG(g,0,py,0,fy,[0,'#f0bf7a',1,'#8a5222']);
-  g.beginPath(); g.moveTo(xa-26,fy); g.lineTo(xa,py+2); g.lineTo(xa,fy); g.closePath(); g.fill();
-  g.beginPath(); g.moveTo(xb+26,fy); g.lineTo(xb,py+2); g.lineTo(xb,fy); g.closePath(); g.fill();
+  g.beginPath(); g.moveTo(xa-this.rn,fy); g.lineTo(xa,py+2); g.lineTo(xa,fy); g.closePath(); g.fill();
+  g.beginPath(); g.moveTo(xb+this.rn,fy); g.lineTo(xb,py+2); g.lineTo(xb,fy); g.closePath(); g.fill();
   g.fillStyle=pkLG(g,xa,0,xb,0,[0,'#6a140e',.18,'#d8443a',.42,'#ff9e88',.6,'#d8443a',1,'#5e120c']); g.fillRect(xa-3,py+2,xb-xa+6,fy-py-2);
   g.fillStyle=pkLG(g,0,py+2,0,fy,[0,'rgba(255,232,140,.95)',1,'rgba(190,130,30,.95)']); for(let x=xa+5;x<xb-4;x+=15) g.fillRect(x,py+2,6,fy-py-2);
   g.fillStyle=pkLG(g,0,py+2,0,fy,[0,'rgba(255,255,255,.25)',.5,'rgba(255,255,255,0)',1,'rgba(30,10,0,.3)']); g.fillRect(xa-3,py+2,xb-xa+6,fy-py-2);
  };
  rd.draw=function(c){
   const top=this.py+3;
-  for(const cp of this.cups){ const y=cp.y-cp.h; pkBar(c,cp.x,y,cp.x,top,3); drawCup(c,cp.x,y,10+this.r*.18,cp.c); }
+  for(const cp of this.cups){ const y=cp.y-cp.h; pkBar(c,cp.x,y,cp.x,top,3); pkCup(c,cp.x,y,10+this.r*.18,cp.c); }
   const y0=this.pad.ay, sg=Math.max(0,this.sag)*1.5+Math.min(0,this.sag)+Math.sin((now-this.pokeT)*30)*Math.max(0,1-(now-this.pokeT)*2)*2;
   c.fillStyle=pkLG(c,0,y0-3,0,y0+6+sg*2,[0,'#7f9fe6',.35,'#36508f',1,'#18234a']);
   c.beginPath(); c.moveTo(this.xa,y0-2); c.quadraticCurveTo(this.px,y0-2+sg*2,this.xb,y0-2); c.lineTo(this.xb,y0+4); c.quadraticCurveTo(this.px,y0+4+sg*2,this.xa,y0+4); c.closePath(); c.fill();
@@ -1948,9 +1957,9 @@ PKR.tramp=function(rd){
 /* ===== 2 シーソー (鉄) : 反対側のおもりが柱をかけ上がって鐘を鳴らす ===== */
 PKR.seesaw=function(rd){
  const s=rd.s,r=rd.r,w=s.w,X=s.X,Y=s.Y,D=s.dir,fy=s.fy;
- pkTile(rd,.22*w);
+ pkTile(rd,.25*w);
  const a=Math.min(.40*w,3.2*r), th=.36, pu=.45*w, ph=a*Math.sin(th)+5;
- Object.assign(rd,{a,th,pu,ph,px:X(pu),py:Y(ph),t:1,tv:0,load:0,lb:-9,lastMat:'wood',
+ Object.assign(rd,{a,th,pu,ph,px:X(pu),py:Y(ph),t:.75,tv:0,load:0,lb:-9,lastMat:'wood',
   poleX:X(pu)+D*a*Math.cos(th),vTop:clamp(.6*s.h,140,210),wh:5,wv:0,wFly:false,bellT:-9,bellA:0,slamMat:null,thT:-9});
  rd.vBell=Math.sqrt(2*G*Math.max(40,rd.vTop-14-(2*a*Math.sin(th)+5)));
  rd.plank=pkSeg(0,0,0,0,rd,'plank'); rd.sk1=pkSeg(0,0,0,0,rd,'skirt'); rd.sk2=pkSeg(0,0,0,0,rd,'skirt');
@@ -1961,11 +1970,11 @@ PKR.seesaw=function(rd){
   this.sk1.ax=this.sk1.bx=nx; this.sk1.ay=ny; this.sk1.by=this.s.fy; this.sk2.ax=this.sk2.bx=ex; this.sk2.ay=ey; this.sk2.by=this.s.fy;
  };
  rd.setPlank();
- const ua=pu-.55*a; rd.aim={x:X(ua),y:rd.py-.55*a*Math.sin(th)-r-6}; rd.focus={x:rd.px,y:rd.py-a*.3}; rd.hr=a*.9;
+ const ua=pu-.78*a; rd.aim={x:X(ua),y:rd.py-.78*a*Math.sin(.75*th)-r-6}; rd.focus={x:rd.px,y:rd.py-a*.3}; rd.hr=a*.9;
  rd.box={x0:Math.min(X(pu-a),rd.poleX)-6,x1:Math.max(X(pu-a),rd.poleX)+6,y0:Y(ph+a*.5+12),y1:fy};
  rd.poke=function(){ this.tv+=-1.6; };
- rd.touch=function(b,sg,nx,ny,imp){
-  if(b!==PBALL||sg.part!=='plank'||ny>-.3) return;
+ rd.hit=function(b,sg,nx,ny,imp){
+  if(sg.part!=='plank'||ny>-.3) return;
   this.load=.06; this.lastMat=b.mat;
   if(imp>80){ const sb=clamp((b.x-this.px)*this.D/this.a,-1,1); this.tv+=sb*imp*MP[b.mat].dens*.004;
    if(now-this.lb>.25){ this.lb=now; sfxRide('seesaw',b.mat,clamp(imp/900,.2,1)); } }
@@ -1983,8 +1992,8 @@ PKR.seesaw=function(rd){
   if(this.slamMat==='iron'){ if(success('ride_seesaw',bx,by)) sparkle(bx,by,12,'#fff3b0'); }
  };
  rd.update=function(dt){
-  const b=PBALL; let tT=1, on=false, push=0;
-  if(b&&this.load>0&&b.mode!=='script'){ const sb=clamp((b.x-this.px)*this.D/this.a,-1,1); push=MP[b.mat].dens*Math.max(0,-sb); tT=clamp(1-push*.5,-1,1); on=true; }
+  const b=PBALL; let tT=.75, on=false, push=0;
+  if(b&&this.load>0&&b.mode!=='script'){ const sb=clamp((b.x-this.px)*this.D/this.a,-1,1); push=MP[b.mat].dens*Math.max(0,-sb); tT=clamp(.75-push*.5,-1,1); on=true; }
   this.load-=dt;
   const K=on?42+40*Math.min(3,push):26;
   this.tv+=((tT-this.t)*K-this.tv*7)*dt; this.t+=this.tv*dt;
@@ -2005,7 +2014,8 @@ PKR.seesaw=function(rd){
   // 力だめしの柱
   const x=this.poleX, top=Y(this.vTop+22);
   woodFill(g,x-5,top,10,fy-top,'dark');
-  for(let v=24;v<this.vTop-10;v+=22){ const k=v/this.vTop; g.fillStyle=k>.8?'rgba(255,90,70,.75)':k>.5?'rgba(255,200,80,.7)':'rgba(120,210,160,.65)'; g.fillRect(x-5,Y(v)-1.5,10,3); }
+  g.fillStyle=pkLG(g,0,Y(this.vTop),0,fy,[0,'rgba(255,80,60,.85)',.35,'rgba(255,205,80,.8)',1,'rgba(110,205,150,.75)']);
+  for(let v=24;v<this.vTop-10;v+=22) g.fillRect(x-5,Y(v)-1.5,10,3);
   pkBar(g,x,top+2,x+this.D*-16,top+2,4);
   g.fillStyle=pkLG(g,x-12,0,x+12,0,[0,'#4e370c',.4,'#ffe9a8',1,'#5e420f']); g.fillRect(x-12,top-4,24,6);
  };
@@ -2032,7 +2042,7 @@ PKR.seesaw=function(rd){
 /* ===== 3 すべり台 (氷) : 半円の滑走路。氷だけが反対の縁まで滑って、上の風鈴に届く ===== */
 PKR.slide=function(rd){
  const s=rd.s,r=rd.r,w=s.w,h=s.h,X=s.X,Y=s.Y,fy=s.fy;
- pkTile(rd,.1*w);
+ pkTile(rd,.25*w);
  const tB=fy-(rd.tile.y+rd.tile.h);
  const vd=clamp(tB-2*r-70,56,.5*h), u0=.04*w, ua=.27*w, ub=.58*w, uk=.92*w, vk=.62*vd;
  const q=(a,c1,b,t)=>[(1-t)*(1-t)*a[0]+2*(1-t)*t*c1[0]+t*t*b[0],(1-t)*(1-t)*a[1]+2*(1-t)*t*c1[1]+t*t*b[1]];
@@ -2044,19 +2054,22 @@ PKR.slide=function(rd){
  rd.S.push(pkSeg(X(u0),fy,X(u0),Y(vd),rd,'wall'));
  for(let i=0;i<n-1;i++) rd.S.push(pkSeg(pts[i].x,pts[i].y,pts[i+1].x,pts[i+1].y,rd,i===0?'deck':i>=n-4?'lip':'chute'));
  rd.S.push(pkSeg(X(uk),Y(vk),X(uk),fy,rd,'wall'));
+ rd.solid=[X(u0),fy]; for(const p of pts) rd.solid.push(p.x,p.y); rd.solid.push(X(uk),fy);
  rd.ch={x:X(uk-.15*w),y:Y(vk+Math.min(.45*h,150)),a:0,av:0,t:-9};
- Object.assign(rd,{vd,vk,u0,ua,ub,uk,sndT:-9,boostT:-9,glint:0});
+ Object.assign(rd,{vd,vk,u0,ua,ub,uk,sndT:-9,boostT:-9,boostN:0,lastT:-9,glint:0});
  rd.aim={x:pts[3].x,y:pts[3].y-r-2}; rd.focus={x:X(ub),y:Y(vd*.45)}; rd.hr=.42*w;
  rd.box={x0:Math.min(X(u0),X(uk)),x1:Math.max(X(u0),X(uk)),y0:Y(vd+12),y1:fy};
  rd.poke=function(){ this.ch.av+=3; sfxRide('turn','ice',.2); };
- rd.touch=function(b,sg,nx,ny,imp){
-  if(b!==PBALL||b.mode!=='free') return;
+ rd.hit=function(b,sg,nx,ny,imp){
+  if(b.mode!=='free') return;
   const p=sg.part; if(p!=='chute'&&p!=='lip') return;
   if(b.mat!=='ice') b.onRamp=.05;      // 氷以外はざらざら止まる
   const sp=hyp(b.vx,b.vy);
-  if(p==='chute'&&sp>170&&now-this.sndT>1.1){ this.sndT=now; sfxRide('slide',b.mat,clamp(sp/800,.2,1)); }
+  if(p==='chute'&&sp>170&&now-this.lastT>.4&&now-this.sndT>1.1){ this.sndT=now; sfxRide('slide',b.mat,clamp(sp/800,.2,1)); }
+  this.lastT=now;
   if(b.mat==='ice'){ this.glint=1;
-   if(p==='lip'&&b.vy<-50&&sp>130&&now-this.boostT>.9){ this.boostT=now; const ch=this.ch; const v=ballistic(b.x,b.y,ch.x,ch.y+4,ch.y-b.r*.5); b.vx=v.vx; b.vy=v.vy; b.sq.amt=-.2; b.face.ex='wow'; b.face.hold=1; }
+   if(lastInput>this.boostT) this.boostN=0;
+   if(p==='lip'&&b.vy<-50&&sp>130&&now-this.boostT>.9&&this.boostN<2){ this.boostT=now; this.boostN++; const ch=this.ch; const v=ballistic(b.x,b.y,ch.x,ch.y+4,ch.y-b.r*.5); b.vx=v.vx; b.vy=v.vy; b.contact=0; b.sq.amt=-.2; b.face.ex='wow'; b.face.hold=1; }
   }
  };
  rd.update=function(dt){
@@ -2081,7 +2094,7 @@ PKR.slide=function(rd){
   // 氷の滑走面 (帯)
   g.beginPath(); for(let i=0;i<n;i++) g.lineTo(pts[i].x,pts[i].y-1); for(let i=n-1;i>=0;i--) g.lineTo(pts[i].x,pts[i].y+8); g.closePath();
   g.fillStyle=pkLG(g,0,Y(this.vd),0,fy,[0,'#f4fcff',.5,'#bfe6f6',1,'#7fb4d6']); g.fill();
-  g.beginPath(); for(let i=0;i<n;i++) g.lineTo(pts[i].x,pts[i].y-1); for(let i=n-1;i>=0;i--) g.lineTo(pts[i].x,pts[i].y+2); g.closePath(); g.fillStyle='rgba(255,255,255,.7)'; g.fill();
+  g.beginPath(); for(let i=0;i<n;i++) g.lineTo(pts[i].x,pts[i].y-1); for(let i=n-1;i>=0;i--) g.lineTo(pts[i].x,pts[i].y+2); g.closePath(); g.fillStyle=pkLG(g,0,Y(this.vd),0,fy,[0,'rgba(255,255,255,.85)',1,'rgba(225,245,255,.5)']); g.fill();
   // 風鈴のひも
   const ch=this.ch; g.fillStyle=pkLG(g,ch.x-1,0,ch.x+1,0,[0,'#b59a6a',1,'#6e5530']); g.fillRect(ch.x-1,this.s.ty,2,ch.y-14-this.s.ty);
  };
@@ -2102,7 +2115,7 @@ PKR.hammock=function(rd){
  pkTile(rd,.3*w);
  const pu1=.1*w, pu2=.9*w, vp=2*r+44, vl=16, N=6;
  const xa=Math.min(X(pu1),X(pu2)), xb=Math.max(X(pu1),X(pu2));
- Object.assign(rd,{xa,xb,ay:Y(vp),sag:vp-vl,N,amp:0,ph:0,bounce:0,rest:0,tossT:-9,sgn:0,cl:[],P:[],pp:[]});
+ Object.assign(rd,{xa,xb,vp,ay:Y(vp),sag:vp-vl,N,was:false,stT:-9,amp:0,ph:0,bounce:0,rest:0,tossT:-9,sgn:0,cl:[],P:[],pp:[]});
  for(let i=0;i<N;i++) rd.cl.push(pkSeg(0,0,0,0,'hammock'+i,'','cloth'));
  for(let i=0;i<=N;i++) rd.P.push({x:0,y:0});
  for(let i=0;i<2*N+2;i++) rd.pp.push({x:0,y:0});
@@ -2117,17 +2130,21 @@ PKR.hammock=function(rd){
  rd.box={x0:xa-6,x1:xb+6,y0:Y(vp+14),y1:fy};
  rd.poke=function(){ this.bounce=.6; this.tossT=now; };
  rd.toss=function(b){
-  const m=b.mat, dn=Math.min(1,MP[m].dens/4); let vy=-(580+130*(1-dn)); if(m==='rubber') vy*=1.15;
-  b.vy=vy; b.vx=this.D*(200+40*(1-dn)); b.sq.amt=.28; this.bounce=1; this.tossT=now;
-  sfxRide('hammock',m,clamp(-vy/800,.3,1));
+  // 支柱を越えて出口がわへ (重いほど低く、ゴムは高く)
+  const m=b.mat, dn=Math.min(1,MP[m].dens/4), s=this.s, r=this.r, up=(1-dn)*40+(m==='rubber'?50:0);
+  const v=ballistic(b.x,b.y,s.X(s.w*.9+r+12+(1-dn)*20),s.fy-r,s.Y(this.vp+r+40+up));
+  b.vx=v.vx; b.vy=v.vy; b.contact=0; b.onRamp=0; b.sq.amt=.28; this.bounce=1; this.tossT=now;
+  sfxRide('hammock',m,clamp(-v.vy/800,.3,1));
  };
  rd.update=function(dt){
   const b=PBALL;
   const stuck=!!(b&&b.stuck&&typeof b.stuck.k==='string'&&b.stuck.k.indexOf('hammock')===0&&b.mode==='free');
-  this.amp+=((stuck?1:0)-this.amp)*clamp(dt*(stuck?.8:.6),0,1);
+  if(stuck&&!this.was) this.stT=now; this.was=stuck;
+  const tg=stuck?(pkBusy(this.stT,9)?1:.35):0;
+  this.amp+=(tg-this.amp)*clamp(dt*(tg>this.amp?.8:.6),0,1);
   this.ph+=dt*TAU/2.4; this.bounce=Math.max(0,this.bounce-dt*1.6);
   const sg=Math.sin(this.ph)>0?1:-1;
-  if(sg!==this.sgn){ this.sgn=sg; if(this.amp>.25) sfxRide('hammock',b?b.mat:'felt',this.amp*.8); }
+  if(sg!==this.sgn){ this.sgn=sg; if(this.amp>.5) sfxRide('hammock',b?b.mat:'felt',this.amp*.8); }
   if(stuck&&this.amp>.45){ b.face.ex='cozy'; b.face.hold=.3; if(success('ride_hammock',b.x,b.y)) sparkle(b.x,b.y,10,'#ffd6e1'); }
   // フェルト以外: 布が はずんで 外へほうり出す
   if(b&&b.mode==='free'&&!b.stuck&&b.mat!=='felt'&&b.onRamp>0&&b.x>this.xa&&b.x<this.xb&&b.y<this.s.fy){
@@ -2159,35 +2176,37 @@ PKR.wheel=function(rd){
  const s=rd.s,r=rd.r,w=s.w,X=s.X,Y=s.Y,D=s.dir,fy=s.fy;
  pkTile(rd,.3*w);
  const tu0=.06*w, tu1=.74*w, Rw=Math.min(.17*w,1.3*r), vt=2*r+22, vw=vt-10, vb=6, tuP=tu1-.85*Rw, vh=vw+1.35*Rw, tuO=tu1+.95*Rw;
- Object.assign(rd,{tu0,tu1,Rw,vt,vw,vb,tuP,vh,tuO,ws:0,wa:0,push:0,pk:0,lit:0,litT:0,sndT:-9,inW:false,
+ Object.assign(rd,{tu0,tu1,Rw,vt,vw,vb,tuP,vh,tuO,enT:-9,ws:0,wa:0,push:0,pk:0,lit:0,litT:0,sndT:-9,inW:false,
   wx0:Math.min(X(tu0),X(tuP)),wx1:Math.max(X(tu0),X(tuP)),wb:Y(vb),cx:X(tu1),cy:Y(vw+.35*Rw)});
- rd.wo={y:Y(vw),cur:D*170};
+ rd.wo={y:Y(vw),cur:D*220};
  rd.S.push(pkSeg(X(tu0),fy,X(tu0),Y(vt),rd,'wall'),pkSeg(X(tu0),Y(vb),X(tuP),Y(vb),rd,'wall'),
-  pkSeg(X(tuP),Y(vb),X(tuP),Y(vw-.6*Rw),rd,'wall'),pkSeg(X(tuP),Y(vw-.6*Rw),X(tuP),Y(vh),rd,'wheel'),
-  pkSeg(X(tuP),Y(vh),X(tuO),Y(vh),rd,'wall'),pkSeg(X(tuO),Y(vh),X(tuO),fy,rd,'wall'));
+  pkSeg(X(tuP),Y(vb),X(tuP),Y(vw-.6*Rw),rd,'wall'),pkSeg(X(tuP),Y(vw-.6*Rw),X(tuP),Y(vw+.5*Rw),rd,'wheel'),
+  pkSeg(X(tuP),Y(vw+.5*Rw),X(tuO),Y(vw-.1*Rw),rd,'wall'),pkSeg(X(tuO),Y(vw-.1*Rw),X(tuO),fy,rd,'wall'));
+ rd.solid=[X(tuP),Y(vb),X(tuP),Y(vw+.5*Rw),X(tuO),Y(vw-.1*Rw),X(tuO),fy,X(tuP),fy];
  rd.aim={x:X((tu0+tuP)/2),y:Y(vw+r*.3)}; rd.focus={x:X((tu0+tu1)/2),y:Y(vw*.7)}; rd.hr=(tu1-tu0)*.55;
  rd.box={x0:Math.min(X(tu0),X(tuO)),x1:Math.max(X(tu0),X(tuO)),y0:Y(vh+12),y1:fy};
- rd.water=function(b){ if(b.x>this.wx0&&b.x<this.wx1&&b.y<this.wb&&b.y+b.r>this.wo.y-2) return this.wo; return null; };
+ rd.water=function(b){ // 跳び上がる途中 (タップ・投げ) は水の抵抗を受けない → 水から出られる
+  if(b.x>this.wx0&&b.x<this.wx1&&b.y<this.wb&&b.y+b.r>this.wo.y-2&&!(b.vy<-230&&b.mode==='free')) return this.wo; return null; };
  rd.poke=function(){ this.ws+=1.6; };
- rd.touch=function(b,sg,nx,ny,imp){
-  if(b!==PBALL||sg.part!=='wheel') return;
-  if(b.sub>.05){ this.push=.1; this.pk=MP[b.mat].dens<1?(1-b.sub)*2.2:.08; if(imp>40) this.ws+=imp*.006; }
+ rd.hit=function(b,sg,nx,ny,imp){
+  if(sg.part!=='wheel') return;
+  if(b.sub>.05){ this.push=.1; this.pk=MP[b.mat].dens<1?(1-b.sub)*2.2:.08; if(imp>40) this.ws=Math.min(9,this.ws+imp*.012); }
   else if(imp>60) this.ws+=imp*.004;
  };
  rd.update=function(dt){
   const b=PBALL;
-  this.push-=dt; if(this.push>0) this.ws+=this.pk*6*dt; this.ws-=this.ws*.6*dt; this.wa+=this.ws*dt*this.D;
-  if(this.ws>3.6) this.litT+=dt; else this.litT=Math.max(0,this.litT-dt*2);
-  this.lit=clamp(this.lit+(this.litT>.4?dt*2:-dt*.8),0,1);
+  this.push-=dt; if(this.push>0) this.ws=Math.min(9,this.ws+this.pk*12*dt); this.ws-=this.ws*.5*dt; this.wa+=this.ws*dt*this.D;
+  if(this.ws>3.2) this.litT+=dt; else this.litT=Math.max(0,this.litT-dt*2);
+  this.lit=clamp(this.lit+(this.litT>.25?dt*2.5:-dt*.8),0,1);
   const inW=!!(b&&b.mode==='free'&&b.sub>0&&b.x>this.wx0&&b.x<this.wx1&&b.y<this.wb);
   if(inW){ const dn=MP[b.mat].dens;
    if(dn<1) b.vx=clamp(b.vx,-210,210);
    else if(b.vy>30&&vrand()<dt*(dn>3?18:8)) addP({x:b.x+rr(-b.r*.5,b.r*.5),y:b.y-b.r*.6,vx:rr(-20,20),vy:rr(-120,-60),life:0,max:rr(.35,.6),r:rr(2,4),col:'#dff6ff',g:-300,kind:'drop'});
-   if(!this.inW) sfxRide('wheel',b.mat,dn<1?.35:.15);
+   if(!this.inW){ this.enT=now; sfxRide('wheel',b.mat,dn<1?.35:.15); }
   }
   this.inW=inW;
-  if(this.ws>1.2&&now-this.sndT>1.25){ this.sndT=now; sfxRide('wheel',b?b.mat:'wood',clamp(this.ws/8,.15,1)); }
-  if(this.litT>.6&&inW&&b.mat==='wood'&&success('ride_wheel',this.cx,this.s.Y(this.vh+30))) sparkle(this.cx,this.s.Y(this.vh+20),12,'#c8f2ff');
+  if(this.ws>1.2&&now-this.sndT>1.25&&pkBusy(this.enT,8)){ this.sndT=now; sfxRide('wheel',b?b.mat:'wood',clamp(this.ws/8,.15,1)); }
+  if(this.litT>.35&&inW&&b.mat==='wood'&&success('ride_wheel',this.cx,this.s.Y(this.vh+30))) sparkle(this.cx,this.s.Y(this.vh+20),12,'#c8f2ff');
   if(this.lit>.4&&vrand()<dt*12*this.lit){ const sx=this.cx, sy=this.s.Y(this.vh)-6; addP({x:sx,y:sy-this.lit*22,vx:rr(-70,70),vy:rr(-120,-30),life:0,max:rr(.3,.55),r:rr(1.5,3),col:vrand()<.5?'#bdf0ff':'#fff2b0',g:700,kind:'drop'}); }
  };
  rd.drawStatic=function(g){
@@ -2209,7 +2228,8 @@ PKR.wheel=function(rd){
   c.fillStyle=pkLG(c,0,wy,0,by,[0,'rgba(130,210,240,.85)',1,'rgba(24,80,130,.92)']);
   c.beginPath(); c.moveTo(x0,by); for(let x=x0;x<=x1+.1;x+=8){ c.lineTo(Math.min(x,x1),wy+Math.sin(x*.09+now*4*this.D)*1.6); } c.lineTo(x1,by); c.closePath(); c.fill();
   // 流れのすじ
-  c.save(); c.globalAlpha=.45; c.fillStyle='#e9fbff'; const span=x1-x0; for(let i=0;i<3;i++){ const k=((now*.5+i/3)%1), x=this.D>0?x0+k*span*.85:x1-k*span*.85; c.fillRect(x-6,wy+5+i*7,12,1.6); } c.restore();
+  c.fillStyle=pkU('streak',g=>pkLG(g,-1,0,1,0,[0,'rgba(233,251,255,0)',.5,'rgba(233,251,255,.6)',1,'rgba(233,251,255,0)'])); const span=x1-x0;
+  for(let i=0;i<3;i++){ const k=((now*.5+i/3)%1), x=this.D>0?x0+k*span*.85:x1-k*span*.85; c.save(); c.translate(x,wy+5+i*7); c.scale(8,1); c.fillRect(-1,0,2,1.8); c.restore(); }
   // 水車
   c.save(); c.translate(this.cx,this.cy); c.rotate(this.wa); c.scale(R,R);
   c.fillStyle=pkWoodV();
@@ -2228,13 +2248,14 @@ PKR.wheel=function(rd){
 
 /* ===== 6 回転台 (ガラス) : ランプの光をガラス玉で曲げ、留め金に当てると回り出す ===== */
 PKR.turn=function(rd){
+ // 入口がわ: ランプ → 高い台座 (ガラス玉を置く) → 出口がわ: 回転台。光は屋根の上を通り、ガラス玉で下へ曲がって てっぺんの留め金に当たる
  const s=rd.s,r=rd.r,w=s.w,X=s.X,Y=s.Y,D=s.dir,fy=s.fy;
- pkTile(rd,.5*w);
- const cu=.31*w, Rc=Math.min(.27*w,2*r), vc=Math.round(.75*r), vcb=vc+2*r+22, vct=vcb+.42*Rc, up=.78*w, vp=2*r, ul=.97*w;
- const vball=vp+r*1.05, vbeam=vball-.35*r;
- Object.assign(rd,{cu,Rc,vc,vcb,vct,up,vp,ul,cx:X(cu),pole:X(cu),hw:r*.38,lampX:X(ul),beamY:Y(vbeam),
-  latch:{x:X(cu)+D*7,y:Y(vcb-8)},ang:0,om:0,open:false,heat:0,latchP:0,wig:0,inBeam:false,beamEnd:0,ray:{ok:false,sx:0,sy:0,ex:0,ey:0,hit:false},tossT:-9,revA:0});
- rd.off0=vball-vbeam; rd.th0=Math.atan2(vcb-8-vball,Math.abs(X(up)-rd.latch.x));
+ pkTile(rd,.72*w);
+ const Rc=Math.min(.25*w,2*r), cu=Math.min(.64*w,w-Rc-8), vc=Math.round(.75*r), vcb=vc+2*r+22, vct=vcb+.42*Rc, up=.26*w, vp=vct+12, ul=.02*w;
+ const vball=vp+r*1.05, vbeam=vball+.35*r, B=D;           // B: 光の向き
+ Object.assign(rd,{cu,Rc,vc,vcb,vct,up,vp,ul,B,cx:X(cu),hw:r*.38,lampX:X(ul),beamY:Y(vbeam),
+  latch:{x:X(cu)-B*9,y:Y(vct)-1},beamStop:X(cu+Rc*.7),ang:0,om:0,open:false,openT:-9,heat:0,latchP:0,wig:0,inBeam:false,beamEnd:0,ray:{ok:false,sx:0,sy:0,ex:0,ey:0,hit:false},tossT:-9});
+ rd.off0=vball-vbeam; rd.th0=Math.atan2(vct+1-vball,Math.abs(X(up)-rd.latch.x));
  const cl=X(cu-Rc), cr=X(cu+Rc);
  rd.S.push(pkSeg(X(cu-Rc-12),fy,cl,Y(vc),rd,'base'),pkSeg(cl,Y(vc),cr,Y(vc),rd,'deck'),pkSeg(cr,Y(vc),X(cu+Rc+12),fy,rd,'base'),
   pkSeg(X(cu),Y(vc),X(cu),Y(vcb),rd,'pole'),
@@ -2243,11 +2264,11 @@ PKR.turn=function(rd){
   pkSeg(X(up-1.15*r),Y(vp+16),X(up-.55*r),Y(vp+4),rd,'ped'),pkSeg(X(up-.55*r),Y(vp+4),X(up),Y(vp),rd,'ped'),
   pkSeg(X(up),Y(vp),X(up+.55*r),Y(vp+4),rd,'ped'),pkSeg(X(up+.55*r),Y(vp+4),X(up+1.15*r),Y(vp+16),rd,'ped'));
  rd.aim={x:X(up),y:Y(vball)-2}; rd.focus={x:(X(cu)+X(up))/2,y:Y(vbeam)}; rd.hr=.4*w;
- rd.box={x0:Math.min(X(cu-Rc-12),X(ul))-4,x1:Math.max(X(cu-Rc-12),X(ul))+4,y0:Y(vct+6),y1:fy};
+ rd.box={x0:Math.min(X(ul),X(cu+Rc+12))-4,x1:Math.max(X(ul),X(cu+Rc+12))+4,y0:Y(vball+r+6),y1:fy};
  rd.poke=function(){ if(this.open) this.om+=.6; else this.wig=1; };
- rd.touch=function(b,sg,nx,ny,imp){
-  if(b!==PBALL) return; const p=sg.part;
-  if(p==='ped'&&imp>50&&b.mode==='free'){ b.vx*=.45; if(b.vy<0) b.vy*=.35; }   // 台座のくぼみは布張り: 玉が収まる
+ rd.hit=function(b,sg,nx,ny,imp){
+  const p=sg.part;
+  if(p==='ped'&&imp>50&&b.mode==='free'&&ny<-.3){ b.vx*=.3; if(b.vy<0) b.vy*=.15; }   // 台座のくぼみは布張り: 玉が収まる
   if((p==='deck'||p==='roof')&&ny<-.4){
    if(this.open&&now-this.tossT>.7&&b.mode==='free'){ // 回る台が玉をそっと外へ
     this.tossT=now; const m=b.mat; b.vx=(b.x<this.cx?-1:1)*(150+70*this.om)*(m==='ice'?1.4:m==='felt'?.6:1); b.vy=Math.min(b.vy,m==='rubber'?-420:-240);
@@ -2256,27 +2277,27 @@ PKR.turn=function(rd){
   }
  };
  rd.update=function(dt){
-  const b=PBALL, D=this.D, ray=this.ray, r=this.r;
+  const b=PBALL, B=this.B, ray=this.ray;
   this.wig=Math.max(0,this.wig-dt*2.5);
-  if(this.open){ this.latchP=Math.min(1,this.latchP+dt*2); const tg=1.5; this.om+=(tg-this.om)*clamp(dt*.6,0,1); }
+  if(this.open){ this.latchP=Math.min(1,this.latchP+dt*2); const tg=pkBusy(Math.max(this.openT,this.tossT),10)?1.5:.35; this.om+=(tg-this.om)*clamp(dt*.6,0,1); }
   const pa=this.ang; this.ang+=this.om*dt;
-  if(this.open&&Math.floor(this.ang/TAU)!==Math.floor(pa/TAU)) sfxRide('turn',b?b.mat:'glass',.45);
-  // 光
-  const ox=this.lampX-D*8, oy=this.beamY; let end=this.pole+D*4; this.inBeam=false; ray.ok=false; ray.hit=false;
+  if(this.open&&this.om>.9&&Math.floor(this.ang/TAU)!==Math.floor(pa/TAU)) sfxRide('turn',b?b.mat:'glass',.45);
+  // 光: ランプ → (玉) → 回転台の上
+  const ox=this.lampX+B*8, oy=this.beamY; let end=this.beamStop; this.inBeam=false; ray.ok=false; ray.hit=false;
   if(b&&b.mode!=='script'){ const dy=b.y-oy;
-   if((ox-b.x)*D>0&&(b.x-this.pole)*D>0&&Math.abs(dy)<b.r+this.hw*.6){ this.inBeam=true; end=b.x+D*Math.sqrt(Math.max(0,b.r*b.r-dy*dy)); } }
+   if((b.x-ox)*B>0&&(this.beamStop-b.x)*B>0&&Math.abs(dy)<b.r+this.hw*.6){ this.inBeam=true; end=b.x-B*Math.sqrt(Math.max(0,b.r*b.r-dy*dy)); } }
   this.beamEnd=end;
-  if(this.inBeam&&b.mat==='glass'&&!this.open){
-   const off=oy-b.y, th=clamp(this.th0+.035*(off-this.off0),-1.1,1.1), dx=-D*Math.cos(th), dy=-Math.sin(th);
+  if(this.inBeam&&b.mat==='glass'){ // ガラス: 光が曲がる (玉の中心と光の高さの差で曲がり方が変わる)
+   const off=oy-b.y, th=clamp(this.th0+.035*(off-this.off0),-1.1,1.1), dx=B*Math.cos(th), dy=-Math.sin(th);
    ray.sx=b.x+dx*b.r; ray.sy=b.y+dy*b.r;
-   let t=400; for(const s of this.S){ if(s.k!=='park') continue; const ex=s.bx-s.ax, ey=s.by-s.ay, den=dx*ey-dy*ex; if(Math.abs(den)<1e-9) continue;
+   let t=400; for(const s of this.S){ if(s.k!=='park'||s.part==='ped') continue; const ex=s.bx-s.ax, ey=s.by-s.ay, den=dx*ey-dy*ex; if(Math.abs(den)<1e-9) continue;
     const tt=((s.ax-ray.sx)*ey-(s.ay-ray.sy)*ex)/den, u=((s.ax-ray.sx)*dy-(s.ay-ray.sy)*dx)/den; if(tt>1&&tt<t&&u>=0&&u<=1) t=tt; }
    if(dy>0) t=Math.min(t,(this.s.fy-ray.sy)/dy);
    ray.ex=ray.sx+dx*t; ray.ey=ray.sy+dy*t; ray.ok=true;
    const la=this.latch;
-   if(segDist(la.x,la.y,ray.sx,ray.sy,ray.ex+dx*12,ray.ey+dy*12)<15){ ray.hit=true; this.heat+=dt;
+   if(!this.open&&segDist(la.x,la.y,ray.sx,ray.sy,ray.ex+dx*12,ray.ey+dy*12)<15){ ray.hit=true; this.heat+=dt;
     if(vrand()<.4) addP({x:la.x+rr(-6,6),y:la.y+rr(-6,6),vx:rr(-40,40),vy:rr(-80,-20),life:0,max:.5,r:rr(2,4),col:'#fff3b0',g:-50,kind:'star'});
-    if(this.heat>.5){ this.open=true; this.om=Math.max(this.om,.4); sfxLatch(); sfxRide('turn','glass',.8); if(success('ride_turn',la.x,la.y)) sparkle(this.cx,this.s.Y(this.vcb),14,'#fff6c8'); }
+    if(this.heat>.5){ this.open=true; this.openT=now; this.om=Math.max(this.om,.4); sfxLatch(); sfxRide('turn','glass',.8); if(success('ride_turn',la.x,la.y)) sparkle(this.cx,this.s.Y(this.vcb),14,'#fff6c8'); }
    } else this.heat=Math.max(0,this.heat-dt*.6);
   } else this.heat=Math.max(0,this.heat-dt*.6);
  };
@@ -2293,45 +2314,45 @@ PKR.turn=function(rd){
   g.fillStyle=pkLG(g,0,yt,0,yb,[0,'#ff7a66',1,'#b8261b']); for(let i=0;i<6;i+=2){ g.beginPath(); g.moveTo(cx,yt-4); g.lineTo(lerp(L0,R0,i/6),yb); g.lineTo(lerp(L0,R0,(i+1)/6),yb); g.closePath(); g.fill(); }
   g.restore();
   g.fillStyle=pkLG(g,0,yb-2,0,yb+9,[0,'#ffe3a0',1,'#b8761e']); const n=6; for(let i=0;i<n;i++){ const x=lerp(L0,R0,i/n), x2=lerp(L0,R0,(i+1)/n); g.beginPath(); g.moveTo(x,yb-1); g.lineTo(x2,yb-1); g.quadraticCurveTo((x+x2)/2,yb+11,x,yb-1); g.fill(); }
-  drawStar(g,cx,yt-8,6,0);
+  pkStar(g,cx,yt-9,6,0);
   // 台座 (玉を置くくぼみ)
-  const px=X(this.up); woodFill(g,px-7,Y(this.vp),14,this.vp,'dark');
-  const r=this.r, cupP=[[-1.15,16],[-.55,4],[0,0],[.55,4],[1.15,16]];
+  const px=X(this.up), r=this.r; woodFill(g,px-7,Y(this.vp),14,this.vp,'dark');
+  const cupP=[[-1.15,16],[-.55,4],[0,0],[.55,4],[1.15,16]];
   g.fillStyle=pkLG(g,px-r,0,px+r,0,[0,'#4e370c',.4,'#ffe9a8',1,'#5e420f']); g.beginPath();
   for(const q of cupP) g.lineTo(X(this.up+q[0]*r),Y(this.vp+q[1])); for(let i=cupP.length-1;i>=0;i--){ const q=cupP[i]; g.lineTo(X(this.up+q[0]*r*.92),Y(this.vp+q[1]-6)); } g.closePath(); g.fill();
-  // ランプ
+  // ランプ (入口がわの柱の上, 光は出口がわへ)
   const lx=this.lampX, ly=this.beamY; pkBar(g,lx,ly,lx,fy,4);
-  g.save(); g.translate(lx,ly); g.scale(-this.D,1); g.fillStyle=pkLG(g,0,-10,0,10,[0,'#fff0b0',.5,'#d9a83a',1,'#6b4510']); g.beginPath(); g.moveTo(8,-8); g.lineTo(8,8); g.lineTo(-6,11); g.lineTo(-6,-11); g.closePath(); g.fill(); g.restore();
+  g.save(); g.translate(lx,ly); g.scale(this.B,1); g.fillStyle=pkLG(g,0,-10,0,10,[0,'#fff0b0',.5,'#d9a83a',1,'#6b4510']); g.beginPath(); g.moveTo(-6,-8); g.lineTo(-6,8); g.lineTo(8,11); g.lineTo(8,-11); g.closePath(); g.fill(); g.restore();
  };
  rd.draw=function(c){
-  const D=this.D, cx=this.cx, Rc=this.Rc, yd=this.s.Y(this.vc), wig=Math.sin(now*40)*this.wig*.05;
-  const N=6, items=[];
+  const D=this.D, B=this.B, cx=this.cx, Rc=this.Rc, yd=this.s.Y(this.vc), wig=Math.sin(now*40)*this.wig*.05, N=6;
   // 奥 → 柱 → 手前
   for(let pass=0;pass<2;pass++){
    for(let i=0;i<N;i++){ const a=this.ang+wig+i*TAU/N, z=Math.cos(a); if(pass===0?z>=0:z<0) continue;
     const x=cx+D*Math.sin(a)*Rc*.74, sc=.78+.22*(z+1)/2, bob=this.open?Math.sin(a*2+now*3)*2.5:0, y=yd-1-(z+1)*1.5+bob;
-    if(i%2===0) drawCup(c,x,y,(9+this.r*.2)*sc,i/2|0);
-    else { pkBar(c,x,y,x,this.s.Y(this.vcb)+2,2); drawStar(c,x,y-14*sc+bob,7*sc,a); } }
-   if(pass===0){ pkBar(c,cx,yd,cx,this.s.Y(this.vcb),6);
-    // 留め金
-    const la=this.latch; c.save(); c.translate(la.x,la.y-6); c.rotate(D*(this.latchP*1.6+Math.sin(now*50)*this.heat*.08)); c.fillStyle=pkBrass(); c.save(); c.scale(3.5,1); c.fillRect(-1,0,2,13); c.restore(); c.beginPath(); c.arc(0,13,4.5,0,PI); c.fill(); c.restore();
-    if(this.heat>0&&!this.open) pkGlow(c,la.x,la.y,26,this.heat*1.6); }
+    if(i%2===0) pkCup(c,x,y,(9+this.r*.2)*sc,i/2|0);
+    else { pkBar(c,x,y,x,this.s.Y(this.vcb)+2,2); pkStar(c,x,y-14*sc+bob,7*sc,a); } }
+   if(pass===0) pkBar(c,cx,yd,cx,this.s.Y(this.vcb),6);
   }
+  // 留め金 (てっぺん, 光が当たると はずれる)
+  const la=this.latch; c.save(); c.translate(cx,la.y); c.rotate(B*(this.latchP*1.4+Math.sin(now*50)*this.heat*.08)); c.fillStyle=pkBrass();
+  c.save(); c.rotate(PI/2); c.scale(3,1); c.fillRect(-1,0,2,B*-14); c.restore(); c.beginPath(); c.arc(-B*13,0,4.5,0,TAU); c.fill(); c.restore();
+  if(this.heat>0&&!this.open) pkGlow(c,la.x,la.y,26,this.heat*1.6);
   if(this.open){ const yb=this.s.Y(this.vcb)+4; for(let i=0;i<5;i++){ const x=lerp(cx-Rc,cx+Rc,i/4); pkGlow(c,x,yb,12,.5+.4*Math.sin(now*6+i*1.3)); } }
   // 光の筋
-  const ox=this.lampX-D*8, oy=this.beamY, ex=this.beamEnd, hw=this.hw;
+  const ox=this.lampX+B*8, oy=this.beamY, ex=this.beamEnd, hw=this.hw;
   c.save(); c.globalCompositeOperation='lighter';
-  c.fillStyle=pkLG(c,ox,0,ex,0,[0,'rgba(255,236,160,.6)',1,'rgba(255,236,160,.2)']);
+  c.fillStyle=pkLG(c,ox,0,ex,0,[0,'rgba(255,236,160,.6)',1,this.inBeam?'rgba(255,236,160,.3)':'rgba(255,236,160,0)']);
   c.beginPath(); c.moveTo(ox,oy-hw*.6); c.lineTo(ex,oy-hw); c.lineTo(ex,oy+hw); c.lineTo(ox,oy+hw*.6); c.closePath(); c.fill();
   const ry=this.ray;
-  if(ry.ok){ const b=PBALL; c.fillStyle='rgba(255,250,210,.5)'; c.beginPath(); c.moveTo(b.x+D*b.r*.9,oy-hw); c.lineTo(ry.sx,ry.sy); c.lineTo(b.x+D*b.r*.9,oy+hw); c.closePath(); c.fill();
+  if(ry.ok){ const b=PBALL; c.fillStyle='rgba(255,250,210,.5)'; c.beginPath(); c.moveTo(b.x-B*b.r*.9,oy-hw); c.lineTo(ry.sx,ry.sy); c.lineTo(b.x-B*b.r*.9,oy+hw); c.closePath(); c.fill();
    c.strokeStyle=pkLG(c,ry.sx,ry.sy,ry.ex,ry.ey,[0,'rgba(255,255,230,.95)',1,'rgba(255,220,120,.55)']); c.lineCap='round'; c.lineWidth=6; c.beginPath(); c.moveTo(ry.sx,ry.sy); c.lineTo(ry.ex,ry.ey); c.stroke();
    c.lineWidth=15; c.globalAlpha=.25; c.stroke(); c.globalAlpha=1; pkGlow(c,ry.ex,ry.ey,22,.8); }
   c.restore();
   pkGlow(c,ox,oy,24,.7);
   // 影 (光を通さない玉)
-  if(this.inBeam&&!ry.ok){ const b=PBALL, x0=b.x-D*b.r*.2, x1=this.pole+D*2;
-   if((x0-x1)*D>0){ c.fillStyle=pkLG(c,x0,0,x1,0,[0,'rgba(40,20,8,.32)',1,'rgba(40,20,8,.06)']); c.fillRect(Math.min(x0,x1),oy-b.r*.75,Math.abs(x1-x0),b.r*1.5); } }
+  if(this.inBeam&&!ry.ok){ const b=PBALL, x0=b.x+B*b.r*.2, x1=this.beamStop;
+   if((x1-x0)*B>0){ c.fillStyle=pkLG(c,x0,0,x1,0,[0,'rgba(40,20,8,.32)',1,'rgba(40,20,8,0)']); c.fillRect(Math.min(x0,x1),oy-b.r*.75,Math.abs(x1-x0),b.r*1.5); } }
  };
 };
 
@@ -2371,9 +2392,9 @@ const PARK={
   for(const m of src) if(MATS.indexOf(m)>=0&&ord.indexOf(m)<0) ord.push(m);
   for(const m of MATS) if(ord.indexOf(m)<0) ord.push(m);
   this.order=ord;
-  this.rides=ord.map((m,i)=>{ const rd=pkRide(RIDE_OF[m],m,this.slots[i],r); PKR[rd.kind](rd); return rd; });
-  this.lift={t:-1,rest:0,py:fy,x:xl+this.gw/2,y0:0,y1:0,step:-1};
-  this.lastMat=this.ball?this.ball.mat:null; this.hc={}; this.bgKey=''; this.allT=0;
+  this.rides=ord.map((m,i)=>{ const rd=pkRide(RIDE_OF[m],m,this.slots[i],r); PKR[rd.kind](rd); rd.RS=rd.S.filter(q=>q.k!=='ptile'); return rd; });
+  this.lift={t:-1,rest:0,py:fy,x:xl+this.gw/2,y0:0,y1:0,step:-1,exitT:-9};
+  this.lastMat=this.ball?this.ball.mat:null; this.hc={}; this.bgKey=''; this.allT=0; this.still=0; this.sx=0; this.sy=0; this.onTile=0;
  },
  relayout(){
   this.build(); const b=PBALL; if(!b) return;
@@ -2394,7 +2415,7 @@ const PARK={
    const k=easeInOut(ST.parkP), t=this.spawn;
    b.x=lerp(this.from.x,t.x,k); b.y=lerp(this.from.y,t.y,k)-Math.sin(k*PI)*80; b.r=lerp(this.r0,this.r,k); b.ang+=dt*6;
    if(this.P&&k>.85) this.lift.py=b.y+b.r;
-   if(ST.parkP>=1){ this.opening=false; ST.park=true; b.mode='free'; b.r=this.r; b.vx=this.P?200:0; b.vy=this.P?-260:0; }
+   if(ST.parkP>=1){ this.opening=false; ST.park=true; b.mode='free'; b.r=this.r; b.vx=b.vy=0; if(this.P){ this.hopIn(b); this.lift.exitT=now; } }
   }
   if(ST.park&&!BALL&&now>this.spawnAt){ BALL=newBall(L.start.x,L.rail.y); BALL.vy=-popV(); ST.lidT=now; ST.popT=now; sfxPop(); }
   if(this.closing){
@@ -2410,9 +2431,12 @@ const PARK={
    if(n>=6){ this.allT+=dt; if(this.allT>1.2){ const p=L.park; success('park_all',(p.x0+p.x1)/2,(p.y0+p.y1)/2); for(const rd of this.rides) sparkle(rd.focus.x,rd.focus.y,5); } } }
  },
  updateTiles(){
-  const b=PBALL; if(b.mat===this.lastMat) return; this.lastMat=b.mat;
-  let best=null, bd=1e9; for(const rd of this.rides){ const t=rd.tile, d=hyp(b.x-t.cx,b.y-t.cy); if(d<bd){bd=d;best=t;} }
-  if(best&&bd<b.r+60) best.wt=now;
+  const b=PBALL;
+  // 札に触れたら着がえ (勢いよく跳び上がる途中は素通り: 下りてきて触れたとき / ドラッグで触れたとき)
+  if(b.mode==='drag'||(b.mode==='free'&&b.vy>-150)) for(const rd of this.rides){ const t=rd.tile;
+   const qx=clamp(b.x,t.x,t.x+t.w), qy=clamp(b.y,t.y,t.y+t.h), ov=hyp(b.x-qx,b.y-qy)<b.r;
+   if(ov&&!t.in&&b.mat!==t.m){ wear(b,t.m); t.wt=now; if(b.mode==='free') b.vx*=.35; } t.in=ov; }   // 札にぶつかると少し勢いが落ちる (遠くへ飛びすぎない)
+  this.lastMat=b.mat;
  },
  updateLift(dt){ // 縦画面: 左の縦穴の昇降機で上の段へ
   const lf=this.lift, b=PBALL; if(!this.P) return;
@@ -2420,17 +2444,35 @@ const PARK={
    lf.t+=dt; const k=clamp(lf.t/1.05,0,1);
    b.x=lf.x; b.y=lerp(lf.y0,lf.y1,easeInOut(k)); b.vx=b.vy=0; lf.py=b.y+b.r;
    const st=Math.floor(k*5.99); if(st>lf.step){ lf.step=st; sfxClimb(st); }
-   if(k>=1){ lf.t=-1; b.mode='free'; b.vx=200; b.vy=-260; sfxPop(); }
+   if(k>=1){ lf.t=-1; lf.exitT=now; b.mode='free'; this.hopIn(b); sfxPop(); }
    return;
   }
   lf.py=Math.min(this.fy,lf.py+dt*260);
-  if(b.mode==='free'&&!b.stuck&&b.x<this.xl+this.gw&&b.y>this.fy-b.r-14&&b.contact>0&&hyp(b.vx,b.vy)<120){
+  // 自動で何度も回らないよう: 一度出たら、さわるか4秒たつまで待つ
+  if(b.mode==='free'&&!b.stuck&&b.x<this.xl+this.gw&&b.y>this.fy-b.r-60&&Math.abs(b.vx)<160&&(now-lf.exitT>4||lastInput>lf.exitT)){
    lf.rest+=dt; if(lf.rest>.45){ lf.rest=0; lf.t=0; lf.step=-1; lf.y0=b.y; lf.y1=this.ym-b.r-50; b.mode='script'; sfxClick(); }
   } else lf.rest=0;
  },
+ hopIn(b){ // 昇降機の上から 上の段の入口へぴょんと入る
+  const a=this.rides[0].aim, v=ballistic(b.x,b.y,a.x,a.y,Math.min(b.y,a.y)-70); b.vx=v.vx; b.vy=v.vy;
+ },
  contain(){
   const b=PBALL; if(b.mode==='script') return;
-  if(!(b.x>this.xl-4&&b.x<this.xr+4&&b.y>this.yc-4&&b.y<this.fy+4)){ b.x=this.spawn.x; b.y=this.spawn.y; b.vx=b.vy=0; b.stuck=null; }
+  if(!(b.x>this.xl-4&&b.x<this.xr+4&&b.y>this.yc-4&&b.y<this.fy+4)){ b.x=this.spawn.x; b.y=this.spawn.y; b.vx=b.vy=0; b.stuck=null; return; }
+  if(b.mode!=='free'||b.vy<-260) return;
+  for(const rd of this.rides){ const P=rd.solid; if(P&&pkInPoly(P,b.x,b.y)){ let top=1e9; for(let i=1;i<P.length;i+=2) top=Math.min(top,P[i]); b.y=top-b.r-2; b.vy=0; } }
+  // 2つの角のあいだに乗って止まったら、ぴょんと降ろす
+  if(!b.stuck&&b.contact>0&&hyp(b.x-this.sx,b.y-this.sy)<3){ this.still+=1/60; if(this.still>.9){ this.still=0; const k=this.perched(b); if(k){ b.vx=k*170; b.vy=-280; b.sq.amt=.2; } } } else { this.still=0; this.sx=b.x; this.sy=b.y; }
+ },
+ perched(b){ // 左右の角だけで支えられて止まっている (2つの遊具のすき間など) → 降りる向き (-1/1)、そうでなければ 0
+  let Lc=false, Rc=false, hiY=1e9, side=0;
+  for(const s of DYN){ if(s.k==='cloth') continue; const q=closest(s.ax,s.ay,s.bx,s.by,b.x,b.y);
+   if(hyp(b.x-q.x,b.y-q.y)>b.r+1.5||q.y<b.y+b.r*.3) continue;
+   const tip=q.t<=.001||q.t>=.999, off=q.x-b.x;
+   if(Math.abs(off)<=2||(!tip&&Math.abs(off)<b.r*.5)) return 0;
+   if(off<0) Lc=true; else Rc=true;
+   if(q.y<hiY){ hiY=q.y; side=off>0?1:-1; } }
+  return Lc&&Rc?side:0;
  },
  segs(arr){
   if(!(ST.park||this.opening)) return;
@@ -2443,13 +2485,17 @@ const PARK={
    arr[j++]=s; }
   arr.length=j;
   for(const s of this.S) arr.push(s);
-  for(const rd of this.rides){ const S=rd.S; for(let i=0;i<S.length;i++) arr.push(S[i]); }
+  // 上へ跳んでいる玉は遊具を下からすり抜ける (一方通行の足場)。床・壁はそのまま。
+  // 素材タイルは つり下げた札: 当たり線分は積まず、重なったら素材が変わる (updateTiles。エンジンのドラッグ中の ptile と同じ扱い)
+  const b=PBALL; if(b&&b.mode==='free'&&b.vy<-260) return;
+  for(const rd of this.rides){ const S=rd.RS; for(let i=0;i<S.length;i++) arr.push(S[i]); }
  },
  water(b){ for(const rd of this.rides) if(rd.water){ const w=rd.water(b); if(w) return w; } return null; },
  rowOf(b){ return this.P&&b.y>this.ym+4?1:0; },
  aimFor(b,pt,row){ // 段が違うときは通り道 (昇降機 / 落とし口) へ
   if(!this.P||this.rowOf(b)===row) return pt;
-  if(row===0) return {x:this.xl+this.gw/2,y:this.fy-b.r};
+  if(row===0){ // 昇降機へ: 縦穴の上の空中をねらうと 高い弧になって途中の遊具を越える
+   const near=b.x<this.xl+this.gw+b.r; return {x:this.xl+this.gw/2,y:this.fy-b.r-(near?0:90)}; }
   return {x:this.xr-this.gw/2,y:this.ym-b.r};
  },
  targets(b){
@@ -2515,6 +2561,16 @@ const PARK={
    let k=0; for(let x=xl+14;x<xr-10;x+=26){ const t=(x-xl)/(xr-xl), yy=by+sagB*4*t*(1-t), C=fl[k++%5];
     g.fillStyle=pkLG(g,x-8,yy,x+8,yy+18,[0,'#ffffff',.25,C,1,'rgba(40,20,10,.55)']); g.globalAlpha=.92; g.beginPath(); g.moveTo(x-8,yy); g.lineTo(x+8,yy); g.lineTo(x,yy+17); g.closePath(); g.fill(); g.globalAlpha=1; }
   }
+  if(!P){ // 奥の観覧車 (背景, 淡く)
+   const R=Math.min(170,(fy-yc)*.3), cx=cxm, cy=yc+62+R;
+   g.save(); g.globalAlpha=.38;
+   pkBar(g,cx,cy,cx-R*.75,fy,9); pkBar(g,cx,cy,cx+R*.75,fy,9);
+   for(let i=0;i<12;i++){ const a=i*TAU/12; pkBar(g,cx,cy,cx+Math.cos(a)*R,cy+Math.sin(a)*R,3); }
+   g.fillStyle=pkLG(g,cx-R,cy-R,cx+R,cy+R,[0,'#fff0b4',.5,'#c9953a',1,'#7a5518']); g.beginPath(); g.arc(cx,cy,R,0,TAU); g.arc(cx,cy,R-7,0,TAU,true); g.fill();
+   for(let i=0;i<8;i++){ const a=i*TAU/8+.2; pkCup(g,cx+Math.cos(a)*R,cy+Math.sin(a)*R+20,22,i); }
+   g.fillStyle=pkRG(g,cx-4,cy-4,1,cx,cy,14,[0,'#fff3c0',.5,'#c99a3a',1,'#4e370c']); g.beginPath(); g.arc(cx,cy,13,0,TAU); g.fill();
+   g.restore();
+  }
   // 床
   woodFill(g,p.x0,fy,p.x1-p.x0,p.y1-fy,'amber');
   if(P){
@@ -2533,7 +2589,7 @@ const PARK={
    woodFill(g,xl+4,top,8,fy-top,'dark'); woodFill(g,a-12,top,8,fy-top,'dark');
    g.fillStyle=pkLG(g,0,top-30,0,top+6,[0,'#ffd36a',.5,'#e5533f',1,'#8a1c14']); g.beginPath(); g.moveTo(xl+2,top+4); g.quadraticCurveTo((xl+a)/2,top-46,a-2,top+4); g.lineTo(a-2,top-6); g.quadraticCurveTo((xl+a)/2,top-58,xl+2,top-6); g.closePath(); g.fill();
    for(let i=0;i<5;i++){ const t=i/4, x=lerp(xl+6,a-6,t), y=top-1-38*4*t*(1-t)*.92; this.bulbs.push({x,y,ph:i*2.1}); g.fillStyle=pkRG(g,x-1,y-1,0,x,y,4,[0,'#fffbe6',.5,'#ffd36a',1,'#b0701a']); g.beginPath(); g.arc(x,y,3.4,0,TAU); g.fill(); }
-   drawStar(g,(xl+a)/2,top-44,9,0);
+   pkStar(g,(xl+a)/2,top-44,9,0);
   }
   // 遊具の固定部分
   for(const rd of this.rides) if(rd.drawStatic) rd.drawStatic(g);
