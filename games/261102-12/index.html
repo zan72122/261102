@@ -16,11 +16,14 @@ html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#
   overscroll-behavior:none;-webkit-tap-highlight-color:transparent;position:fixed;inset:0}
 canvas{position:fixed;left:0;top:0;display:block;touch-action:none;-webkit-touch-callout:none;
   -webkit-user-select:none;user-select:none;outline:none}
+#bg,#bgn{pointer-events:none}#bgn{opacity:0}#c{z-index:2}
 #sa{position:fixed;left:0;top:0;width:0;height:0;visibility:hidden;pointer-events:none;
   padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
 </style>
 </head>
 <body>
+<canvas id="bg"></canvas>
+<canvas id="bgn"></canvas>
 <canvas id="c"></canvas>
 <div id="sa"></div>
 <script>
@@ -34,6 +37,8 @@ canvas{position:fixed;left:0;top:0;display:block;touch-action:none;-webkit-touch
 const cv = document.getElementById('c');
 let ctx = cv.getContext('2d');
 const saEl = document.getElementById('sa');
+const bgCv = document.getElementById('bg'), bgnCv = document.getElementById('bgn');
+let dprCap = 2;
 
 // ---------------------------------------------------------------- utils
 const TAU = Math.PI * 2;
@@ -144,7 +149,7 @@ function doLayout() {
   layoutDirty = false;
   const W = Math.max(200, window.innerWidth || document.documentElement.clientWidth || 390);
   const H = Math.max(200, window.innerHeight || document.documentElement.clientHeight || 844);
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2, dprCap);
   const cw = Math.round(W * dpr), ch = Math.round(H * dpr);
   if (cv.width !== cw || cv.height !== ch) { cv.width = cw; cv.height = ch; }
   cv.style.width = W + 'px'; cv.style.height = H + 'px';
@@ -399,7 +404,45 @@ const ITEM = {
   model(t, o) { drawMini(0, 28, .56, (o && o.fold) || FOLD0, o && o.lit, o && o.sync); },
 };
 const FOLD0 = { roof: 0, shelf: 0, wall: 0, disc: 0 };
+// ---------------------------------------------------------------- スプライト（静止した絵はビットマップにして使い回す）
+const SPR = new Map();
+let sprK = 0, sprVer = -1;
+function spr(key, w, h, ax, ay, paint, scl) {
+  const k0 = L.S * L.dpr * 1.15;
+  if (k0 !== sprK || sprVer !== L.ver) { SPR.clear(); sprK = k0; sprVer = L.ver; }
+  let s = SPR.get(key);
+  if (!s) {
+    const k = k0 * (scl || 1);
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.ceil(w * k)); c.height = Math.max(1, Math.ceil(h * k));
+    const c2 = c.getContext('2d'), saved = ctx; ctx = c2;
+    try { c2.setTransform(k, 0, 0, k, ax * k, ay * k); paint(); } catch (e) { if (typeof G !== 'undefined') G.errors.push(String(e && e.stack || e)); } finally { ctx = saved; }
+    s = { c, w, h, ax, ay }; SPR.set(key, s);
+  }
+  return s;
+}
+function blit(s, x, y) { ctx.drawImage(s.c, x - s.ax, y - s.ay, s.w, s.h); }
+const ITEM_SPR = { cake: 1, juice: 1, candy: 1, shoes: 1, donut: 1, bigdonut: 1, cookie: 1, cloud: 1, button: 1, lantern: 1, wheel: 1, bigwheel: 1, toycart: 1, spring: 1 };
+const IREF = 72, IBOX = IREF * 1.7;
 function drawItem(kind, x, y, size, o) {
+  o = o || NO;
+  if (ITEM_SPR[kind] && !(kind === 'spring' && o.comp) && !(kind === 'toycart' && o.spin)) {
+    const key = 'i:' + kind + (kind === 'lantern' ? (o.col || '') + (o.lit ? 1 : 0) : '');
+    const s = spr(key, IBOX, IBOX, IBOX / 2, IBOX / 2, () => drawItemVec(kind, 0, 0, IREF, o.col || o.lit ? { col: o.col, lit: o.lit } : NO));
+    const sc = size / IREF;
+    ctx.save(); ctx.translate(x, y);
+    if (o.rot) ctx.rotate(o.rot);
+    if (o.spin && (kind === 'wheel' || kind === 'bigwheel')) ctx.rotate(o.spin);
+    ctx.scale(sc, sc);
+    if (o.sx || o.sy) { const by = 28 * IREF / 64; ctx.translate(0, by); ctx.scale(o.sx || 1, o.sy || 1); ctx.translate(0, -by); }
+    if (o.alpha != null && o.alpha < 1) ctx.globalAlpha *= Math.max(0, o.alpha);
+    blit(s, 0, 0);
+    ctx.restore();
+    return;
+  }
+  drawItemVec(kind, x, y, size, o);
+}
+function drawItemVec(kind, x, y, size, o) {
   o = o || NO;
   const k = size / 64;
   ctx.save();
@@ -628,6 +671,9 @@ function drawHair(kind, hc, K, front) {
     Ef(-24, hc - 6, 6, 9, h); Ef(24, hc - 6, 6, 9, h);
   }
 }
+// 頭（髪・顔・帽子）は表情・まばたき・視線（3x3）ごとにビットマップ化して使い回す
+const qz = v => v > .33 ? 1 : v < -.33 ? -1 : 0;
+const headKey = (kind, st, s) => kind + ':' + (st.expr || 'idle') + ':' + qz(st.lx || 0) + ',' + qz(st.ly || 0) + ':' + (st.blink ? 1 : 0) + ':' + s.toFixed(2);
 function drawPerson(kind, x, y, s, st) {
   const K = PK[kind] || PK.fire;
   ctx.save(); ctx.translate(x, y);
@@ -658,11 +704,18 @@ function drawPerson(kind, x, y, s, st) {
   if (kind === 'painter' && st.pose !== 'offer' && st.pose !== 'cheer') { limb([hp[2], hp[3], hp[2] + 8, hp[3] - 20], 3, C.brown); Cf(hp[2] + 9, hp[3] - 23, 3.5, C.pink); }
   if (kind === 'music' && st.pose !== 'offer') { Ef(-20, ty + 50, 13, 9, C.yel); bp(); ctx.moveTo(-31, ty + 48); ctx.lineTo(-25, ty + 54); ctx.lineTo(-19, ty + 48); ctx.lineTo(-13, ty + 54); ctx.lineTo(-9, ty + 49); ctx.strokeStyle = C.pinkD; ctx.stroke(); ctx.strokeStyle = INK; }
   const hc = ty - 19;
-  drawHair(kind, hc, K, false);
-  Cf(0, hc, 27, K.skin);
-  drawFace(0, hc + 3, 27, st.expr, st.lx, st.ly, st.blink);
-  drawHair(kind, hc, K, true);
-  drawHat(K.hat, hc, K, st);
+  if (st.hatTilt || st.noSprite) {
+    drawHair(kind, hc, K, false);
+    Cf(0, hc, 27, K.skin);
+    drawFace(0, hc + 3, 27, st.expr, st.lx, st.ly, st.blink);
+    drawHair(kind, hc, K, true);
+    drawHat(K.hat, hc, K, st);
+  } else {
+    blit(spr('hp:' + headKey(kind, st, s), 96, 108, 48, 72, () => {
+      ink(LW / s); drawHair(kind, 0, K, false); Cf(0, 0, 27, K.skin);
+      drawFace(0, 3, 27, st.expr, qz(st.lx || 0), qz(st.ly || 0), st.blink); drawHair(kind, 0, K, true); drawHat(K.hat, 0, K, NO);
+    }, s), 0, hc);
+  }
   ctx.restore();
 }
 function robotEyes(x, y, expr, lx, ly, blink) {
@@ -706,10 +759,14 @@ function drawRobot(x, y, s, st) {
   const h0 = ty - 56;
   const aw = Math.sin(G.T * 3 + ph) * .18 + (st.antenna || 0);
   ctx.save(); ctx.translate(0, h0); ctx.rotate(aw); seg(0, 0, 0, -14); Cf(0, -19, 5.5, C.pink); ctx.restore();
-  Rf(-39, h0 + 14, 8, 18, 3, C.greyM); Rf(31, h0 + 14, 8, 18, 3, C.greyM);
-  Rf(-33, h0, 66, 48, 13, C.grey);
-  Rf(-25, h0 + 8, 50, 32, 9, C.tealDD);
-  robotEyes(0, h0 + 20, st.expr, st.lx, st.ly, st.blink);
+  const head = (yy, lx, ly) => {
+    Rf(-39, yy + 14, 8, 18, 3, C.greyM); Rf(31, yy + 14, 8, 18, 3, C.greyM);
+    Rf(-33, yy, 66, 48, 13, C.grey);
+    Rf(-25, yy + 8, 50, 32, 9, C.tealDD);
+    robotEyes(0, yy + 20, st.expr, lx, ly, st.blink);
+  };
+  if (st.noSprite) head(h0, st.lx, st.ly);
+  else blit(spr('hr:' + headKey('robot', st, s), 88, 60, 44, 6, () => { ink(LW / s); head(0, qz(st.lx || 0), qz(st.ly || 0)); }, s), 0, h0);
   ctx.restore();
 }
 function drawAstro(x, y, s, st) {
@@ -735,16 +792,20 @@ function drawAstro(x, y, s, st) {
   limb([-25, ty + 12, hp[0] - 4, (ty + 12 + hp[1]) / 2, hp[0], hp[1]], 13, C.white);
   limb([25, ty + 12, hp[2] + 4, (ty + 12 + hp[3]) / 2, hp[2], hp[3]], 13, C.white);
   Cf(hp[0], hp[1], 7.5, C.greyM); Cf(hp[2], hp[3], 7.5, C.greyM);
-  const hc = ty - 24;
-  seg(20, hc - 26, 27, hc - 40); Cf(28, hc - 43, 4.5, C.pink);
-  Cf(0, hc, 35, C.white);
-  Cf(0, hc + 2, 27, C.skin);
-  ctx.save(); bp(); cir(0, hc + 2, 27); ctx.clip();
-  bp(); ctx.moveTo(-28, hc - 2); ctx.quadraticCurveTo(-20, hc - 30, 0, hc - 26); ctx.quadraticCurveTo(20, hc - 30, 28, hc - 2); ctx.quadraticCurveTo(12, hc - 14, 0, hc - 11); ctx.quadraticCurveTo(-14, hc - 14, -28, hc - 2); ctx.closePath(); fs(C.hair3);
-  ctx.restore();
-  drawFace(0, hc + 6, 24, st.expr, st.lx, st.ly, st.blink);
-  ctx.save(); ctx.strokeStyle = C.tealL; ctx.lineWidth = 4.5; arcS(0, hc + 2, 29.5, 0, TAU); ctx.restore();
-  arcS(0, hc + 2, 27, 0, TAU); arcS(0, hc + 2, 32, 0, TAU);
+  const hc0 = ty - 24;
+  const helmet = (hc, lx, ly) => {
+    seg(20, hc - 26, 27, hc - 40); Cf(28, hc - 43, 4.5, C.pink);
+    Cf(0, hc, 35, C.white);
+    Cf(0, hc + 2, 27, C.skin);
+    ctx.save(); bp(); cir(0, hc + 2, 27); ctx.clip();
+    bp(); ctx.moveTo(-28, hc - 2); ctx.quadraticCurveTo(-20, hc - 30, 0, hc - 26); ctx.quadraticCurveTo(20, hc - 30, 28, hc - 2); ctx.quadraticCurveTo(12, hc - 14, 0, hc - 11); ctx.quadraticCurveTo(-14, hc - 14, -28, hc - 2); ctx.closePath(); fs(C.hair3);
+    ctx.restore();
+    drawFace(0, hc + 6, 24, st.expr, lx, ly, st.blink);
+    ctx.save(); ctx.strokeStyle = C.tealL; ctx.lineWidth = 4.5; arcS(0, hc + 2, 29.5, 0, TAU); ctx.restore();
+    arcS(0, hc + 2, 27, 0, TAU); arcS(0, hc + 2, 32, 0, TAU);
+  };
+  if (st.noSprite) helmet(hc0, st.lx, st.ly);
+  else blit(spr('ha:' + headKey('astro', st, s), 84, 96, 42, 54, () => { ink(LW / s); helmet(0, qz(st.lx || 0), qz(st.ly || 0)); }, s), 0, hc0);
   ctx.restore();
 }
 function drawChar(kind, x, y, s, st) {
@@ -782,7 +843,8 @@ function drawShopkeeper(x, y, s, st) {
   limb([-24, -86, hl[0] - 4, (hl[1] - 86) / 2, hl[0], hl[1]], 11, C.pink);
   limb([24, -86, hr[0] + 4, (hr[1] - 86) / 2, hr[0], hr[1]], 11, C.pink);
   Cf(hl[0], hl[1], 7, C.skin); Cf(hr[0], hr[1], 7, C.skin);
-  const hc = -128;
+  const hc0 = -128;
+  const headS = (hc, lx, ly) => {
   Cf(0, hc + 3, 39, C.hair);
   Cf(-35, hc - 27, 15, C.hair); Cf(35, hc - 27, 15, C.hair);
   for (const d of [-1, 1]) {
@@ -792,11 +854,14 @@ function drawShopkeeper(x, y, s, st) {
     Cf(bx, by, 3.5, C.pinkD);
   }
   Cf(0, hc, 34, C.skin);
-  drawFace(0, hc + 6, 34, st.expr, st.lx, st.ly, st.blink);
+  drawFace(0, hc + 6, 34, st.expr, lx, ly, st.blink);
   bp(); ctx.moveTo(-34, hc - 2); ctx.quadraticCurveTo(-32, hc - 38, 0, hc - 36); ctx.quadraticCurveTo(32, hc - 38, 34, hc - 2);
   ctx.quadraticCurveTo(26, hc - 20, 14, hc - 16); ctx.quadraticCurveTo(6, hc - 24, 0, hc - 16); ctx.quadraticCurveTo(-10, hc - 24, -16, hc - 15); ctx.quadraticCurveTo(-26, hc - 20, -34, hc - 2); ctx.closePath(); fs(C.hair);
   ctx.save(); ctx.strokeStyle = C.yel; ctx.lineWidth = 6; arcS(0, hc + 4, 37, Math.PI * 1.15, Math.PI * 1.85); ctx.restore();
   arcS(0, hc + 4, 40, Math.PI * 1.16, Math.PI * 1.84);
+  };
+  if (st.noSprite || Math.abs(s - 1) > .001) headS(hc0, st.lx, st.ly);
+  else blit(spr('hs:' + headKey('shop', st, 1), 112, 96, 56, 50, () => { ink(LW); headS(0, qz(st.lx || 0), qz(st.ly || 0)); }), 0, hc0);
   ctx.restore();
 }
 // お手本の手
@@ -816,21 +881,26 @@ function drawHand(x, y, s, press, alpha) {
 //  屋台（たたみ・コイン・模型）
 // =====================================================================
 const foldK = v => 1 - eIO(clamp(v, 0, 1));
-function swirl(x, y, r, col, w) {
+function swirlVec(x, y, r, col, w, a0) {
   ctx.save(); ctx.strokeStyle = col || C.verm; ctx.lineWidth = w || r * .28; ctx.lineCap = 'round';
   bp();
   for (let i = 0; i <= 40; i++) {
     const a = i / 40 * TAU * 1.6, rr2 = r * (.12 + .88 * i / 40);
-    const px = x + Math.cos(a + G.T * .6) * rr2, py = y + Math.sin(a + G.T * .6) * rr2;
+    const px = x + Math.cos(a + a0) * rr2, py = y + Math.sin(a + a0) * rr2;
     if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py);
   }
   ctx.stroke(); ctx.restore();
+}
+function swirl(x, y, r, col, w) {
+  const b = r * 2 + (w || r * .28) * 2 + 4;
+  const s = spr('sw:' + r.toFixed(1) + (col || '') + (w || 0), b, b, b / 2, b / 2, () => swirlVec(0, 0, r, col, w, 0));
+  ctx.save(); ctx.translate(x, y); ctx.rotate(G.T * .6); blit(s, 0, 0); ctx.restore();
 }
 function drawSlotItems(st, idxs) {
   const T = L.t, sz = T.itemSize;
   for (const i of idxs) {
     const sl = st.shelf[i], x = T.slots[i][0], y = T.slots[i][1];
-    Ef(x, y + sz * .44, sz * .38, sz * .07, C.pinkL);
+    if (!st.bgStall) Ef(x, y + sz * .44, sz * .38, sz * .07, C.pinkL);
     const n = sl.stack.length;
     if (!n) continue;
     let sx = 1, sy = 1, rot = 0, dy = 0, sc = 1;
@@ -852,8 +922,17 @@ function drawSlotItems(st, idxs) {
     drawItem(sl.stack[n - 1], x, y + dy, sz * sc, { sx, sy, rot });
   }
 }
+function stallStatic(st) { const f = st.fold; return f.roof <= 0 && f.shelf <= 0 && f.wall <= 0 && f.disc <= 0; }
+// 静止中の屋台は背景レイヤーに焼き込み（毎フレームは品物・店主など動く物だけ描く）
+function stallInBG(st) { return !G.cine && stallStatic(st); }
 function drawStallBack(st) {
-  const T = L.t, f = st.fold; if (f.disc > 0) return;
+  const f = st.fold; if (f.disc > 0) return;
+  if (st.bgStall) { drawSlotItems(st, [2, 4, 3, 5]); return; }
+  drawStallBackVec(st, true);
+}
+const FOLDST = { fold: FOLD0, shelf: [] };
+function drawStallBackVec(st, items) {
+  const T = L.t, f = st.fold;
   const wk = foldK(f.wall), sk = foldK(f.shelf), w = T.wall;
   ink(LW);
   if (wk > .01) {
@@ -868,7 +947,8 @@ function drawStallBack(st) {
         const hx = side === 0 ? b0[0] - 4 : b0[1] + 4;
         ctx.save(); ctx.translate(hx, 0); ctx.scale(sk, 1); ctx.translate(-hx, 0);
         for (const b of [b0, b1]) { Rf(b[0], b[2], b[1] - b[0], 10, 3, C.teal); Rf(side ? b[1] - 10 : b[0], b[2] + 8, 10, 12, 2, C.tealD); }
-        drawSlotItems(st, side === 0 ? [2, 4] : [3, 5]);
+        if (items) drawSlotItems(st, side === 0 ? [2, 4] : [3, 5]);
+        else for (const i of side === 0 ? [2, 4] : [3, 5]) { const sz = T.itemSize; Ef(T.slots[i][0], T.slots[i][1] + sz * .44, sz * .38, sz * .07, C.pinkL); }
         ctx.restore();
       }
     }
@@ -890,14 +970,20 @@ function drawTray(st) {
   Eo(0, -8, 34, 5.5, C.teal);
   ctx.restore();
 }
-function drawStallFront(st, withItems) {
-  const T = L.t, f = st.fold; if (f.disc > 0) return;
-  const c = T.counter, sk = foldK(f.shelf);
+function counterVec(mats) {
+  const T = L.t, c = T.counter;
   ink(LW);
   Rf(c.x0 + 12, c.y1 - 6, 14, T.ground - c.y1 + 6, 3, C.vermD); Rf(c.x1 - 26, c.y1 - 6, 14, T.ground - c.y1 + 6, 3, C.vermD);
   Rf(c.x0, c.y0, c.x1 - c.x0, c.y1 - c.y0, 6, C.verm);
   for (let x = c.x0 + 24; x < c.x1 - 12; x += 32) Co(x, c.y1 - 13, 5.5, C.vermL);
   Rf(c.x0 - 7, c.y0 - 7, c.x1 - c.x0 + 14, 13, 5, C.yel);
+  if (mats) for (const i of [0, 1]) { const sz = T.itemSize; Ef(T.slots[i][0], T.slots[i][1] + sz * .44, sz * .38, sz * .07, C.pinkL); }
+}
+function drawStallFront(st, withItems) {
+  const T = L.t, f = st.fold; if (f.disc > 0) return;
+  const c = T.counter, sk = foldK(f.shelf);
+  if (!st.bgStall) counterVec(false);
+  ink(LW);
   drawMedals(st);
   drawTray(st);
   if (withItems !== false && sk > .01) {
@@ -925,7 +1011,6 @@ function drawSign(st, rk, sync) {
   const sw = G.T - (st.signWig || -9); if (sw < .5) ctx.rotate(Math.sin(sw * 30) * .05 * (1 - sw / .5));
   ctx.translate(-s.x, -by);
   ink(LW);
-  Rf(s.x - s.w * .3 - 4, by - 4, 9, T.awn.y0 - by + 10, 2, C.vermD); Rf(s.x + s.w * .3 - 5, by - 4, 9, T.awn.y0 - by + 10, 2, C.vermD);
   const lit = tw.signLit;
   if (lit) {
     const pul = .2 + .08 * Math.sin(G.T * 3);
@@ -969,6 +1054,7 @@ function drawAwning(st, sync) {
   ctx.save(); ctx.translate(0, drop);
   drawSign(st, rk, sync);
   ink(LW);
+  if (st.bgStall && !sync) { drawLanterns(st, rk); ctx.restore(); return; }
   ctx.save(); ctx.translate(0, a.y0);
   if (sync) ctx.rotate(Math.sin(sync * Math.PI * 4) * .025 * Math.sin(sync * Math.PI));
   ctx.scale(1, Math.max(.06, rk)); ctx.translate(0, -a.y0);
@@ -982,6 +1068,16 @@ function drawAwning(st, sync) {
   ctx.restore();
   drawLanterns(st, rk);
   ctx.restore();
+}
+function awningVec(T) {
+  const a = T.awn, n = 8, sw = (a.x1 - a.x0) / n, r = sw / 2;
+  ink(LW);
+  for (let i = 0; i < n; i++) {
+    const x0 = a.x0 + i * sw;
+    bp(); ctx.moveTo(x0, a.y0); ctx.lineTo(x0 + sw, a.y0); ctx.lineTo(x0 + sw, a.y1 - r); ctx.arc(x0 + r, a.y1 - r, r, 0, Math.PI); ctx.closePath();
+    fs(i % 2 ? C.cream : C.verm);
+  }
+  Rf(a.x0 - 6, a.y0 - 9, a.x1 - a.x0 + 12, 15, 6, C.vermD);
 }
 // たたまれた板 → コイン
 function coinGeom() {
@@ -1093,8 +1189,7 @@ function drawMedals(st) {
     const tp = clamp((G.T - (m.t0 || -9)) / .6, 0, 1), e = Math.max(.02, eBack(tp));
     let rot = 0; const tw = G.T - (m.wig || -9); if (tw < .5) rot = Math.sin(tw * 30) * .2 * (1 - tw / .5);
     ctx.save(); ctx.translate(p[0], p[1]); ctx.rotate(rot); ctx.scale(e, e);
-    ink(LW * .8);
-    drawCoin(0, 0, 27, 1, null, m);
+    blit(spr('medal:' + m.idx, 64, 64, 32, 32, () => { ink(LW * .8); drawCoin(0, 0, 27, 1, null, m); }), 0, 0);
     ctx.restore();
   }
 }
@@ -1122,7 +1217,7 @@ function building(x, top, w, base, col, night, r, roofKind) {
   else Rf(x - w / 2 - 5, top - 6, w + 10, 10, 3, C.tealDD);
   windows(x - w / 2 + 4, top + 14, w - 8, Math.min(120, base - top - 30), night, r);
 }
-function paintBG(st, night) {
+function paintBG(st, night, withStall) {
   const T = L.t, th = THEMES[st.theme % THEMES.length], r = lcg(77 + st.theme * 1000 + (L.portrait ? 0 : 500));
   const x0 = L.vx0 - 10, x1 = L.vx1 + 10, y0 = L.vy0 - 10, y1 = L.vy1 + 10;
   ink(LW);
@@ -1182,6 +1277,7 @@ function paintBG(st, night) {
   ctx.save(); ctx.strokeStyle = C.white; ctx.lineWidth = 5;
   for (let x = x0; x < x1; x += 60) seg(x, T.road.lane + 22, x + 26, T.road.lane + 22);
   ctx.restore();
+  if (withStall) { drawStallBackVec(FOLDST, false); counterVec(true); awningVec(T); }
 }
 const BGC = { day: null, night: null, key: '', nextKey: '', next: null };
 function makeCanvas() { const c = document.createElement('canvas'); c.width = cv.width; c.height = cv.height; return c; }
@@ -1191,18 +1287,26 @@ function renderBG(st, night) {
   try { setV(c2); paintBG(st, night); } finally { ctx = saved; }
   return c;
 }
-function bgFor(st) {
-  const key = L.ver + ':' + st.theme + ':' + st.idx;
-  if (BGC.key !== key) { BGC.key = key; BGC.day = renderBG(st, false); BGC.night = null; }
-  if (st.town.night > 0 && !BGC.night) BGC.night = renderBG(st, true);
-  return BGC;
+function paintLayer(c, st, night, ws) {
+  if (c.width !== cv.width || c.height !== cv.height) { c.width = cv.width; c.height = cv.height; }
+  c.style.width = L.W + 'px'; c.style.height = L.H + 'px';
+  const c2 = c.getContext('2d'), saved = ctx; ctx = c2;
+  try { c2.setTransform(1, 0, 0, 1, 0, 0); c2.clearRect(0, 0, c.width, c.height); setV(c2); paintBG(st, night, ws); } finally { ctx = saved; }
 }
-function blitBG(st) {
-  const b = bgFor(st);
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
+let bgnOp = -1;
+function syncBG(st) {
+  const ws = stallInBG(st);
+  const key = L.ver + ':' + st.theme + ':' + st.idx + (ws ? ':S' : ':N');
+  if (BGC.key !== key) { BGC.key = key; BGC.nightKey = ''; paintLayer(bgCv, st, false, ws); }
   const n = st.town.night;
-  if (n < 1 || !b.night) ctx.drawImage(b.day, 0, 0);
-  if (n > 0 && b.night) { ctx.globalAlpha = n; ctx.drawImage(b.night, 0, 0); ctx.globalAlpha = 1; }
+  if (n > 0 && BGC.nightKey !== key) { BGC.nightKey = key; paintLayer(bgnCv, st, true, ws); }
+  st.bgStall = ws;
+  const op = n > 0 && BGC.nightKey === key ? Math.round(clamp(n, 0, 1) * 50) / 50 : 0;
+  if (op !== bgnOp) {
+    bgnOp = op; bgnCv.style.opacity = String(op);
+    bgnCv.style.visibility = op > 0 ? 'visible' : 'hidden';
+    bgCv.style.visibility = op >= 1 ? 'hidden' : 'visible';
+  }
 }
 function nextBG(st) {
   const key = L.ver + ':' + st.theme + ':' + st.idx;
@@ -1212,24 +1316,32 @@ function nextBG(st) {
 
 // ---------------------------------------------------------------- 屋上の屋台・道の出店・門・荷車・夜市の人々
 function drawRoofStall(x, y, s, col, e, night, i) {
-  ctx.save(); ctx.translate(x, y); ctx.scale(s * e, s * e); ink(LW / s);
+  ctx.save(); ctx.translate(x, y); ctx.scale(s * e, s * e);
+  blit(spr('roofst:' + col + s, 100, 80, 50, 70, () => { ctx.scale(1, 1); roofStallVec(s, col); }), 0, 0);
+  if (night) { ctx.save(); ctx.translate(40, -48); ctx.rotate(Math.sin(G.T * 2 + i) * .1); drawItem('lantern', 0, 14, 26, { col: i % 2 ? C.verm : C.pink, lit: true }); ctx.restore(); }
+  ctx.restore();
+}
+function roofStallVec(s, col) {
+  ink(LW / s);
   Rf(-34, -26, 6, 26, 2, C.vermD); Rf(28, -26, 6, 26, 2, C.vermD);
   Rf(-36, -20, 72, 20, 4, C.cream);
   Co(-16, -26, 7, C.pink); Co(0, -27, 7, C.yel); Co(16, -26, 7, C.tealL);
   for (let k = 0; k < 4; k++) { bp(); ctx.moveTo(-38 + k * 19, -50); ctx.lineTo(-19 + k * 19, -50); ctx.lineTo(-19 + k * 19, -40); ctx.arc(-28.5 + k * 19, -40, 9.5, 0, Math.PI); ctx.closePath(); fs(k % 2 ? C.cream : col); }
-  if (night) { ctx.save(); ctx.translate(40, -48); ctx.rotate(Math.sin(G.T * 2 + i) * .1); drawItem('lantern', 0, 14, 26, { col: i % 2 ? C.verm : C.pink, lit: true }); ctx.restore(); }
-  ctx.restore();
 }
 function drawCartStall(x, y, s, col, e, night, i) {
-  ctx.save(); ctx.translate(x, y); ctx.scale(s * e, s * e); ink(LW / s);
+  ctx.save(); ctx.translate(x, y); ctx.scale(s * e, s * e);
+  blit(spr('cartst:' + col + s, 100, 100, 50, 86, () => cartStallVec(s, col)), 0, 0);
+  if (night) { ctx.save(); ctx.translate(-38, -70); ctx.rotate(Math.sin(G.T * 2 + i) * .1); drawItem('lantern', 0, 14, 26, { col: i % 2 ? C.yel : C.verm, lit: true }); ctx.restore(); }
+  ctx.restore();
+}
+function cartStallVec(s, col) {
+  ink(LW / s);
   Rf(-30, -64, 6, 46, 2, C.brown); Rf(24, -64, 6, 46, 2, C.brown);
   Rf(-36, -34, 72, 26, 4, col === C.teal ? C.teal : C.verm);
   bp(); ctx.rect(-35, -26, 70, 5); fo(C.yel);
   Co(-16, -40, 7, C.pink); Co(0, -41, 7, C.white); Co(16, -40, 7, C.yel);
   for (let k = 0; k < 4; k++) { bp(); ctx.moveTo(-38 + k * 19, -76); ctx.lineTo(-19 + k * 19, -76); ctx.lineTo(-19 + k * 19, -66); ctx.arc(-28.5 + k * 19, -66, 9.5, 0, Math.PI); ctx.closePath(); fs(k % 2 ? C.cream : (col === C.teal ? C.pink : C.teal)); }
   Cf(-22, -6, 9, C.yel); Cf(22, -6, 9, C.yel); Co(-22, -6, 3, INK); Co(22, -6, 3, INK);
-  if (night) { ctx.save(); ctx.translate(-38, -70); ctx.rotate(Math.sin(G.T * 2 + i) * .1); drawItem('lantern', 0, 14, 26, { col: i % 2 ? C.yel : C.verm, lit: true }); ctx.restore(); }
-  ctx.restore();
 }
 function drawGate(st) {
   const T = L.t, tw = st.town, x = T.gateX, y = T.road.lane + 6, s = L.portrait ? .8 : 1;
@@ -1272,13 +1384,16 @@ function drawCrowd(st) {
     else { const r = T.cartSlots[p.slot]; if (!r) continue; base = [r[0] + p.dx * T.cartS, r[1] + 6]; }
     const hop = Math.max(0, Math.sin(G.T * 3 + p.ph)) * (p.jumpy ? 8 : 2);
     const s = (p.home === 'roof' ? T.roofS : T.cartS) * .55;
-    ctx.save(); ctx.translate(base[0], base[1] - hop); ctx.scale(s, s); ink(LW / s);
-    limb([-6, -20, -7, -2], 8, C.tealDD); limb([6, -20, 7, -2], 8, C.tealDD);
-    Rf(-14, -48, 28, 30, 9, p.col);
-    if (p.arm) limb([12, -44, 22, -66], 7, p.col);
-    Cf(0, -60, 13, p.skin);
-    Co(-4.5, -61, 2.2, INK); Co(4.5, -61, 2.2, INK);
-    arcS(0, -58, 4.5, .3, 2.8);
+    ctx.save(); ctx.translate(base[0], base[1] - hop); ctx.scale(s, s);
+    blit(spr('crowd:' + p.col + p.skin + (p.arm ? 1 : 0) + s, 60, 90, 30, 82, () => {
+      ink(LW / s);
+      limb([-6, -20, -7, -2], 8, C.tealDD); limb([6, -20, 7, -2], 8, C.tealDD);
+      Rf(-14, -48, 28, 30, 9, p.col);
+      if (p.arm) limb([12, -44, 22, -66], 7, p.col);
+      Cf(0, -60, 13, p.skin);
+      Co(-4.5, -61, 2.2, INK); Co(4.5, -61, 2.2, INK);
+      arcS(0, -58, 4.5, .3, 2.8);
+    }), 0, 0);
     ctx.restore();
   }
   ctx.restore();
@@ -1365,7 +1480,9 @@ function custState(c) {
 function drawCustomer(c) {
   const p = custPos(c), s = custS() * (p.s || 1);
   if (p.y < L.vy0 - 260 || p.y > L.vy1 + 260) return;
-  drawChar(c.kind, p.x, p.y, s, custState(c));
+  const st = custState(c);
+  if (p.s && Math.abs(p.s - 1) > .001) st.noSprite = true;
+  drawChar(c.kind, p.x, p.y, s, st);
 }
 function bubbleRect(c) {
   const p = custPos(c), n = c.order.length;
@@ -1385,10 +1502,13 @@ function drawBubble(c) {
   const p = custPos(c), headTop = p.y - (c.kind === 'robot' ? 172 : 166) * custS();
   ctx.save(); ctx.translate(r.x, r.y); ctx.scale(sc, sc); ink(LW);
   const hw = r.w / 2, hh = r.h / 2;
-  const ty = Math.max(hh + 6, Math.min(hh + 26, headTop - r.y));
-  bp(); ctx.moveTo(-12, hh - 3); ctx.lineTo(4, ty); ctx.lineTo(12, hh - 3); ctx.closePath(); fs(C.white);
-  Rf(-hw, -hh, r.w, r.h, 22, C.white);
-  Ro(-12, hh - 8, 24, 10, 0, C.white);
+  const ty = Math.round(Math.max(hh + 6, Math.min(hh + 26, headTop - r.y)));
+  blit(spr('bub:' + r.w + 'x' + r.h + ':' + ty, r.w + 12, r.h / 2 + ty + 10, hw + 6, hh + 6, () => {
+    ink(LW);
+    bp(); ctx.moveTo(-12, hh - 3); ctx.lineTo(4, ty); ctx.lineTo(12, hh - 3); ctx.closePath(); fs(C.white);
+    Rf(-hw, -hh, r.w, r.h, 22, C.white);
+    Ro(-12, hh - 8, 24, 10, 0, C.white);
+  }), 0, 0);
   const n = c.order.length;
   for (let i = 0; i < n; i++) {
     const o = c.order[i], ix = n > 1 ? (i ? 28 : -28) : 0, isz = n > 1 ? 46 : 56;
@@ -1408,7 +1528,7 @@ function drawPanel(pn) {
   ctx.lineWidth = 2; ctx.strokeStyle = INK;
   for (let i = 0; i < 22; i++) { const a = i / 22 * TAU + .1; seg(Math.cos(a) * 46, Math.sin(a) * 40, Math.cos(a) * 90, Math.sin(a) * 90); }
   const s2 = 1.45, hy = HEADY[c.kind] || -129;
-  drawChar(c.kind, 0, -hy * s2 + 6, s2, { expr: c.kind === 'robot' && c.expr === 'love' ? 'love' : 'happy', pose: 'cheer', ph: c.ph, jumpShoes: false, lx: 0, ly: 0 });
+  drawChar(c.kind, 0, -hy * s2 + 6, s2, { expr: c.kind === 'robot' && c.expr === 'love' ? 'love' : 'happy', pose: 'cheer', ph: c.ph, jumpShoes: false, lx: 0, ly: 0, noSprite: true });
   ctx.restore();
   ink(LW * 1.3); bp(); ctx.rect(-w / 2, -h / 2, w, h); ctx.stroke();
   star5(w / 2 - 6, -h / 2 + 4, 13, C.yel, true);
@@ -1453,9 +1573,16 @@ function drawParts() {
   for (const p of PT) {
     const a = 1 - p.t / p.life;
     ctx.globalAlpha = clamp(a * 1.4, 0, 1);
-    if (p.type === 'star') { ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.r); star4(0, 0, p.size * 1.4, p.col); ctx.restore(); }
-    else if (p.type === 'puff') { ink(2); Cf(p.x, p.y, p.size * (1 + p.t / p.life * 1.2), p.col); }
-    else Co(p.x, p.y, p.size * .7, p.col);
+    if (p.type === 'star') {
+      const s = spr('p:s' + p.col, 22, 22, 11, 11, () => star4(0, 0, 10, p.col)), k = p.size * 1.4 / 10;
+      ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.r); ctx.scale(k, k); blit(s, 0, 0); ctx.restore();
+    } else if (p.type === 'puff') {
+      const s = spr('p:p' + p.col, 24, 24, 12, 12, () => { ink(2); Cf(0, 0, 10, p.col); }), k = p.size * (1 + p.t / p.life * 1.2) / 10;
+      ctx.drawImage(s.c, p.x - 12 * k, p.y - 12 * k, 24 * k, 24 * k);
+    } else {
+      const s = spr('p:d' + p.col, 22, 22, 11, 11, () => Co(0, 0, 10, p.col)), k = p.size * .7 / 10;
+      ctx.drawImage(s.c, p.x - 11 * k, p.y - 11 * k, 22 * k, 22 * k);
+    }
   }
   ctx.globalAlpha = 1;
 }
@@ -1487,7 +1614,10 @@ function drawShopAt(where) {
     if (sh.into > 0) { const g = coinGeom(); const e2 = sh.into; x = lerp(x, g.x, e2); y = lerp(y, g.y + 40, e2) - Math.sin(e2 * Math.PI) * 80; s = 1 - e2 * .85; }
     st.up = 0; st.lean = 0; st.hands = 'up';
   }
-  ctx.save(); drawShopkeeper(x, y, s, st); ctx.restore();
+  ctx.save();
+  if (where === 'back' && G.st.bgStall) { bp(); ctx.rect(L.vx0, L.vy0, L.vx1 - L.vx0, T.counter.y0 - 1 - L.vy0); ctx.clip(); }
+  drawShopkeeper(x, y, s, st);
+  ctx.restore();
 }
 // ---------------------------------------------------------------- 世界の描画
 function drawWorld(st, main) {
@@ -2434,7 +2564,8 @@ function update(dt) {
 function draw() {
   if (layoutDirty) doLayout();
   ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1;
-  blitBG(G.st);
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  syncBG(G.st);
   setV();
   drawWorld(G.st, true);
   for (const f of G.flyers) drawFlyer(f);
@@ -2444,13 +2575,16 @@ function draw() {
   setV();
   drawDemo();
 }
-let raf = 0, lastTS = 0, running = !document.hidden;
-const PERF = { n: 0, sum: 0, max: 0, recent: [] };
+let raf = 0, lastTS = 0, running = !document.hidden, slowT = 0, adaptDpr = true;
+const PERF = { n: 0, sum: 0, max: 0, recent: [], dprDrops: 0 };
 function frame(ts) {
   raf = 0;
   if (!running) return;
   let dt = lastTS ? (ts - lastTS) / 1000 : 1 / 60;
   lastTS = ts;
+  // 描画が重い端末では内部解像度を段階的に下げて 60fps を目指す（2 → 1.5 → 1.25）
+  if (dt > .024 && dt < .25) slowT += dt; else slowT = Math.max(0, slowT - dt * .6);
+  if (adaptDpr && slowT > 2.5 && dprCap > 1.3 && (window.devicePixelRatio || 1) > 1.3) { dprCap = dprCap > 1.6 ? 1.5 : 1.25; slowT = 0; layoutDirty = true; PERF.dprDrops++; }
   dt = clamp(dt, 0, 1 / 20) * SPEED;
   const t0 = performance.now();
   try { update(dt); draw(); } catch (e) { G.errors.push(String(e && e.stack || e)); try { ctx.restore(); } catch (e2) { } }
@@ -2482,6 +2616,7 @@ startLoop();
 window.__gf = {
   G, L, PERF, AU, SLOTK,
   v2s, s2v,
+  pinDpr(v) { dprCap = v; adaptDpr = false; layoutDirty = true; },
   slotScreen(i) { const p = slotP(i); return v2s(p.x, p.y); },
   kindSlot(k) { return SLOT_OF[k]; },
   guide() { const g = G.guide; return g ? { slot: g.slot, kind: SLOTK[g.slot], spot: g.c.spot, cust: g.c.kind } : null; },
